@@ -129,7 +129,7 @@ async function uploadTableToFirestore(tableName, data) {
       }
     });
 
-    const docUrl = `https://firestore.googleapis.com/v1/projects/${sa.project_id}/databases/(default)/documents/erp_data/${tableName}`;
+    const docUrl = `https://firestore.googleapis.com/v1/projects/${sa.project_id}/databases/(default)/documents/erp_tables/${tableName}`;
     return new Promise((resolve) => {
       const req = https.request(docUrl, {
         method: 'PATCH',

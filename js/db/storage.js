@@ -564,8 +564,8 @@ class StorageEngine {
     Object.keys(serverRecs).forEach(tbl => {
       if (Array.isArray(serverRecs[tbl])) {
         if (serverRecs[tbl].length > 0) {
-          if (tbl === TABLE_NAMES.FLOORS || tbl === TABLE_NAMES.UNITS || tbl === TABLE_NAMES.GROUPS || tbl === TABLE_NAMES.LINES || tbl === TABLE_NAMES.MACHINE_NAMES || tbl === TABLE_NAMES.PREVENTIVE_CONFIG) {
-            // Persistent database is authoritative source of truth for plant hierarchy, machine names & schedule configs
+          if (tbl === TABLE_NAMES.FLOORS || tbl === TABLE_NAMES.UNITS || tbl === TABLE_NAMES.GROUPS || tbl === TABLE_NAMES.LINES || tbl === TABLE_NAMES.MACHINE_NAMES || tbl === TABLE_NAMES.PREVENTIVE_CONFIG || tbl === TABLE_NAMES.MACHINES || tbl === TABLE_NAMES.USERS) {
+            // Persistent database is authoritative source of truth for machines, users, hierarchy & config
             if (tbl === TABLE_NAMES.MACHINE_NAMES) {
               const seen = new Set();
               const cleanRecs = [];
@@ -580,25 +580,30 @@ class StorageEngine {
                 }
               });
               this.data[tbl] = cleanRecs;
+            } else if (tbl === TABLE_NAMES.MACHINES) {
+              // Real factory machines list from Cloud Firestore
+              const cleanMachines = serverRecs[tbl].map(m => {
+                if (m && duplicateIdMap[m.machineNameId]) {
+                  return { ...m, machineNameId: duplicateIdMap[m.machineNameId] };
+                }
+                return m;
+              });
+              this.data[tbl] = cleanMachines;
             } else {
               this.data[tbl] = serverRecs[tbl];
             }
           } else {
             // Intelligently merge by record ID so newly added items are not wiped out
-            const localList = this.data[tbl] || [];
+            const localList = (this.data[tbl] || []).filter(item => {
+              if (item && item.serialNumber && String(item.serialNumber).startsWith('JK-PM-')) return false;
+              return true;
+            });
             const mergedMap = new Map();
             localList.forEach(item => { if (item && item.id) mergedMap.set(item.id, item); });
             serverRecs[tbl].forEach(sItem => { if (sItem && sItem.id) mergedMap.set(sItem.id, sItem); });
             let merged = Array.from(mergedMap.values());
-
-            // If machines table, remap legacy machineNameIds
-            if (tbl === TABLE_NAMES.MACHINES) {
-              merged.forEach(m => {
-                if (m && duplicateIdMap[m.machineNameId]) {
-                  m.machineNameId = duplicateIdMap[m.machineNameId];
-                }
-              });
-            }
+            this.data[tbl] = merged;
+          }
 
             // If storage_master, auto-migrate alias machine names
             if (tbl === TABLE_NAMES.STORAGE_MASTER) {
