@@ -48,18 +48,47 @@ class AuthService {
     const demoUsernames = ['manager', 'store', 'viewer'];
     const filtered = users.filter(u => !demoIds.includes(u.id) && !demoUsernames.includes(u.username));
     
-    // Ensure Super Admin exists (username: superadmin, password: admin123)
-    if (!filtered.some(u => u.username === 'superadmin' || u.role === 'SUPER_ADMIN' || u.id === 'usr-super-admin')) {
+    // Ensure Engr. Motaher Hossain exists as Primary Super Admin (username: motaher, password: Mr@304415)
+    const existingMotaher = filtered.find(u => u.username === 'motaher' || u.email === 'motaher.cse@gmail.com');
+    if (!existingMotaher) {
       filtered.unshift({
         id: 'usr-super-admin',
-        username: 'superadmin',
-        password: cryptoService.hashPassword('admin123'),
-        name: 'Engr. Tanvir Ahmed (Super Administrator)',
+        username: 'motaher',
+        password: '$sha256$6ad526a0cf737517d4609e058dc306b2$454c146535308e78f7597aa51ac660a043569dd70843ec7b9e0b50be956f14b3',
+        name: 'Engr. Motaher Hossain',
         employeeId: 'AMG-HQ-001',
-        email: 'tanvir.eng@al-muslim.com',
+        email: 'motaher.cse@gmail.com',
         phone: '+8801711000001',
         department: 'Central Engineering & Maintenance',
         designation: 'Head of Maintenance & System Director',
+        role: 'SUPER_ADMIN',
+        roleId: 'role-super-admin',
+        status: 'ACTIVE',
+        mustChangePassword: false,
+        assignedScope: { allGroups: true, groupIds: [], unitIds: [], floorIds: [], lineIds: [] },
+        permissions: DEFAULT_PERMISSION_TEMPLATES.ADMIN || DEFAULT_PERMISSION_TEMPLATES.SUPER_ADMIN,
+        createdAt: '2026-01-01T00:00:00Z',
+        lastLoginAt: new Date().toISOString()
+      });
+    } else {
+      existingMotaher.status = 'ACTIVE';
+      if (!existingMotaher.password) {
+        existingMotaher.password = '$sha256$6ad526a0cf737517d4609e058dc306b2$454c146535308e78f7597aa51ac660a043569dd70843ec7b9e0b50be956f14b3';
+      }
+    }
+
+    // Ensure fallback Super Admin exists (username: superadmin, password: admin123)
+    if (!filtered.some(u => u.username === 'superadmin')) {
+      filtered.push({
+        id: 'usr-fallback-superadmin',
+        username: 'superadmin',
+        password: cryptoService.hashPassword('admin123'),
+        name: 'Central System Administrator',
+        employeeId: 'AMG-HQ-002',
+        email: 'admin.backup@al-muslim.com',
+        phone: '+8801711000002',
+        department: 'Central Engineering & Maintenance',
+        designation: 'System Administrator',
         role: 'ADMIN',
         roleId: 'role-super-admin',
         status: 'ACTIVE',
@@ -213,7 +242,13 @@ class AuthService {
     const cleanId = (identifier || '').trim().toLowerCase();
     
     // Support login by either email or username
-    const user = users.find(u => u.username?.toLowerCase() === cleanId || u.email?.toLowerCase() === cleanId);
+    let user = users.find(u => u.username?.toLowerCase() === cleanId || u.email?.toLowerCase() === cleanId);
+    if (!user) {
+      // Auto-heal fallback if motaher or primary admin is requested but missing in local storage cache
+      this.cleanDemoUsers();
+      const reloadedUsers = storage.getTable(TABLE_NAMES.USERS) || [];
+      user = reloadedUsers.find(u => u.username?.toLowerCase() === cleanId || u.email?.toLowerCase() === cleanId);
+    }
     if (!user) {
       throw new Error(`Invalid credentials. No account found for '${identifier}'.`);
     }
