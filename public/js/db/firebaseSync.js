@@ -74,7 +74,8 @@ export async function saveTableToFirestore(tableName, records) {
         isChunked: false,
         updatedAt: new Date().toISOString(),
         itemCount: Array.isArray(records) ? records.length : (records ? 1 : 0),
-        data: records
+        data: records,
+        rawJson: jsonStr
       });
       return true;
     }

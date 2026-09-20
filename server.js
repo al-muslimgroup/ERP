@@ -294,6 +294,11 @@ const server = http.createServer((req, res) => {
             const byteCount = Buffer.byteLength(serialized);
             console.log(`[SERVER DB] ✅ Stored ${parsed.machines.length} machines, ${parsed.lines.length} lines, ${parsed.floors.length} floors to data/erp_database.json (${byteCount} bytes) at ${new Date().toLocaleTimeString()}`);
 
+            // Automatically mirror local changes to Google Cloud Firestore in background
+            serverFirebase.syncAllToFirestore(parsed).then(count => {
+              if (count) console.log(`[SERVER CLOUD SYNC] ☁️ Synchronized ${count} tables to Google Cloud Firestore.`);
+            }).catch(e => console.warn('[SERVER CLOUD SYNC] Note:', e.message));
+
             res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
             return res.end(JSON.stringify({
               status: 'ok',

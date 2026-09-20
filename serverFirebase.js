@@ -109,8 +109,65 @@ async function checkFirestoreReady() {
   }
 }
 
+/**
+ * Upload a single table or dataset to Firestore via REST API
+ */
+async function uploadTableToFirestore(tableName, data) {
+  try {
+    const token = await getAdminAccessToken();
+    if (!token) return false;
+    const sa = getServiceAccount();
+    if (!sa) return false;
+
+    const jsonString = JSON.stringify(data ?? []);
+    const firestorePayload = JSON.stringify({
+      fields: {
+        rawJson: { stringValue: jsonString },
+        isChunked: { booleanValue: false },
+        itemCount: { integerValue: String(Array.isArray(data) ? data.length : 1) },
+        updatedAt: { stringValue: new Date().toISOString() }
+      }
+    });
+
+    const docUrl = `https://firestore.googleapis.com/v1/projects/${sa.project_id}/databases/(default)/documents/erp_data/${tableName}`;
+    return new Promise((resolve) => {
+      const req = https.request(docUrl, {
+        method: 'PATCH',
+        headers: {
+          'Authorization': 'Bearer ' + token,
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(firestorePayload)
+        }
+      }, res => {
+        resolve(res.statusCode >= 200 && res.statusCode < 300);
+      });
+      req.on('error', () => resolve(false));
+      req.write(firestorePayload);
+      req.end();
+    });
+  } catch (_) {
+    return false;
+  }
+}
+
+/**
+ * Sync entire database dictionary to Firestore
+ */
+async function syncAllToFirestore(dbData) {
+  if (!dbData || typeof dbData !== 'object') return false;
+  const tables = Object.keys(dbData);
+  let okCount = 0;
+  for (const t of tables) {
+    const ok = await uploadTableToFirestore(t, dbData[t]);
+    if (ok) okCount++;
+  }
+  return okCount;
+}
+
 module.exports = {
   isServiceAccountAvailable,
   getAdminAccessToken,
-  checkFirestoreReady
+  checkFirestoreReady,
+  uploadTableToFirestore,
+  syncAllToFirestore
 };
