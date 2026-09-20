@@ -63,6 +63,14 @@ export async function saveTableToFirestore(tableName, records) {
     const fb = await getFirestoreInstance();
     if (!fb) return false;
 
+    if (tableName === 'machines' && Array.isArray(records)) {
+      const hasMock = records.some(m => m && m.serialNumber && String(m.serialNumber).startsWith('JK-PM-'));
+      if (hasMock || records.length < 500) {
+        console.warn('[Firebase Sync] 🚫 Blocked attempt to write mock or incomplete machines dataset to Firestore.');
+        return false;
+      }
+    }
+
     const { db, fs } = fb;
     const jsonStr = JSON.stringify(records ?? []);
     const sizeBytes = new Blob([jsonStr]).size;

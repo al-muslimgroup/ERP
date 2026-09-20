@@ -426,7 +426,16 @@ class StorageEngine {
       'mac-1788870296741-340': 'mn-1788869247205-his3'  // Bartack -> Bar tak Machine
     };
 
-    const currentMachines = this.data[TABLE_NAMES.MACHINES] || [];
+    let currentMachines = this.data[TABLE_NAMES.MACHINES] || [];
+    const hasMockMachines = currentMachines.some(m => m && m.serialNumber && String(m.serialNumber).startsWith('JK-PM-'));
+    if (hasMockMachines || currentMachines.length < 500) {
+      currentMachines = INITIAL_DATA.generateInitialMachines();
+      this.data[TABLE_NAMES.MACHINES] = currentMachines;
+      try {
+        localStorage.setItem(STORAGE_KEY_PREFIX + TABLE_NAMES.MACHINES, JSON.stringify(currentMachines));
+      } catch (_) {}
+    }
+
     let macsMigrated = false;
     currentMachines.forEach(m => {
       if (m && duplicateIdMap[m.machineNameId]) {
@@ -602,14 +611,24 @@ class StorageEngine {
               });
               this.data[tbl] = cleanRecs;
             } else if (tbl === TABLE_NAMES.MACHINES) {
-              // Real factory machines list from Cloud Firestore
-              const cleanMachines = serverRecs[tbl].map(m => {
-                if (m && duplicateIdMap[m.machineNameId]) {
-                  return { ...m, machineNameId: duplicateIdMap[m.machineNameId] };
-                }
-                return m;
-              });
-              this.data[tbl] = cleanMachines;
+              // Real factory machines list from Cloud Firestore or Persistent Store
+              const incoming = serverRecs[tbl] || [];
+              const hasMock = incoming.some(m => m && m.serialNumber && String(m.serialNumber).startsWith('JK-PM-'));
+              if (hasMock && (this.data[tbl]?.length >= 500)) {
+                console.warn('[Database Store] ⚠️ Blocked incoming mock machines from replacing real factory machines.');
+                return;
+              }
+              const cleanMachines = incoming
+                .filter(m => !(m && m.serialNumber && String(m.serialNumber).startsWith('JK-PM-')))
+                .map(m => {
+                  if (m && duplicateIdMap[m.machineNameId]) {
+                    return { ...m, machineNameId: duplicateIdMap[m.machineNameId] };
+                  }
+                  return m;
+                });
+              if (cleanMachines.length >= 500 || !this.data[tbl] || this.data[tbl].length === 0) {
+                this.data[tbl] = cleanMachines;
+              }
             } else {
               this.data[tbl] = serverRecs[tbl];
             }
