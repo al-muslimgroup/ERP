@@ -16,6 +16,27 @@ function getApiEndpoint(path) {
   return path;
 }
 
+// Canonical map to normalize legacy machine name IDs
+const DUPLICATE_ID_MAP = {
+  'mac-1788870296741-262': 'mn-1788869247076-glop', // Double Needle Auto -> Double Needle Machine
+  'mac-1788870296741-927': 'mn-1788869247118-qyw5', // Over Lock Mechine -> Over Lock Machine
+  'mac-1788870296741-484': 'mn-1788869247492-lklr', // Zipper Joint -> Zipper Joint Machine
+  'mac-1788870296741-259': 'mn-1788869247176-2gzf', // Multi Needle Chain Stitch -> Multi Needle Chain Stitch Machine
+  'mac-1788870296741-196': 'mn-1788869247141-kx1a', // Chain Stitch -> Chain Stitch Machine
+  'mac-1788870296741-404': 'mn-1788869247061-9dsy', // Vertical Bedoly -> Vertical Machine
+  'mac-1788870296742-5':   'mn-1788869247572-yzvd', // Sleeve Joint -> Sleeve Joint Machine
+  'mac-1788870296742-799': 'mn-1788869248254-ez5p', // Snap Button Hydrolic -> Snap Button Machine
+  'mac-1788870296742-855': 'mn-1788869247076-glop', // Double Needle Manual -> Double Needle Machine
+  'mac-1788870296742-252': 'mn-1788869247100-2uyc', // Feed of The Arm-Brother -> Feed of The Arm Machine
+  'mac-1788870296742-285': 'mn-1788869247100-2uyc', // Feed of The Arm-Narrow -> Feed of The Arm Machine
+  'mac-1788870296742-208': 'mn-1788869247738-cne3', // Loop Attach -> Loop Attach Machine
+  'mac-1788870296742-973': 'mn-1788869247100-2uyc', // Feed of The Arm-AGM -> Feed of The Arm Machine
+  'mac-1788870296742-664': 'mn-1788869247100-2uyc', // Feed of The Arm -> Feed of The Arm Machine
+  'mac-1788870296742-107': 'mn-1788869247243-7wlt', // Botton Hole -> Button Hole Machine
+  'mac-1788870296741-340': 'mn-1788869247205-his3'  // Bartack -> Bar tak Machine
+};
+const duplicateIdMap = DUPLICATE_ID_MAP;
+
 class StorageEngine {
   constructor() {
     this.data = {};
