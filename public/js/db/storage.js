@@ -66,8 +66,20 @@ class StorageEngine {
       this._suppressServerPersist = true;
       this.loadFromStorage();
 
-      // If localStorage had no machines, seed from INITIAL_DATA in memory
-      if (!this.data[TABLE_NAMES.MACHINES] || this.data[TABLE_NAMES.MACHINES].length === 0) {
+      // If localStorage is missing or contains stale/incomplete master data or machines, auto-heal from INITIAL_DATA
+      const needsHeal = !this.data[TABLE_NAMES.MACHINES] || 
+                        this.data[TABLE_NAMES.MACHINES].length < 500 ||
+                        !this.data[TABLE_NAMES.MACHINE_NAMES] || 
+                        this.data[TABLE_NAMES.MACHINE_NAMES].length < 70 ||
+                        !this.data[TABLE_NAMES.MODELS] || 
+                        this.data[TABLE_NAMES.MODELS].length < 35 ||
+                        !this.data[TABLE_NAMES.FLOORS] || 
+                        this.data[TABLE_NAMES.FLOORS].length < 12 ||
+                        !this.data[TABLE_NAMES.LINES] || 
+                        this.data[TABLE_NAMES.LINES].length < 70;
+
+      if (needsHeal) {
+        console.log('[Database Store] 🔄 Local cache incomplete or stale. Auto-healing to full authoritative factory dataset...');
         this.resetToInitialData(false);
       }
 
@@ -594,7 +606,7 @@ class StorageEngine {
     Object.keys(serverRecs).forEach(tbl => {
       if (Array.isArray(serverRecs[tbl])) {
         if (serverRecs[tbl].length > 0) {
-          if (tbl === TABLE_NAMES.FLOORS || tbl === TABLE_NAMES.UNITS || tbl === TABLE_NAMES.GROUPS || tbl === TABLE_NAMES.LINES || tbl === TABLE_NAMES.MACHINE_NAMES || tbl === TABLE_NAMES.PREVENTIVE_CONFIG || tbl === TABLE_NAMES.MACHINES || tbl === TABLE_NAMES.USERS) {
+          if (tbl === TABLE_NAMES.FLOORS || tbl === TABLE_NAMES.UNITS || tbl === TABLE_NAMES.GROUPS || tbl === TABLE_NAMES.LINES || tbl === TABLE_NAMES.MACHINE_NAMES || tbl === TABLE_NAMES.MODELS || tbl === TABLE_NAMES.BRANDS || tbl === TABLE_NAMES.CATEGORIES || tbl === TABLE_NAMES.PREVENTIVE_CONFIG || tbl === TABLE_NAMES.MACHINES || tbl === TABLE_NAMES.USERS) {
             // Persistent database is authoritative source of truth for machines, users, hierarchy & config
             if (tbl === TABLE_NAMES.MACHINE_NAMES) {
               const seen = new Set();
