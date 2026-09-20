@@ -20343,6 +20343,28 @@
       "createdAt": "2026-01-01T00:00:00Z",
       "presetId": "preset_maintenance_user",
       "presetName": "Maintenance User"
+    },
+    {
+      "id": "usr-fallback-superadmin",
+      "username": "superadmin",
+      "password": "",
+      "name": "Central System Administrator",
+      "employeeId": "AMG-HQ-002",
+      "email": "admin.backup@al-muslim.com",
+      "phone": "+8801711000002",
+      "department": "Central Engineering & Maintenance",
+      "designation": "System Administrator",
+      "role": "ADMIN",
+      "roleId": "role-super-admin",
+      "status": "ACTIVE",
+      "mustChangePassword": false,
+      "assignedScope": {
+        "allGroups": true,
+        "groupIds": [],
+        "unitIds": [],
+        "floorIds": [],
+        "lineIds": []
+      }
     }
   ],
   "approval_requests": [
