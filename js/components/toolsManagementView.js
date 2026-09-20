@@ -6829,6 +6829,41 @@ function matchItemToCatalog(rawName, catalogList) {
 }
 
 /**
+ * Validates and cleans a detected requisition number string.
+ * Strictly guarantees that header labels, factory jargon, and non-numeric strings
+ * (e.g. 'REQUISITIONFROM', 'MAINTENANCE', 'STATUS') are never accepted.
+ */
+export function cleanAndValidateReqNo(val) {
+  if (!val || typeof val !== 'string') return '';
+  let clean = val.replace(/[\*\s\-_]/g, '').toUpperCase();
+  if (/^[1|l]R/i.test(clean)) clean = 'IR' + clean.slice(2);
+
+  // Length sanity check
+  if (clean.length < 5 || clean.length > 25) return '';
+
+  // MUST contain at least 3 digits (Requisition numbers always have numbers, e.g. IR2507318801, 142472)
+  const digits = (clean.match(/\d/g) || []).length;
+  if (digits < 3) return '';
+
+  // Reject any string containing known ERP keywords / field labels
+  const blacklisted = [
+    'REQUISITION', 'REQFROM', 'REQTO', 'MAINTENANCE', 'SEWING', 'CUTTING', 'FINISHING',
+    'WAITING', 'APPROVED', 'PENDING', 'REJECTED', 'STATUS', 'DEPARTMENT', 'SECTION',
+    'STORE', 'LOCATION', 'FACTORY', 'COMPANY', 'REMARKS', 'COMMENTS', 'ISSUED',
+    'TOTAL', 'OPENING', 'CLOSING', 'STOCK', 'QUANTITY'
+  ];
+  if (blacklisted.some(kw => clean.includes(kw))) return '';
+
+  // Match legitimate factory requisition patterns
+  if (/^(?:IR|PR|MR|SR|REQ|TR|WO)[A-Z0-9]{3,20}$/i.test(clean)) return clean;
+  if (/^\d{5,14}$/.test(clean)) return clean;
+  if (/^[A-Z]{1,4}\d{4,14}$/i.test(clean)) return clean;
+  if (digits >= 4) return clean;
+
+  return '';
+}
+
+/**
  * Universal ERP PDF Parser
  * Filters out all unwanted columns (SL No, Item Id, Requisition To, Opening Stock, etc.)
  * and extracts ONLY data from the 'Item Name' column cell containing:
@@ -6853,45 +6888,46 @@ export function parseRealErpPdfData(rawInput) {
   text = text.replace(/\bNa1mul\b/gi, 'Najmul');
 
   // 2. Auto-Detect ERP Internal Requisition Number (e.g. "Requisition No : IR260227649" or "Req No : * I R260227649 *")
-  // Priority 1: Barcode star pattern e.g. "* I R260227649*" or "*IR260227649*"
-  const starMatch = text.match(/\*\s*([1I]\s*R\s*[0-9\s\-]{6,20})\s*\*/i) || text.match(/\*\s*([A-Za-z0-9\s\-]{6,25})\s*\*/);
-  if (starMatch) {
-    let starCode = starMatch[1].replace(/\s+/g, '').toUpperCase();
-    if (/^1R\d{6,14}$/i.test(starCode)) starCode = 'IR' + starCode.slice(2);
-    if (/^[A-Z]{1,4}\d{6,14}$/i.test(starCode)) {
-      detectedRequisitionNo = starCode;
+  // Priority 1: Barcode star pattern e.g. "* I R260227649*" or "*IR2507318801*" or "*142472*"
+  const starMatches = text.matchAll(/\*\s*([A-Za-z0-9\s\-]{5,25})\s*\*/g);
+  for (const sm of starMatches) {
+    const candidate = cleanAndValidateReqNo(sm[1]);
+    if (candidate) {
+      detectedRequisitionNo = candidate;
+      break;
     }
   }
 
-  // Priority 2: Direct Requisition No label with explicit IR code: "Requisition No : IR260227649"
+  // Priority 2: Direct Requisition No label on SAME LINE (strict horizontal spacing, prevents crossing newlines)
   if (!detectedRequisitionNo) {
-    const directIr = text.match(/(?:requisition\s*(?:no\.?|num(?:ber)?|#)|req\.?\s*(?:no\.?|#))\s*[:\-–—=\t ]+\*?\s*([1I]R[\-\s]?[0-9]{6,14})/i);
-    if (directIr) {
-      detectedRequisitionNo = directIr[1].replace(/[\s\-]/g, '').toUpperCase();
-      if (detectedRequisitionNo.startsWith('1R')) detectedRequisitionNo = 'IR' + detectedRequisitionNo.slice(2);
-    }
-  }
-
-  // Priority 3: General Requisition label with trailing word stripping (e.g. stops before Date / Status / Line / Req)
-  if (!detectedRequisitionNo) {
-    const reqMatch = text.match(/(?:requisition\s*(?:no\.?|num(?:ber)?|#)|req\.?\s*(?:no\.?|#))\s*[:\-–—=\t ]+\*?\s*([A-Za-z0-9\s\-]{5,35})/i);
-    if (reqMatch) {
-      let candidate = reqMatch[1].split(/[\n\r\t]/)[0].replace(/[\*]/g, '').trim();
-      candidate = candidate.replace(/\s+(?:date|req|status|line|floor|cost|sales|comments).*$/i, '');
-      let collapsed = candidate.replace(/\s+/g, '').toUpperCase();
-      if (/^1R\d{6,14}$/i.test(collapsed)) collapsed = 'IR' + collapsed.slice(2);
-      if (collapsed.length >= 6) {
-        detectedRequisitionNo = collapsed;
+    const sameLineMatch = text.match(/(?:requisition\s*(?:no\.?|num(?:ber)?|#)|req\.?\s*(?:no\.?|#))[^\S\r\n]*[:\-–—=\t ]+[^\S\r\n]*\*?\s*([A-Za-z0-9\-_]{4,25})/i);
+    if (sameLineMatch) {
+      const candidate = cleanAndValidateReqNo(sameLineMatch[1]);
+      if (candidate) {
+        detectedRequisitionNo = candidate;
       }
     }
   }
 
-  // Priority 4: Standalone IR code pattern anywhere e.g. IR260227649 or IR-2507318801
+  // Priority 3: Direct Requisition No label followed by newline and number on next line (must satisfy validation)
   if (!detectedRequisitionNo) {
-    const codeMatch = text.match(/\b([1I]R[\-\s]?[0-9]{6,14})\b/i);
-    if (codeMatch) {
-      detectedRequisitionNo = codeMatch[1].replace(/[\s\-]/g, '').toUpperCase();
-      if (detectedRequisitionNo.startsWith('1R')) detectedRequisitionNo = 'IR' + detectedRequisitionNo.slice(2);
+    const nextLineMatch = text.match(/(?:requisition\s*(?:no\.?|num(?:ber)?|#)|req\.?\s*(?:no\.?|#))[^\S\r\n]*[:\-–—=\t ]*\r?\n\s*\*?\s*([A-Za-z0-9\-_]{4,25})/i);
+    if (nextLineMatch) {
+      const candidate = cleanAndValidateReqNo(nextLineMatch[1]);
+      if (candidate) {
+        detectedRequisitionNo = candidate;
+      }
+    }
+  }
+
+  // Priority 4: Standalone IR / PR / MR / REQ code anywhere in document e.g. IR260227649 or IR2507318801
+  if (!detectedRequisitionNo) {
+    const standaloneMatch = text.match(/\b([1I|l]R[\-\s]?[0-9]{6,14}|(?:PR|MR|SR|REQ)[\-\s]?[0-9]{4,14})\b/i);
+    if (standaloneMatch) {
+      const candidate = cleanAndValidateReqNo(standaloneMatch[1]);
+      if (candidate) {
+        detectedRequisitionNo = candidate;
+      }
     }
   }
 
@@ -7764,6 +7800,28 @@ Tools User - Shojib - 132694 [New]`;
         parsedToolList.forEach(pi => {
           pi.remarks = `${reqTag}: ${detectedMechanic.name || 'Mechanic'} (${detectedMechanic.idNumber || '-'})`;
         });
+
+        // Update footer summary
+        const foot = document.getElementById('lbl-modal-footer-summary');
+        if (foot) {
+          foot.innerHTML = `Ready to Allocate: <strong style="color: #38bdf8;">${parsedToolList.length} Items</strong> for <strong style="color: #fff;">${detectedMechanic.name || 'Mechanic'}</strong> (${detectedMechanic.idNumber || '-'})${detectedRequisitionNo ? ` • Req: <strong style="color: #fde047; font-family: monospace;">#${detectedRequisitionNo}</strong>` : ''}`;
+        }
+
+        // Update status badge
+        const badge = document.getElementById('badge-modal-req-status');
+        if (badge) {
+          if (detectedRequisitionNo) {
+            badge.style.color = '#86efac';
+            badge.style.background = 'rgba(34,197,94,0.2)';
+            badge.style.border = '1px solid #22c55e';
+            badge.textContent = '⚡ Set';
+          } else {
+            badge.style.color = '#64748b';
+            badge.style.background = 'transparent';
+            badge.style.border = 'none';
+            badge.textContent = '⚡ Auto-Detects from PDF';
+          }
+        }
       };
     }
 

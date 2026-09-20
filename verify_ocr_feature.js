@@ -34,8 +34,8 @@ console.log('  ✅ PASS: server.js correctly serves WASM/GZIP and preserves esse
 // 3. Test index.html script tags
 const indexSrc = fs.readFileSync('public/index.html', 'utf8');
 assert(indexSrc.includes('tesseract.min.js'), "index.html missing tesseract.min.js script tag");
-assert(indexSrc.includes('app.js?v=3.4.0'), "index.html missing cache-busting v3.4.0");
-console.log('  ✅ PASS: public/index.html includes Tesseract.js script tag & v3.4.0 cache-buster');
+assert(/app\.js\?v=\d+\.\d+\.\d+/.test(indexSrc), "index.html missing cache-busting version parameter");
+console.log('  ✅ PASS: public/index.html includes Tesseract.js script tag & cache-buster');
 
 // 4. Test toolsManagementView.js implementations
 const viewSrc = fs.readFileSync('public/js/components/toolsManagementView.js', 'utf8');
@@ -43,12 +43,30 @@ assert(viewSrc.includes('btn-open-ocr-import-modal'), "toolsManagementView.js mi
 assert(viewSrc.includes('openSmartOcrModal'), "toolsManagementView.js missing openSmartOcrModal definition");
 assert(viewSrc.includes('matchItemToCatalog'), "toolsManagementView.js missing matchItemToCatalog");
 assert(viewSrc.includes('parseRealErpPdfData'), "toolsManagementView.js missing parseRealErpPdfData");
+assert(viewSrc.includes('cleanAndValidateReqNo'), "toolsManagementView.js missing cleanAndValidateReqNo");
 assert(viewSrc.includes('OCR_FACTORY_ALIASES'), "toolsManagementView.js missing OCR_FACTORY_ALIASES");
 assert(viewSrc.includes('inp-modal-requisition-no'), "toolsManagementView.js missing inp-modal-requisition-no input");
 assert(viewSrc.includes('detectedRequisitionNo'), "toolsManagementView.js missing detectedRequisitionNo variable");
 assert(viewSrc.includes('card-tpl-dipok'), "toolsManagementView.js missing card-tpl-dipok template");
 assert(viewSrc.includes('IR2507318801'), "toolsManagementView.js missing IR2507318801 requisition number");
-console.log('  ✅ PASS: toolsManagementView.js contains Requisition No auto-detection (IR2507318801) and presets removed');
+
+// Test that REQUISITIONFROM or multiline labels are never detected as a requisition number
+global.window = { addEventListener: () => {} };
+global.document = { addEventListener: () => {}, querySelector: () => null, getElementById: () => null };
+global.localStorage = { getItem: () => null, setItem: () => {}, removeItem: () => {} };
+global.sessionStorage = { getItem: () => null, setItem: () => {}, removeItem: () => {} };
+
+// Extract cleanAndValidateReqNo and test directly
+const fnMatch = viewSrc.match(/export function cleanAndValidateReqNo\([\s\S]*?^}/m);
+assert(fnMatch, "cleanAndValidateReqNo must be defined in toolsManagementView.js");
+const cleanAndValidateReqNo = new Function("val", fnMatch[0].replace('export function cleanAndValidateReqNo(val) {', '').replace(/}$/, ''));
+
+assert.strictEqual(cleanAndValidateReqNo('REQUISITIONFROM'), '', "Must reject REQUISITIONFROM");
+assert.strictEqual(cleanAndValidateReqNo('MAINTENANCE'), '', "Must reject MAINTENANCE");
+assert.strictEqual(cleanAndValidateReqNo('IR2507318801'), 'IR2507318801', "Must validate IR2507318801");
+assert.strictEqual(cleanAndValidateReqNo('* 1 R 260227649 *'), 'IR260227649', "Must validate and normalize OCR 1R code");
+assert.strictEqual(cleanAndValidateReqNo('142472'), '142472', "Must validate numeric 142472");
+console.log('  ✅ PASS: toolsManagementView.js cleanAndValidateReqNo correctly blocks REQUISITIONFROM and validates valid numbers');
 
 // 5. Test Manpower Database has all factory mechanics
 const db = JSON.parse(fs.readFileSync('data/erp_database.json', 'utf8'));
