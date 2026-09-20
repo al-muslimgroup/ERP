@@ -5,6 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Al-Muslim Group — Maintenance Department ERP</title>
   <meta name="description" content="Al-Muslim Group — Enterprise Maintenance Department ERP system for physical machinery, transfers, spare parts, and workforce management.">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
   
   <!-- Modern Industrial Typography -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -76,9 +79,10 @@
             '<p style="font-size: 13px; color: #cbd5e1; margin-bottom: 16px;">' + (errorMsg || 'The application encountered an issue while initializing components.') + '</p>' +
             (detail ? '<div style="background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.25); border-radius: 6px; padding: 10px; font-family: monospace; font-size: 11.5px; color: #fca5a5; text-align: left; margin-bottom: 20px; word-break: break-word;">' + detail + '</div>' : '') +
             '<div style="display: flex; gap: 10px; justify-content: center; flex-wrap: wrap;">' +
-              '<button onclick="window.location.reload()" style="background: #2563eb; color: #fff; border: none; padding: 10px 20px; border-radius: 6px; font-weight: 700; font-size: 13px; cursor: pointer;">🔄 Retry / Reload</button>' +
-              '<button onclick="localStorage.clear(); window.location.reload();" style="background: #374151; color: #e2e8f0; border: 1px solid #4b5563; padding: 10px 18px; border-radius: 6px; font-size: 13px; cursor: pointer;">🧹 Reset Storage &amp; Restart</button>' +
+              '<button onclick="window.__forceFreshReload ? window.__forceFreshReload() : window.location.reload()" style="background: #2563eb; color: #fff; border: none; padding: 10px 20px; border-radius: 6px; font-weight: 700; font-size: 13px; cursor: pointer;">🔄 Fresh Reload &amp; Clear Cache</button>' +
+              '<button onclick="localStorage.clear(); sessionStorage.clear(); window.location.href = window.location.origin + window.location.pathname + \'?reset=\' + Date.now();" style="background: #374151; color: #e2e8f0; border: 1px solid #4b5563; padding: 10px 18px; border-radius: 6px; font-size: 13px; cursor: pointer;">🧹 Reset Storage &amp; Restart</button>' +
             '</div>' +
+            '<p style="font-size: 11px; color: #94a3b8; margin-top: 14px; margin-bottom: 0;">Tip: Press <b>Ctrl + Shift + R</b> (or <b>Ctrl + F5</b>) to bypass browser cache.</p>' +
           '</div>' +
         '</div>';
     };
@@ -133,16 +137,32 @@
         window.__showStartupError('Startup Timeout Notice', 'The application took longer than expected to launch. Click Retry to reload.');
       }
     }, 4500);
+
+    window.__forceFreshReload = function() {
+      try {
+        if (window.caches) {
+          caches.keys().then(function(keys) {
+            keys.forEach(function(k) { caches.delete(k); });
+          });
+        }
+      } catch(_) {}
+      try { localStorage.clear(); } catch(_) {}
+      try { sessionStorage.clear(); } catch(_) {}
+      var base = window.location.origin + window.location.pathname;
+      window.location.replace(base + '?t=' + Date.now() + window.location.hash);
+    };
+
     // Auto cache flush on new deployment build version
-    var CURRENT_BUILD = '4.3.1';
+    var CURRENT_BUILD = '4.3.2';
     if (localStorage.getItem('al_muslim_build_ver') !== CURRENT_BUILD) {
-      localStorage.clear();
+      try { localStorage.clear(); } catch(_) {}
+      try { sessionStorage.clear(); } catch(_) {}
       localStorage.setItem('al_muslim_build_ver', CURRENT_BUILD);
     }
   </script>
 
-  <!-- Main ES Module Application Entrypoint (Cache-Busted v4.3.1) -->
-  <script type="module" src="js/app.js?v=4.3.1"></script>
+  <!-- Main ES Module Application Entrypoint (Cache-Busted v4.3.2) -->
+  <script type="module" src="js/app.js?v=4.3.2"></script>
 
   <style>
     @keyframes spin {
