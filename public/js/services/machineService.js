@@ -1,0 +1,804 @@
+/**
+ * Al-Muslim Group Garments Factory Maintenance Machine ERP
+ * Machine Inventory Core Service (Supports Infinite Machines with Unique Serials)
+ */
+
+import { storage } from '../db/storage.js';
+import { TABLE_NAMES } from '../db/schema.js';
+import { authService } from './authService.js';
+import { masterDataService } from './masterDataService.js';
+import { approvalService } from './approvalService.js';
+import { auditService } from './auditService.js';
+import { notificationService } from './notificationService.js';
+import { historyService } from './historyService.js';
+
+class MachineService {
+  /**
+   * Check for duplicate serial number with comprehensive conflict report
+   */
+  checkDuplicateSerial(serialNumber, excludeMachineId = null) {
+    if (!serialNumber) return { isDuplicate: false };
+
+    const cleanSerial = serialNumber.trim().toUpperCase();
+    const existing = storage.findMachineBySerial(cleanSerial);
+
+    if (existing && existing.id !== excludeMachineId) {
+      const unit = storage.getItem(TABLE_NAMES.UNITS, existing.unitId);
+      const floor = storage.getItem(TABLE_NAMES.FLOORS, existing.floorId);
+      const line = storage.getItem(TABLE_NAMES.LINES, existing.lineId);
+      const mn = storage.getItem(TABLE_NAMES.MACHINE_NAMES, existing.machineNameId);
+      const brand = storage.getItem(TABLE_NAMES.BRANDS, existing.brandId);
+      const model = storage.getItem(TABLE_NAMES.MODELS, existing.modelId);
+
+      return {
+        isDuplicate: true,
+        message: 'This Machine Serial Number already exists in the ERP database.',
+        conflict: {
+          id: existing.id,
+          serialNumber: existing.serialNumber,
+          machineName: mn?.name || 'N/A',
+          brand: brand?.name || 'N/A',
+          model: model?.name || 'N/A',
+          unit: unit?.name || 'N/A',
+          floor: floor?.name || 'N/A',
+          line: line?.name || 'N/A',
+          status: existing.status
+        }
+      };
+    }
+
+    return { isDuplicate: false };
+  }
+
+  /**
+   * Auto-generate unique sequential serial number formatted as:
+   * [Floor Short Code]-[Machine Number]
+   * Examples: JA-01, JA-02, BG-01, TT-01, TS-01, CH-01, PD-01, PT-01, ML-01
+   */
+  generateNextSerialNumber(floorId, customPrefix = null, padding = 2) {
+    let floorCode = customPrefix;
+    if (!floorCode && floorId) {
+      const floorObj = storage.getItem(TABLE_NAMES.FLOORS, floorId);
+      floorCode = floorObj?.code || (floorObj?.name ? floorObj.name.substring(0, 2).toUpperCase() : 'MC');
+    }
+    if (!floorCode) floorCode = 'JA';
+
+    const cleanPrefix = floorCode.trim().toUpperCase();
+    const allMachines = storage.getTable(TABLE_NAMES.MACHINES) || [];
+    
+    let maxSeq = 0;
+    const pattern = new RegExp(`^${cleanPrefix}[-_]?(\\d+)$`, 'i');
+
+    allMachines.forEach(m => {
+      if (m.serialNumber) {
+        const match = m.serialNumber.trim().toUpperCase().match(pattern);
+        if (match && match[1]) {
+          const num = parseInt(match[1], 10);
+          if (!isNaN(num) && num > maxSeq) {
+            maxSeq = num;
+          }
+        }
+      }
+    });
+
+    const nextNum = maxSeq + 1;
+    const padWidth = Math.max(2, parseInt(padding, 10) || 2);
+    return `${cleanPrefix}-${String(nextNum).padStart(padWidth, '0')}`;
+  }
+
+  /**
+   * Parse potential floor short code from serial number
+   */
+  parseFloorFromSerial(serialNumber) {
+    if (!serialNumber) return null;
+    const parts = serialNumber.trim().split(/[-_]/);
+    if (parts.length >= 2) {
+      const code = parts[0].toUpperCase();
+      const allFloors = storage.getTable(TABLE_NAMES.FLOORS) || [];
+      return allFloors.find(f => f.code && f.code.toUpperCase() === code) || null;
+    }
+    return null;
+  }
+
+  /**
+   * High-Performance Scoped Query Engine (Handles infinite records with pagination & multi-filter)
+   */
+  getMachines(params = {}) {
+    let allMachines = storage.getTable(TABLE_NAMES.MACHINES) || [];
+
+    // 1. Strict Backend / Storage-level Organization Scoping
+    const scoped = authService.getScopedFilter();
+    if (scoped) {
+      allMachines = allMachines.filter(m => {
+        if (scoped.unitIds?.length > 0 && !scoped.unitIds.includes(m.unitId)) return false;
+        if (scoped.floorIds?.length > 0 && !scoped.floorIds.includes(m.floorId)) return false;
+        if (scoped.lineIds?.length > 0 && !scoped.lineIds.includes(m.lineId)) return false;
+        return true;
+      });
+    }
+
+    // 2. Cascading Primary Organization Filters
+    if (params.groupId) {
+      allMachines = allMachines.filter(m => m.groupId === params.groupId);
+    }
+    if (params.unitId) {
+      allMachines = allMachines.filter(m => m.unitId === params.unitId);
+    }
+    if (params.floorId) {
+      allMachines = allMachines.filter(m => m.floorId === params.floorId);
+    }
+    if (params.lineId) {
+      allMachines = allMachines.filter(m => m.lineId === params.lineId);
+    }
+
+    // 3. Machine Technical Hierarchy Filters
+    if (params.machineNameId) {
+      allMachines = allMachines.filter(m => m.machineNameId === params.machineNameId);
+    }
+    if (params.brandId) {
+      allMachines = allMachines.filter(m => m.brandId === params.brandId);
+    }
+    if (params.modelId) {
+      allMachines = allMachines.filter(m => m.modelId === params.modelId);
+    }
+    if (params.status && params.status !== 'ALL') {
+      allMachines = allMachines.filter(m => m.status === params.status);
+    }
+
+    // 4. Global Multi-Field Search (Serial, Asset ID, Remarks, Model, Brand, Name, Line, Floor, Unit)
+    if (params.search) {
+      const q = params.search.trim().toLowerCase();
+      
+      // Look up master data maps for ultra-fast text matching
+      const grpMap = new Map(storage.getTable(TABLE_NAMES.GROUPS).map(x => [x.id, x.name.toLowerCase()]));
+      const mnMap = new Map(storage.getTable(TABLE_NAMES.MACHINE_NAMES).map(x => [x.id, x.name.toLowerCase()]));
+      const brdMap = new Map(storage.getTable(TABLE_NAMES.BRANDS).map(x => [x.id, x.name.toLowerCase()]));
+      const mdlMap = new Map(storage.getTable(TABLE_NAMES.MODELS).map(x => [x.id, x.name.toLowerCase()]));
+      const linMap = new Map(storage.getTable(TABLE_NAMES.LINES).map(x => [x.id, x.name.toLowerCase()]));
+      const flrMap = new Map(storage.getTable(TABLE_NAMES.FLOORS).map(x => [x.id, x.name.toLowerCase()]));
+      const untMap = new Map(storage.getTable(TABLE_NAMES.UNITS).map(x => [x.id, x.name.toLowerCase()]));
+
+      allMachines = allMachines.filter(m => {
+        if (m.serialNumber?.toLowerCase().includes(q)) return true;
+        if (m.remarks?.toLowerCase().includes(q)) return true;
+        if (mnMap.get(m.machineNameId)?.includes(q)) return true;
+        if (brdMap.get(m.brandId)?.includes(q)) return true;
+        if (mdlMap.get(m.modelId)?.includes(q)) return true;
+        const lName = linMap.get(m.lineId) || m.line?.toLowerCase() || '';
+        if (lName.includes(q)) return true;
+        const cleanL = lName.replace(/^[a-z]{2,3}-/i, '').trim();
+        if (cleanL && (cleanL === q || `line ${cleanL}`.includes(q) || cleanL.includes(q))) return true;
+        if (flrMap.get(m.floorId)?.includes(q) || m.floor?.toLowerCase().includes(q)) return true;
+        if (untMap.get(m.unitId)?.includes(q) || m.unit?.toLowerCase().includes(q)) return true;
+        if (grpMap.get(m.groupId)?.includes(q) || m.group?.toLowerCase().includes(q)) return true;
+        // Check dynamic custom field values
+        if (m.customValues) {
+          for (const key in m.customValues) {
+            if (String(m.customValues[key]).toLowerCase().includes(q)) return true;
+          }
+        }
+        return false;
+      });
+    }
+
+    // 5. Dynamic Custom Field Filters
+    if (params.customFilters) {
+      for (const [key, val] of Object.entries(params.customFilters)) {
+        if (val !== undefined && val !== null && val !== '' && val !== 'ALL') {
+          allMachines = allMachines.filter(m => m.customValues && String(m.customValues[key]) === String(val));
+        }
+      }
+    }
+
+    const totalRecords = allMachines.length;
+
+    // 6. Multi-Column Sorting
+    const sortField = params.sortField || 'sl';
+    const sortOrder = params.sortOrder === 'desc' ? -1 : 1;
+
+    allMachines.sort((a, b) => {
+      let valA = a[sortField];
+      let valB = b[sortField];
+
+      // Handle nested master data sort
+      if (sortField === 'machineName') {
+        const nameA = storage.getItem(TABLE_NAMES.MACHINE_NAMES, a.machineNameId)?.name || '';
+        const nameB = storage.getItem(TABLE_NAMES.MACHINE_NAMES, b.machineNameId)?.name || '';
+        return nameA.localeCompare(nameB) * sortOrder;
+      }
+      if (sortField === 'brand') {
+        const bA = storage.getItem(TABLE_NAMES.BRANDS, a.brandId)?.name || '';
+        const bB = storage.getItem(TABLE_NAMES.BRANDS, b.brandId)?.name || '';
+        return bA.localeCompare(bB) * sortOrder;
+      }
+      if (sortField === 'model') {
+        const mA = storage.getItem(TABLE_NAMES.MODELS, a.modelId)?.name || '';
+        const mB = storage.getItem(TABLE_NAMES.MODELS, b.modelId)?.name || '';
+        return mA.localeCompare(mB) * sortOrder;
+      }
+      if (sortField === 'group') {
+        const gA = storage.getItem(TABLE_NAMES.GROUPS, a.groupId)?.name || a.group || '';
+        const gB = storage.getItem(TABLE_NAMES.GROUPS, b.groupId)?.name || b.group || '';
+        return gA.localeCompare(gB) * sortOrder;
+      }
+      if (sortField === 'unit') {
+        const uA = storage.getItem(TABLE_NAMES.UNITS, a.unitId)?.name || a.unit || '';
+        const uB = storage.getItem(TABLE_NAMES.UNITS, b.unitId)?.name || b.unit || '';
+        return uA.localeCompare(uB) * sortOrder;
+      }
+      if (sortField === 'floor') {
+        const fA = storage.getItem(TABLE_NAMES.FLOORS, a.floorId)?.name || a.floor || '';
+        const fB = storage.getItem(TABLE_NAMES.FLOORS, b.floorId)?.name || b.floor || '';
+        return fA.localeCompare(fB) * sortOrder;
+      }
+      if (sortField === 'line') {
+        const lA = storage.getItem(TABLE_NAMES.LINES, a.lineId)?.name || a.line || '';
+        const lB = storage.getItem(TABLE_NAMES.LINES, b.lineId)?.name || b.line || '';
+        return lA.localeCompare(lB) * sortOrder;
+      }
+      if (sortField.startsWith('cf_')) {
+        const cfKey = sortField.replace('cf_', '');
+        valA = a.customValues?.[cfKey] || '';
+        valB = b.customValues?.[cfKey] || '';
+      }
+
+      if (valA === undefined || valA === null) valA = '';
+      if (valB === undefined || valB === null) valB = '';
+
+      if (typeof valA === 'number' && typeof valB === 'number') {
+        return (valA - valB) * sortOrder;
+      }
+      return String(valA).localeCompare(String(valB), undefined, { numeric: true }) * sortOrder;
+    });
+
+    // 7. High Performance Pagination
+    const page = Math.max(1, parseInt(params.page, 10) || 1);
+    const limit = params.limit === 'ALL' ? totalRecords : Math.max(1, parseInt(params.limit, 10) || 50);
+    const totalPages = Math.ceil(totalRecords / limit) || 1;
+    const startIndex = (page - 1) * limit;
+    const paginatedItems = params.limit === 'ALL' ? allMachines : allMachines.slice(startIndex, startIndex + limit);
+
+    return {
+      items: paginatedItems,
+      total: totalRecords,
+      page: page,
+      limit: limit,
+      totalPages: totalPages
+    };
+  }
+
+  getMachineById(id) {
+    const machine = storage.getItem(TABLE_NAMES.MACHINES, id);
+    if (!machine) return null;
+
+    // Check location scoping
+    if (!authService.isLocationAllowed(machine.unitId, machine.floorId, machine.lineId)) {
+      throw new Error('Access Denied: You do not have permission to view this machine record.');
+    }
+
+    return machine;
+  }
+
+  getEnrichedMachine(id) {
+    const m = this.getMachineById(id);
+    if (!m) return null;
+
+    return {
+      ...m,
+      group: storage.getItem(TABLE_NAMES.GROUPS, m.groupId),
+      unit: storage.getItem(TABLE_NAMES.UNITS, m.unitId),
+      floor: storage.getItem(TABLE_NAMES.FLOORS, m.floorId),
+      line: storage.getItem(TABLE_NAMES.LINES, m.lineId),
+      machineName: storage.getItem(TABLE_NAMES.MACHINE_NAMES, m.machineNameId),
+      brand: storage.getItem(TABLE_NAMES.BRANDS, m.brandId),
+      model: storage.getItem(TABLE_NAMES.MODELS, m.modelId)
+    };
+  }
+
+  /**
+   * Add new machine with duplicate verification & approval workflow
+   */
+  addMachine(machineData) {
+    const user = authService.getCurrentUser();
+
+    // Check action authorization
+    if (!authService.hasAccess('machines', 'ADD')) {
+      throw new Error('Access Denied: You do not have permission to add new machines.');
+    }
+
+    // Check location authorization
+    if (!authService.isLocationAllowed(machineData.unitId, machineData.floorId, machineData.lineId)) {
+      throw new Error('Access Denied: You are not authorized to add machines to this location.');
+    }
+
+    // Required fields check
+    if (!machineData.machineNameId || !machineData.brandId || !machineData.modelId || !machineData.serialNumber) {
+      throw new Error('Machine Name, Brand, Model, and Serial Number are required.');
+    }
+
+    // Duplicate Serial Check
+    const dupCheck = this.checkDuplicateSerial(machineData.serialNumber);
+    if (dupCheck.isDuplicate) {
+      const err = new Error(dupCheck.message);
+      err.conflict = dupCheck.conflict;
+      throw err;
+    }
+
+    const allMachines = storage.getTable(TABLE_NAMES.MACHINES);
+    const sl = allMachines.length + 1;
+
+    const grpObj = storage.getItem(TABLE_NAMES.GROUPS, machineData.groupId);
+    const untObj = storage.getItem(TABLE_NAMES.UNITS, machineData.unitId);
+    const flrObj = storage.getItem(TABLE_NAMES.FLOORS, machineData.floorId);
+    const linObj = storage.getItem(TABLE_NAMES.LINES, machineData.lineId);
+    const mnObj = storage.getItem(TABLE_NAMES.MACHINE_NAMES, machineData.machineNameId);
+    const brdObj = storage.getItem(TABLE_NAMES.BRANDS, machineData.brandId);
+    const mdlObj = storage.getItem(TABLE_NAMES.MODELS, machineData.modelId);
+
+    const qty = machineData.quantity !== undefined ? Number(machineData.quantity) : 1;
+    const status = machineData.status || 'ACTIVE';
+
+    const running = (status === 'ACTIVE') ? qty : 0;
+    const usable_idle = (status === 'IDLE') ? qty : 0;
+    const repairable_idle = (status === 'MAINTENANCE' || status === 'BREAKDOWN') ? qty : 0;
+
+    const newMachine = {
+      ...machineData,
+      sl: sl,
+      quantity: qty,
+      status: status,
+      running,
+      usable_idle,
+      repairable_idle,
+      group: grpObj?.name || 'Al-Muslim Group',
+      groupName: grpObj?.name || 'Al-Muslim Group',
+      unit: untObj?.name || '',
+      unitName: untObj?.name || '',
+      floor: flrObj?.name || '',
+      floorName: flrObj?.name || '',
+      line: linObj?.name || '',
+      lineName: linObj?.name || '',
+      machineName: mnObj?.name || '',
+      brand: brdObj?.name || '',
+      model: mdlObj?.name || '',
+      customValues: machineData.customValues || {},
+      createdBy: user?.id || 'usr-super-admin',
+      createdAt: new Date().toISOString(),
+      updatedBy: user?.id || 'usr-super-admin',
+      updatedAt: new Date().toISOString()
+    };
+
+    // Approval routing for scoped maintenance staff
+    if (authService.requiresApproval()) {
+      newMachine.status = 'PENDING_APPROVAL';
+      const created = storage.insert(TABLE_NAMES.MACHINES, newMachine);
+      
+      approvalService.createRequest({
+        machineId: created.id,
+        type: 'NEW_MACHINE',
+        remarks: machineData.remarks || 'New machine added by maintenance user.',
+        diffs: [
+          { field: 'status', label: 'Status', oldValue: 'NEW', newValue: 'ACTIVE' }
+        ]
+      });
+
+      notificationService.notify(
+        'New Machine Pending Approval',
+        `${user.name} registered Machine ${created.serialNumber} which requires admin approval.`,
+        'APPROVAL_REQUEST',
+        '#approval-center'
+      );
+
+      auditService.log('MACHINE_SUBMITTED_FOR_APPROVAL', 'MACHINE', created.serialNumber, `New machine ${created.serialNumber} created pending approval.`);
+      return { machine: created, pendingApproval: true };
+    }
+
+    const created = storage.insert(TABLE_NAMES.MACHINES, newMachine);
+    auditService.log('MACHINE_ADDED', 'MACHINE', created.serialNumber, `Added machine: ${created.serialNumber}`);
+
+    // Automatic History Tracking
+    historyService.recordActivity({
+      machineId: created.id,
+      serialNumber: created.serialNumber,
+      actionType: 'ADD_MACHINE',
+      title: `Machine Registered (${mnObj?.name || 'Sewing Machine'})`,
+      details: `Commissioned machine ${created.serialNumber} into ${untObj?.name || ''} > ${flrObj?.name || ''} > ${linObj?.name || ''}`,
+      toLocation: {
+        groupId: created.groupId,
+        unitId: created.unitId,
+        floorId: created.floorId,
+        lineId: created.lineId,
+        unitName: untObj?.name,
+        floorName: flrObj?.name,
+        lineName: linObj?.name
+      },
+      newValue: { status: created.status, line: linObj?.name },
+      remarks: created.remarks || 'Machine commissioned and registered'
+    });
+
+    return { machine: created, pendingApproval: false };
+  }
+
+  /**
+   * Update machine with inline/form validation and visual diff approval
+   */
+  updateMachine(id, updates) {
+    const user = authService.getCurrentUser();
+    const existing = this.getMachineById(id);
+    if (!existing) throw new Error('Machine not found.');
+
+    // Check action authorization
+    if (!authService.hasAccess('machines', 'EDIT')) {
+      throw new Error('Access Denied: You do not have permission to modify machine records.');
+    }
+
+    if (!authService.isLocationAllowed(existing.unitId, existing.floorId, existing.lineId)) {
+      throw new Error('Access Denied: You cannot edit machines in this location.');
+    }
+
+    // If moving location, verify target location is authorized
+    if (updates.unitId || updates.floorId || updates.lineId) {
+      const targetUnit = updates.unitId || existing.unitId;
+      const targetFloor = updates.floorId || existing.floorId;
+      const targetLine = updates.lineId || existing.lineId;
+      if (!authService.isLocationAllowed(targetUnit, targetFloor, targetLine)) {
+        throw new Error('Access Denied: You are not authorized to move machines to this target location.');
+      }
+    }
+
+    // Check duplicate serial if changed
+    if (updates.serialNumber && updates.serialNumber !== existing.serialNumber) {
+      const dupCheck = this.checkDuplicateSerial(updates.serialNumber, id);
+      if (dupCheck.isDuplicate) {
+        const err = new Error(dupCheck.message);
+        err.conflict = dupCheck.conflict;
+        throw err;
+      }
+    }
+
+    // Approval routing for scoped maintenance staff
+    if (authService.requiresApproval()) {
+      const diffs = approvalService.calculateDiffs(existing, updates);
+      if (diffs.length === 0) return { machine: existing, message: 'No changes detected.' };
+
+      const req = approvalService.createRequest({
+        machineId: id,
+        type: 'EDIT_MACHINE',
+        remarks: updates.editReason || 'Machine parameters modified by maintenance user.',
+        proposedUpdates: updates,
+        diffs: diffs
+      });
+
+      notificationService.notify(
+        'Machine Edit Request Submitted',
+        `${user.name} submitted edits for Machine ${existing.serialNumber}.`,
+        'APPROVAL_REQUEST',
+        '#approval-center'
+      );
+
+      auditService.log('MACHINE_EDIT_REQUESTED', 'MACHINE', existing.serialNumber, `Edit request submitted for ${existing.serialNumber}.`, existing, updates);
+      return { machine: existing, pendingApproval: true, requestId: req.id };
+    }
+
+    const grpObj = updates.groupId ? storage.getItem(TABLE_NAMES.GROUPS, updates.groupId) : storage.getItem(TABLE_NAMES.GROUPS, existing.groupId);
+    const untObj = updates.unitId ? storage.getItem(TABLE_NAMES.UNITS, updates.unitId) : storage.getItem(TABLE_NAMES.UNITS, existing.unitId);
+    const flrObj = updates.floorId ? storage.getItem(TABLE_NAMES.FLOORS, updates.floorId) : storage.getItem(TABLE_NAMES.FLOORS, existing.floorId);
+    const linObj = updates.lineId ? storage.getItem(TABLE_NAMES.LINES, updates.lineId) : storage.getItem(TABLE_NAMES.LINES, existing.lineId);
+    const mnObj = updates.machineNameId ? storage.getItem(TABLE_NAMES.MACHINE_NAMES, updates.machineNameId) : storage.getItem(TABLE_NAMES.MACHINE_NAMES, existing.machineNameId);
+    const brdObj = updates.brandId ? storage.getItem(TABLE_NAMES.BRANDS, updates.brandId) : storage.getItem(TABLE_NAMES.BRANDS, existing.brandId);
+    const mdlObj = updates.modelId ? storage.getItem(TABLE_NAMES.MODELS, updates.modelId) : storage.getItem(TABLE_NAMES.MODELS, existing.modelId);
+
+    const qty = updates.quantity !== undefined ? Number(updates.quantity) : (existing.quantity || 1);
+    const status = updates.status || existing.status || 'ACTIVE';
+
+    const enrichedUpdates = {
+      ...updates,
+      quantity: qty,
+      status,
+      running: (status === 'ACTIVE') ? qty : 0,
+      usable_idle: (status === 'IDLE') ? qty : 0,
+      repairable_idle: (status === 'MAINTENANCE' || status === 'BREAKDOWN') ? qty : 0,
+      group: grpObj?.name || existing.group || 'Al-Muslim Group',
+      groupName: grpObj?.name || existing.groupName || 'Al-Muslim Group',
+      unit: untObj?.name || existing.unit || '',
+      unitName: untObj?.name || existing.unitName || '',
+      floor: flrObj?.name || existing.floor || '',
+      floorName: flrObj?.name || existing.floorName || '',
+      line: linObj?.name || existing.line || '',
+      lineName: linObj?.name || existing.lineName || '',
+      machineName: mnObj?.name || existing.machineName || '',
+      brand: brdObj?.name || existing.brand || '',
+      model: mdlObj?.name || existing.model || '',
+      updatedBy: user?.id || 'usr-super-admin',
+      updatedAt: new Date().toISOString()
+    };
+
+    // Direct Admin update
+    const updated = storage.update(TABLE_NAMES.MACHINES, id, enrichedUpdates);
+
+    auditService.log('MACHINE_UPDATED', 'MACHINE', updated.serialNumber, `Updated machine ${updated.serialNumber}`, existing, updated);
+
+    // Automatic History Tracking
+    const locChanged = (updates.unitId && updates.unitId !== existing.unitId) ||
+                       (updates.floorId && updates.floorId !== existing.floorId) ||
+                       (updates.lineId && updates.lineId !== existing.lineId);
+    const statusChanged = updates.status && updates.status !== existing.status;
+
+    if (locChanged) {
+      const fromUnit = storage.getItem(TABLE_NAMES.UNITS, existing.unitId);
+      const fromFloor = storage.getItem(TABLE_NAMES.FLOORS, existing.floorId);
+      const fromLine = storage.getItem(TABLE_NAMES.LINES, existing.lineId);
+      const toUnit = storage.getItem(TABLE_NAMES.UNITS, updated.unitId);
+      const toFloor = storage.getItem(TABLE_NAMES.FLOORS, updated.floorId);
+      const toLine = storage.getItem(TABLE_NAMES.LINES, updated.lineId);
+
+      historyService.recordActivity({
+        machineId: updated.id,
+        serialNumber: updated.serialNumber,
+        actionType: 'LOCATION_CHANGE',
+        title: `Location Changed to ${toLine?.name || toFloor?.name}`,
+        details: `Relocated from ${fromUnit?.name || ''} > ${fromFloor?.name || ''} > ${fromLine?.name || ''} to ${toUnit?.name || ''} > ${toFloor?.name || ''} > ${toLine?.name || ''}`,
+        fromLocation: { unitId: existing.unitId, floorId: existing.floorId, lineId: existing.lineId, unitName: fromUnit?.name, floorName: fromFloor?.name, lineName: fromLine?.name },
+        toLocation: { unitId: updated.unitId, floorId: updated.floorId, lineId: updated.lineId, unitName: toUnit?.name, floorName: toFloor?.name, lineName: toLine?.name },
+        previousValue: { location: `${fromUnit?.name} > ${fromFloor?.name} > ${fromLine?.name}` },
+        newValue: { location: `${toUnit?.name} > ${toFloor?.name} > ${toLine?.name}` },
+        remarks: updates.remarks || 'Manual admin location modification'
+      });
+    }
+
+    if (statusChanged) {
+      historyService.recordActivity({
+        machineId: updated.id,
+        serialNumber: updated.serialNumber,
+        actionType: 'STATUS_CHANGE',
+        title: `Status Changed: ${existing.status} → ${updated.status}`,
+        details: `Machine status modified from ${existing.status} to ${updated.status}`,
+        previousValue: { status: existing.status },
+        newValue: { status: updated.status },
+        remarks: updates.remarks || ''
+      });
+    }
+
+    if (!locChanged && !statusChanged) {
+      historyService.recordActivity({
+        machineId: updated.id,
+        serialNumber: updated.serialNumber,
+        actionType: 'EDIT_MACHINE',
+        title: `Machine Specifications Updated`,
+        details: `Admin modified parameters for machine ${updated.serialNumber}`,
+        previousValue: existing,
+        newValue: updated,
+        remarks: updates.remarks || ''
+      });
+    }
+
+    return { machine: updated, pendingApproval: false };
+  }
+
+  /**
+   * Safe Archival / Deletion with policy checks
+   */
+  archiveOrDeleteMachine(id, reason = '') {
+    const user = authService.getCurrentUser();
+    const existing = this.getMachineById(id);
+    if (!existing) throw new Error('Machine not found.');
+
+    if (!authService.hasAccess('machines', 'DELETE')) {
+      throw new Error('Access Denied: You do not have permission to delete or archive machines.');
+    }
+
+    // Check if delete approval is required
+    const settings = storage.getTable(TABLE_NAMES.SETTINGS);
+    if (settings.requireDeleteApproval && !authService.isSuperAdmin()) {
+      approvalService.createRequest({
+        machineId: id,
+        type: 'ARCHIVE_MACHINE',
+        remarks: reason || 'Machine decommission / archive requested.',
+        diffs: [
+          { field: 'status', label: 'Status', oldValue: existing.status, newValue: 'ARCHIVED' }
+        ]
+      });
+
+      notificationService.notify('Machine Deletion Request', `${user.name} requested to archive Machine ${existing.serialNumber}.`, 'APPROVAL_REQUEST', '#approval-center');
+      return { action: 'PENDING_APPROVAL', message: 'Archive request sent to Super Admin for approval.' };
+    }
+
+    // Switch to ARCHIVED
+    const updated = storage.update(TABLE_NAMES.MACHINES, id, {
+      status: 'ARCHIVED',
+      remarks: `${existing.remarks || ''} [Archived on ${new Date().toLocaleDateString()}: ${reason}]`.trim(),
+      updatedBy: user.id
+    });
+
+    auditService.log('MACHINE_ARCHIVED', 'MACHINE', existing.serialNumber, `Archived machine ${existing.serialNumber}: ${reason}`);
+    
+    historyService.recordActivity({
+      machineId: existing.id,
+      serialNumber: existing.serialNumber,
+      actionType: 'DELETE_MACHINE',
+      title: `Machine Archived / Decommissioned`,
+      details: `Machine status switched to ARCHIVED. Reason: ${reason}`,
+      previousValue: { status: existing.status },
+      newValue: { status: 'ARCHIVED' },
+      remarks: reason
+    });
+
+    return { action: 'ARCHIVED', machine: updated };
+  }
+
+  // Bulk Operations
+  bulkUpdateStatus(machineIds, newStatus, remarks = '') {
+    const user = authService.getCurrentUser();
+    let updatedCount = 0;
+
+    machineIds.forEach(id => {
+      const m = storage.getItem(TABLE_NAMES.MACHINES, id);
+      if (m && authService.isLocationAllowed(m.unitId, m.floorId, m.lineId)) {
+        const oldStatus = m.status;
+        storage.update(TABLE_NAMES.MACHINES, id, {
+          status: newStatus,
+          remarks: remarks ? `${m.remarks || ''} | ${remarks}` : m.remarks,
+          updatedBy: user.id
+        });
+        updatedCount++;
+
+        historyService.recordActivity({
+          machineId: m.id,
+          serialNumber: m.serialNumber,
+          actionType: 'STATUS_CHANGE',
+          title: `Bulk Status Update: ${oldStatus} → ${newStatus}`,
+          details: `Bulk status update executed by ${user.name}`,
+          previousValue: { status: oldStatus },
+          newValue: { status: newStatus },
+          remarks: remarks || 'Bulk status modification'
+        });
+      }
+    });
+
+    auditService.log('BULK_STATUS_CHANGE', 'MACHINE', `${updatedCount} records`, `Bulk changed status to ${newStatus}`);
+    return { updatedCount };
+  }
+
+  bulkArchive(machineIds, reason = 'Bulk decommission') {
+    const user = authService.getCurrentUser();
+    let archivedCount = 0;
+
+    machineIds.forEach(id => {
+      const m = storage.getItem(TABLE_NAMES.MACHINES, id);
+      if (m && authService.isLocationAllowed(m.unitId, m.floorId, m.lineId)) {
+        const oldStatus = m.status;
+        storage.update(TABLE_NAMES.MACHINES, id, {
+          status: 'ARCHIVED',
+          remarks: `${m.remarks || ''} [Bulk Archived: ${reason}]`.trim(),
+          updatedBy: user.id
+        });
+        archivedCount++;
+
+        historyService.recordActivity({
+          machineId: m.id,
+          serialNumber: m.serialNumber,
+          actionType: 'DELETE_MACHINE',
+          title: `Machine Bulk Archived`,
+          details: `Machine bulk archived. Reason: ${reason}`,
+          previousValue: { status: oldStatus },
+          newValue: { status: 'ARCHIVED' },
+          remarks: reason
+        });
+      }
+    });
+
+    auditService.log('BULK_ARCHIVE', 'MACHINE', `${archivedCount} records`, `Bulk archived machines. Reason: ${reason}`);
+    return { archivedCount };
+  }
+
+  /**
+   * Delete Machine - Alias to permanent delete machine record from database
+   */
+  deleteMachine(id, reason = 'Admin manual deletion') {
+    return this.permanentDeleteMachine(id, reason);
+  }
+
+  /**
+   * Bulk Delete Machines - Alias to bulk permanent delete machines
+   */
+  bulkDeleteMachines(machineIds = [], reason = 'Admin bulk deletion') {
+    return this.bulkPermanentDelete(machineIds, reason);
+  }
+
+  /**
+   * Permanent Delete Machine - Completely removes machine record from database
+   */
+  permanentDeleteMachine(id, reason = 'Admin manual deletion') {
+    const user = authService.getCurrentUser();
+    const existing = this.getMachineById(id);
+    if (!existing) throw new Error('Machine not found.');
+
+    if (!authService.isAdmin() && !authService.hasPermission('DELETE')) {
+      throw new Error('Access Denied: You do not have permission to delete machines.');
+    }
+
+    const removed = storage.delete(TABLE_NAMES.MACHINES, id);
+    if (removed) {
+      storage.rebuildAllIndexes();
+      auditService.log(
+        'MACHINE_PERMANENT_DELETED',
+        'MACHINE',
+        existing.serialNumber,
+        `Permanently deleted machine ${existing.serialNumber} (${existing.id}). Reason: ${reason}`
+      );
+
+      historyService.recordActivity({
+        machineId: existing.id,
+        serialNumber: existing.serialNumber,
+        actionType: 'DELETE_MACHINE',
+        title: `Machine Permanently Deleted`,
+        details: `Machine ${existing.serialNumber} (${existing.id}) was permanently purged from database. Reason: ${reason}`,
+        previousValue: existing,
+        remarks: reason
+      });
+    }
+    return { success: !!removed, machine: existing };
+  }
+
+  /**
+   * Bulk Permanent Delete - Completely removes multiple machines from database
+   */
+  bulkPermanentDelete(machineIds = [], reason = 'Admin bulk deletion') {
+    const user = authService.getCurrentUser();
+    if (!authService.isAdmin() && !authService.hasPermission('DELETE')) {
+      throw new Error('Access Denied: You do not have permission to delete machines.');
+    }
+
+    let deletedCount = 0;
+    const deletedSerials = [];
+
+    machineIds.forEach(id => {
+      const m = storage.getItem(TABLE_NAMES.MACHINES, id);
+      if (m && authService.isLocationAllowed(m.unitId, m.floorId, m.lineId)) {
+        const ok = storage.delete(TABLE_NAMES.MACHINES, id);
+        if (ok) {
+          deletedCount++;
+          deletedSerials.push(m.serialNumber);
+        }
+      }
+    });
+
+    if (deletedCount > 0) {
+      storage.rebuildAllIndexes();
+      auditService.log(
+        'BULK_MACHINE_PERMANENT_DELETED',
+        'MACHINE',
+        `${deletedCount} records`,
+        `Permanently deleted ${deletedCount} machines: ${deletedSerials.slice(0, 10).join(', ')}${deletedSerials.length > 10 ? '...' : ''}. Reason: ${reason}`
+      );
+    }
+
+    return { deletedCount, deletedSerials };
+  }
+
+  /**
+   * Delete All Filtered - Permanently deletes all machines matching the active filter query
+   */
+  deleteAllFiltered(filterParams = {}, reason = 'Admin filtered mass deletion') {
+    const user = authService.getCurrentUser();
+    if (!authService.isAdmin() && !authService.hasPermission('DELETE')) {
+      throw new Error('Access Denied: You do not have permission to delete machines.');
+    }
+
+    const matchedMachines = this.getMachines({ ...filterParams, limit: 'ALL' }).items;
+    const matchedIds = matchedMachines.map(m => m.id);
+
+    if (matchedIds.length === 0) {
+      return { deletedCount: 0, totalMatched: 0 };
+    }
+
+    const result = this.bulkPermanentDelete(matchedIds, reason);
+    return {
+      deletedCount: result.deletedCount,
+      totalMatched: matchedIds.length,
+      deletedSerials: result.deletedSerials
+    };
+  }
+}
+
+export const machineService = new MachineService();

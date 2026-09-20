@@ -1,0 +1,1411 @@
+/**
+ * Al-Muslim Group Garments Factory Maintenance Machine ERP
+ * Redesigned Machine Inventory Component - Simple, Clean, User-Friendly & Fast
+ * Tailored specifically for maintenance staff & plant engineers
+ */
+
+import { storage } from '../db/storage.js';
+import { TABLE_NAMES } from '../db/schema.js';
+import { machineService } from '../services/machineService.js';
+import { masterDataService } from '../services/masterDataService.js';
+import { customFieldService } from '../services/customFieldService.js';
+import { authService } from '../services/authService.js';
+import { excelService, formatDisplayLine } from '../services/excelService.js';
+import { pdfService } from '../services/pdfService.js';
+import { notificationService } from '../services/notificationService.js';
+import { state } from '../state.js';
+
+// Local UI state for collapsible advanced filters
+let showAdvancedFilters = false;
+
+export function renderInventoryTable() {
+  const filters = state.get('filters') || {};
+  const selectedIds = state.get('selectedMachineIds') || new Set();
+  const visibleCols = state.get('visibleColumns') || new Set();
+  const customFields = customFieldService.getTableFields();
+  const user = authService.getCurrentUser();
+
+  // 1. Fetch filtered machine dataset
+  const queryResult = machineService.getMachines(filters);
+  const machines = queryResult.items;
+
+  // 2. Summary Metric Indicators (Total Machines, Running, Usable Idle, Repairable Idle)
+  const allMachines = storage.getTable(TABLE_NAMES.MACHINES) || [];
+  const countTotalMachines = allMachines.length;
+
+  let totalRunning = 0;
+  let totalUsableIdle = 0;
+  let totalRepairableIdle = 0;
+
+  allMachines.forEach(m => {
+    const r = parseInt(m.running ?? m.qty_running ?? (m.status === 'ACTIVE' ? (m.quantity ?? 1) : 0), 10) || 0;
+    const u = parseInt(m.usable_idle ?? m.usableIdle ?? (m.status === 'IDLE' ? (m.quantity ?? 1) : 0), 10) || 0;
+    const rp = parseInt(m.repairable_idle ?? m.repairableIdle ?? ((m.status === 'MAINTENANCE' || m.status === 'BREAKDOWN') ? (m.quantity ?? 1) : 0), 10) || 0;
+    totalRunning += r;
+    totalUsableIdle += u;
+    totalRepairableIdle += rp;
+  });
+
+  // 3. Hierarchical Cascading Dropdown Options (Group -> Unit -> Floor -> Line)
+  const groups = masterDataService.getGroups();
+  const units = masterDataService.getUnits(filters.groupId);
+  const floors = masterDataService.getFloors(filters.unitId, filters.groupId);
+  const lines = masterDataService.getLines(filters.floorId, filters.unitId, filters.groupId);
+  const machineNames = masterDataService.getMachineNames();
+  const brands = masterDataService.getBrandsForMachineName(filters.machineNameId);
+  const models = masterDataService.getModels(filters.brandId, filters.machineNameId);
+
+  // Helper map lookups for high performance rendering
+  const grpMap = new Map(storage.getTable(TABLE_NAMES.GROUPS).map(x => [x.id, x.name]));
+  const mnMap = new Map(storage.getTable(TABLE_NAMES.MACHINE_NAMES).map(x => [x.id, x.name]));
+  const brdMap = new Map(storage.getTable(TABLE_NAMES.BRANDS).map(x => [x.id, x.name]));
+  const mdlMap = new Map(storage.getTable(TABLE_NAMES.MODELS).map(x => [x.id, x.name]));
+  const untMap = new Map(storage.getTable(TABLE_NAMES.UNITS).map(x => [x.id, x.name]));
+  const flrMap = new Map(storage.getTable(TABLE_NAMES.FLOORS).map(x => [x.id, x.name]));
+  const linMap = new Map(storage.getTable(TABLE_NAMES.LINES).map(x => [x.id, x.name]));
+
+  // Active Filter Tags List
+  const activeTags = [];
+  if (filters.search) activeTags.push({ key: 'search', label: `Search: "${filters.search}"` });
+  if (filters.groupId) {
+    const grp = masterDataService.getGroupById(filters.groupId);
+    activeTags.push({ key: 'groupId', label: `Group: ${grp?.name || filters.groupId}` });
+  }
+  if (filters.unitId) {
+    const unt = masterDataService.getUnitById(filters.unitId);
+    activeTags.push({ key: 'unitId', label: `Unit: ${unt?.name || filters.unitId}` });
+  }
+  if (filters.floorId) {
+    const flr = masterDataService.getFloorById(filters.floorId);
+    activeTags.push({ key: 'floorId', label: `Floor: ${flr?.name || filters.floorId}` });
+  }
+  if (filters.lineId) {
+    const lin = masterDataService.getLineById(filters.lineId);
+    activeTags.push({ key: 'lineId', label: `Line: ${lin?.name || filters.lineId}` });
+  }
+  if (filters.machineNameId) {
+    const mn = masterDataService.getMachineNameById(filters.machineNameId);
+    activeTags.push({ key: 'machineNameId', label: `Machine: ${mn?.name || filters.machineNameId}` });
+  }
+  if (filters.brandId) {
+    const brd = masterDataService.getBrandById(filters.brandId);
+    activeTags.push({ key: 'brandId', label: `Brand: ${brd?.name || filters.brandId}` });
+  }
+  if (filters.modelId) {
+    const mdl = masterDataService.getModelById(filters.modelId);
+    activeTags.push({ key: 'modelId', label: `Model: ${mdl?.name || filters.modelId}` });
+  }
+  if (filters.status && filters.status !== 'ALL') {
+    activeTags.push({ key: 'status', label: `Status: ${filters.status.replace(/_/g, ' ')}` });
+  }
+
+  const hasActiveFilters = activeTags.length > 0;
+
+  // 4. Render Table Header Columns with explicit fixed widths
+  let headerHtml = `
+    <tr>
+      <th class="col-freeze-sl" style="width: 50px; min-width: 50px; max-width: 50px; text-align: center;">SL</th>
+      <th class="col-freeze-check" style="width: 44px; min-width: 44px; max-width: 44px; text-align: center;">
+        <input type="checkbox" id="check-select-all" title="Select all visible machines" ${machines.length > 0 && selectedIds.size >= machines.length ? 'checked' : ''} />
+      </th>
+  `;
+
+  if (visibleCols.has('machineName')) headerHtml += `<th class="col-freeze-name th-sortable" data-sort="machineName" style="width: 180px; min-width: 180px; max-width: 180px; cursor: pointer;">Machine Name</th>`;
+  if (visibleCols.has('brand')) headerHtml += `<th class="th-sortable" data-sort="brand" style="width: 130px; min-width: 130px; max-width: 130px; cursor: pointer;">Brand</th>`;
+  if (visibleCols.has('model')) headerHtml += `<th class="th-sortable" data-sort="model" style="width: 150px; min-width: 150px; max-width: 150px; cursor: pointer;">Model</th>`;
+  if (visibleCols.has('serialNumber')) headerHtml += `<th class="th-sortable" data-sort="serialNumber" style="width: 160px; min-width: 160px; max-width: 160px; cursor: pointer;">Serial Number</th>`;
+  if (visibleCols.has('group')) headerHtml += `<th class="th-sortable" data-sort="group" style="width: 150px; min-width: 150px; max-width: 150px; cursor: pointer;">Group</th>`;
+  if (visibleCols.has('unit')) headerHtml += `<th class="th-sortable" data-sort="unit" style="width: 190px; min-width: 190px; max-width: 190px; cursor: pointer;">Unit / Factory</th>`;
+  if (visibleCols.has('floor')) headerHtml += `<th class="th-sortable" data-sort="floor" style="width: 130px; min-width: 130px; max-width: 130px; cursor: pointer;">Floor</th>`;
+  if (visibleCols.has('line')) headerHtml += `<th class="th-sortable" data-sort="line" style="width: 130px; min-width: 130px; max-width: 130px; cursor: pointer;">Line</th>`;
+  if (visibleCols.has('running')) headerHtml += `<th style="width: 100px; min-width: 100px; max-width: 100px; text-align: center;">Running</th>`;
+  if (visibleCols.has('usable_idle')) headerHtml += `<th style="width: 110px; min-width: 110px; max-width: 110px; text-align: center;">Usable Idle</th>`;
+  if (visibleCols.has('repairable_idle')) headerHtml += `<th style="width: 130px; min-width: 130px; max-width: 130px; text-align: center;">Repairable Idle</th>`;
+  if (visibleCols.has('total_quantity')) headerHtml += `<th style="width: 100px; min-width: 100px; max-width: 100px; text-align: center;">Total</th>`;
+  if (visibleCols.has('status')) headerHtml += `<th class="th-sortable" data-sort="status" style="width: 120px; min-width: 120px; max-width: 120px; text-align: center; cursor: pointer;">Status</th>`;
+
+  // Optional Specification Columns (Purchased date, Supplier, etc.)
+  if (visibleCols.has('purchase_date')) headerHtml += `<th style="width: 120px; min-width: 120px; max-width: 120px;">Purchase Date</th>`;
+  if (visibleCols.has('installation_date')) headerHtml += `<th style="width: 120px; min-width: 120px; max-width: 120px;">Install Date</th>`;
+  if (visibleCols.has('supplier_name')) headerHtml += `<th style="width: 140px; min-width: 140px; max-width: 140px;">Supplier</th>`;
+  if (visibleCols.has('country_of_origin')) headerHtml += `<th style="width: 120px; min-width: 120px; max-width: 120px;">Origin</th>`;
+  if (visibleCols.has('machine_capacity')) headerHtml += `<th style="width: 130px; min-width: 130px; max-width: 130px;">Capacity</th>`;
+  if (visibleCols.has('remarks')) headerHtml += `<th style="width: 230px; min-width: 230px; max-width: 230px;">Remarks</th>`;
+
+  // Custom Field Headers
+  customFields.forEach(cf => {
+    if (visibleCols.has(cf.code)) {
+      headerHtml += `<th style="width: 130px; min-width: 130px; max-width: 130px;">${cf.label}</th>`;
+    }
+  });
+
+  if (visibleCols.has('actions')) headerHtml += `<th style="width: 110px; min-width: 110px; max-width: 110px; text-align: center;">Actions</th>`;
+
+  headerHtml += `</tr>`;
+
+  // 5. Render Table Rows
+  let rowsHtml = '';
+  if (machines.length === 0) {
+    rowsHtml = `
+      <tr>
+        <td colspan="20" style="text-align: center; padding: 48px 20px;">
+          <div style="font-size: 32px; margin-bottom: 8px;">🔍</div>
+          <div style="font-size: 15px; font-weight: 700; color: var(--text-primary);">No machines found</div>
+          <div style="font-size: 12px; color: var(--text-secondary); margin-top: 4px; max-width: 380px; margin-left: auto; margin-right: auto;">
+            No machines match your current search or location filters. Try resetting the filters.
+          </div>
+          <div style="margin-top: 14px; display: flex; gap: 8px; justify-content: center;">
+            <button id="btn-empty-reset-filters" class="btn btn-secondary btn-sm">↺ Reset Filters</button>
+            ${authService.hasAccess('machines', 'ADD') ? `
+              <button id="btn-empty-add-machine" class="btn btn-primary btn-sm">➕ Add Machine</button>
+            ` : ''}
+          </div>
+        </td>
+      </tr>
+    `;
+  } else {
+    machines.forEach((m, idx) => {
+      const isSelected = selectedIds.has(m.id);
+      const slNo = (queryResult.page - 1) * (queryResult.limit === 'ALL' ? 0 : queryResult.limit) + idx + 1;
+      const displaySlNo = String(slNo).padStart(2, '0');
+      const statusBadgeClass = `badge-${(m.status || 'ACTIVE').toLowerCase().replace('_', '')}`;
+
+      // Quantities
+      const rQty = parseInt(m.running ?? m.qty_running ?? (m.status === 'ACTIVE' ? (m.quantity ?? 1) : 0), 10) || 0;
+      const uQty = parseInt(m.usable_idle ?? m.usableIdle ?? (m.status === 'IDLE' ? (m.quantity ?? 1) : 0), 10) || 0;
+      const rpQty = parseInt(m.repairable_idle ?? m.repairableIdle ?? ((m.status === 'MAINTENANCE' || m.status === 'BREAKDOWN') ? (m.quantity ?? 1) : 0), 10) || 0;
+      const totalQty = m.totalQuantity || m.total_quantity || (rQty + uQty + rpQty > 0 ? (rQty + uQty + rpQty) : (m.quantity ?? 1));
+
+      let row = `<tr class="${isSelected ? 'selected' : ''}" data-id="${m.id}">`;
+
+      // 1. SL (Sticky Left)
+      row += `<td class="col-freeze-sl" style="text-align: center; color: var(--text-muted); font-weight: 700; font-family: var(--font-mono); font-size: 11.5px;">${displaySlNo}</td>`;
+
+      // Selection Checkbox (Sticky Left)
+      row += `<td class="col-freeze-check" style="text-align: center;"><input type="checkbox" class="machine-row-check" data-id="${m.id}" ${isSelected ? 'checked' : ''}/></td>`;
+
+      // 2. Machine Name (Sticky Left with Shadow)
+      if (visibleCols.has('machineName')) {
+        row += `
+          <td class="col-freeze-name" style="font-weight: 600; color: #fff; overflow: hidden; text-overflow: ellipsis;">
+            ${mnMap.get(m.machineNameId) || m.machineName || '—'}
+          </td>
+        `;
+      }
+
+      // 3. Brand
+      if (visibleCols.has('brand')) row += `<td style="overflow: hidden; text-overflow: ellipsis;">${brdMap.get(m.brandId) || m.brand || '—'}</td>`;
+
+      // 4. Model
+      if (visibleCols.has('model')) row += `<td style="overflow: hidden; text-overflow: ellipsis;">${mdlMap.get(m.modelId) || m.model || '—'}</td>`;
+
+      // 5. Machine Serial Number (Clickable link to Machine Details / Lifetime)
+      if (visibleCols.has('serialNumber')) {
+        row += `
+          <td>
+            <a href="javascript:void(0)" class="machine-serial-link btn-inspect-machine" data-id="${m.id}" title="Click to view full machine lifetime & specifications">
+              ${m.serialNumber || '—'}
+            </a>
+          </td>
+        `;
+      }
+
+      // 5b. Group
+      if (visibleCols.has('group')) row += `<td style="overflow: hidden; text-overflow: ellipsis;">${grpMap.get(m.groupId) || m.group || '—'}</td>`;
+
+      // 6. Unit / Factory
+      if (visibleCols.has('unit')) row += `<td style="overflow: hidden; text-overflow: ellipsis;">${untMap.get(m.unitId) || m.unit || '—'}</td>`;
+
+      // 7. Floor
+      if (visibleCols.has('floor')) row += `<td style="overflow: hidden; text-overflow: ellipsis;">${flrMap.get(m.floorId) || m.floor || '—'}</td>`;
+
+      // 8. Line (Clean Normal A, B, C with full code)
+      if (visibleCols.has('line')) {
+        const fullLine = linMap.get(m.lineId) || m.line || '—';
+        const cleanLine = formatDisplayLine(fullLine, 'NORMAL');
+        const isPrefixed = fullLine.includes('-') && cleanLine !== fullLine;
+        row += `
+          <td style="overflow: hidden; text-overflow: ellipsis;" title="Line: ${cleanLine} (Full Code: ${fullLine})">
+            <span style="font-weight: 800; color: #38bdf8; font-size: 12px;">${cleanLine}</span>
+            ${isPrefixed ? `<span style="font-size: 10px; color: var(--text-muted); margin-left: 4px; font-weight: 500;">(${fullLine})</span>` : ''}
+          </td>
+        `;
+      }
+
+      // 9. Running
+      if (visibleCols.has('running')) {
+        row += `<td style="text-align: center;"><span class="qty-badge qty-running">${rQty}</span></td>`;
+      }
+
+      // 10. Usable Idle
+      if (visibleCols.has('usable_idle')) {
+        row += `<td style="text-align: center;"><span class="qty-badge qty-usable">${uQty}</span></td>`;
+      }
+
+      // 11. Repairable Idle
+      if (visibleCols.has('repairable_idle')) {
+        row += `<td style="text-align: center;"><span class="qty-badge qty-repair">${rpQty}</span></td>`;
+      }
+
+      // 12. Total Quantity (System Calculated)
+      if (visibleCols.has('total_quantity')) {
+        row += `<td style="text-align: center;"><span class="qty-badge qty-total">${totalQty}</span></td>`;
+      }
+
+      // 13. Status
+      if (visibleCols.has('status')) {
+        row += `
+          <td style="text-align: center;">
+            <span class="badge ${statusBadgeClass}">${(m.status || 'ACTIVE').replace('_', ' ')}</span>
+          </td>
+        `;
+      }
+
+      // Optional Spec Columns
+      if (visibleCols.has('purchase_date')) row += `<td>${m.purchase_date || m.purchaseDate || '—'}</td>`;
+      if (visibleCols.has('installation_date')) row += `<td>${m.installation_date || m.installationDate || '—'}</td>`;
+      if (visibleCols.has('supplier_name')) row += `<td>${m.supplier_name || m.supplier || '—'}</td>`;
+      if (visibleCols.has('country_of_origin')) row += `<td>${m.country_of_origin || m.origin || '—'}</td>`;
+      if (visibleCols.has('machine_capacity')) row += `<td>${m.machine_capacity || m.capacity || '—'}</td>`;
+
+      // Remarks
+      if (visibleCols.has('remarks')) {
+        row += `<td style="font-size: 11.5px; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis;" title="${m.remarks || ''}">${m.remarks || '—'}</td>`;
+      }
+
+      // Custom Fields
+      customFields.forEach(cf => {
+        if (visibleCols.has(cf.code)) {
+          const val = m.customValues?.[cf.code] ?? '—';
+          row += `<td>${val}</td>`;
+        }
+      });
+
+      // 14. Action Menu Dropdown (⋮ Actions)
+      if (visibleCols.has('actions')) {
+        row += `
+          <td style="text-align: center;">
+            <div class="actions-dropdown-container">
+              <button type="button" class="btn-actions-trigger btn-trigger-row-actions" data-id="${m.id}" title="Open Action Menu">
+                ⋮ Actions ▾
+              </button>
+              <div id="actions-menu-${m.id}" class="actions-dropdown-menu table-row-actions-menu">
+                <button type="button" class="actions-menu-item btn-inspect-machine" data-id="${m.id}">
+                  🔍 Machine Details &amp; Lifetime
+                </button>
+                <button type="button" class="actions-menu-item btn-history-machine" data-id="${m.id}">
+                  🕒 Timeline &amp; Transfer Log
+                </button>
+                <button type="button" class="actions-menu-item btn-spare-parts-machine" data-id="${m.id}">
+                  ⚙️ Spare Parts Usage
+                </button>
+                ${authService.hasAccess('transfers', 'ADD') ? `
+                  <button type="button" class="actions-menu-item btn-transfer-machine" data-id="${m.id}">
+                    🔄 Transfer Machine
+                  </button>
+                ` : ''}
+                ${authService.hasAccess('machines', 'EDIT') ? `
+                  <div class="actions-menu-divider"></div>
+                  <button type="button" class="actions-menu-item btn-edit-machine" data-id="${m.id}">
+                    ✏️ Edit Machine
+                  </button>
+                ` : ''}
+                ${authService.hasAccess('machines', 'DELETE') ? `
+                  <button type="button" class="actions-menu-item danger-item btn-delete-machine" data-id="${m.id}">
+                    🗑️ Delete Machine
+                  </button>
+                ` : ''}
+              </div>
+            </div>
+          </td>
+        `;
+      }
+
+      row += `</tr>`;
+      rowsHtml += row;
+    });
+  }
+
+  // 6. Pagination Page Numbers Generation
+  const totalPages = Math.max(1, queryResult.totalPages || 1);
+  const curPage = queryResult.page || 1;
+  const startItem = queryResult.total === 0 ? 0 : (curPage - 1) * (queryResult.limit === 'ALL' ? 0 : queryResult.limit) + 1;
+  const endItem = queryResult.limit === 'ALL' ? queryResult.total : Math.min(curPage * queryResult.limit, queryResult.total);
+
+  let pageButtonsHtml = '';
+  const maxButtons = 5;
+  let startP = Math.max(1, curPage - 2);
+  let endP = Math.min(totalPages, startP + maxButtons - 1);
+  if (endP - startP < maxButtons - 1) {
+    startP = Math.max(1, endP - maxButtons + 1);
+  }
+
+  for (let p = startP; p <= endP; p++) {
+    pageButtonsHtml += `
+      <button class="page-btn btn-page-number ${p === curPage ? 'active' : ''}" data-page="${p}">
+        ${p}
+      </button>
+    `;
+  }
+
+  // 7. Assemble Complete Redesigned Component Layout
+  return `
+    <div class="page-view inventory-page-wrapper" style="display: flex; flex-direction: column; gap: 8px;">
+      
+      <!-- 1. Ultra-Compact Top Bar (Title + KPI Status Badges + Action Buttons) -->
+      <div class="inventory-top-unified-bar">
+        
+        <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+          <h1 style="font-size: 16px; font-weight: 800; color: #fff; margin: 0; display: flex; align-items: center; gap: 6px;">
+            <span>📦</span> Machine Inventory
+          </h1>
+          
+          <!-- Inline KPI Pills -->
+          <div class="inventory-inline-kpis">
+            <div class="kpi-pill kpi-total" title="Total machines registered">
+              <span class="kpi-dot">🏭</span>
+              <strong class="kpi-val">${countTotalMachines}</strong>
+              <span class="kpi-lbl">Total</span>
+            </div>
+            <div class="kpi-pill kpi-running" title="Operational active machines">
+              <span class="kpi-dot">🟢</span>
+              <strong class="kpi-val" style="color: #34d399;">${totalRunning}</strong>
+              <span class="kpi-lbl">Running</span>
+            </div>
+            <div class="kpi-pill kpi-usable" title="Ready-to-use standby machines">
+              <span class="kpi-dot">🔵</span>
+              <strong class="kpi-val" style="color: #38bdf8;">${totalUsableIdle}</strong>
+              <span class="kpi-lbl">Usable</span>
+            </div>
+            <div class="kpi-pill kpi-repair" title="Machines under maintenance or repair">
+              <span class="kpi-dot">🟡</span>
+              <strong class="kpi-val" style="color: #fbbf24;">${totalRepairableIdle}</strong>
+              <span class="kpi-lbl">Repairable</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Action Buttons (+ Add Machine | Delete Selected | Import | Export | Template | More) -->
+        <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
+          
+          ${authService.hasAccess('machines', 'ADD') ? `
+            <button id="btn-add-machine-modal" class="btn btn-primary btn-sm" style="font-weight: 700; padding: 5px 12px; font-size: 12px;">
+              ➕ Add Machine
+            </button>
+          ` : ''}
+
+          <button id="btn-inventory-relocate" class="btn btn-secondary btn-sm" style="font-weight: 800; padding: 5px 12px; font-size: 12px; border: 1.5px solid #38bdf8; color: #38bdf8; background: rgba(56, 189, 248, 0.12);" title="Physical Machine Verification &amp; Relocation">
+            📍 Relocate &amp; Verify
+          </button>
+
+          <button id="btn-inventory-qr-codes" class="btn btn-secondary btn-sm" style="font-weight: 800; padding: 5px 12px; font-size: 12px; border: 1.5px solid #a855f7; color: #c084fc; background: rgba(168, 85, 247, 0.12);" title="QR Code &amp; Label Studio: Generate, Preview, A4 Print">
+            🏁 QR Codes
+          </button>
+
+          ${authService.hasAccess('machines', 'DELETE') ? `
+            <button id="btn-top-bulk-delete" class="btn btn-danger btn-sm" style="font-weight: 700; padding: 5px 12px; font-size: 12px; background: ${selectedIds.size > 0 ? '#dc2626' : 'rgba(220, 38, 38, 0.18)'}; border: 1px solid ${selectedIds.size > 0 ? '#ef4444' : 'rgba(239, 68, 68, 0.35)'}; color: ${selectedIds.size > 0 ? '#fff' : '#fca5a5'}; cursor: ${selectedIds.size > 0 ? 'pointer' : 'not-allowed'}; opacity: ${selectedIds.size > 0 ? '1' : '0.6'};" ${selectedIds.size === 0 ? 'disabled' : ''} title="${selectedIds.size > 0 ? `Delete ${selectedIds.size} selected machine(s)` : 'Select machines to delete'}">
+              🗑️ Delete Selected ${selectedIds.size > 0 ? `(${selectedIds.size})` : ''}
+            </button>
+          ` : ''}
+
+          ${(authService.hasAccess('excel_import', 'IMPORT') || authService.hasAccess('machines', 'IMPORT')) ? `
+            <button id="btn-import-excel-modal" class="btn btn-secondary btn-sm" style="font-weight: 600; padding: 5px 10px; font-size: 12px;" title="Upload Excel file">
+              📥 Import
+            </button>
+          ` : ''}
+
+          ${(authService.hasAccess('excel_export', 'EXPORT') || authService.hasAccess('machines', 'EXPORT')) ? `
+            <button id="btn-export-excel" class="btn btn-secondary btn-sm" style="font-weight: 600; padding: 5px 10px; font-size: 12px;" title="Export filtered machines to Excel">
+              📤 Export
+            </button>
+          ` : ''}
+
+          <button id="btn-download-template" class="btn btn-secondary btn-sm" style="font-weight: 600; padding: 5px 10px; font-size: 12px;" title="Download Excel template">
+            📋 Template
+          </button>
+
+          <!-- More Dropdown -->
+          <div class="actions-dropdown-container">
+            <button id="btn-more-actions-trigger" class="btn btn-secondary btn-sm" style="font-weight: 600; padding: 5px 10px; font-size: 12px;">
+              ⋯ More ▾
+            </button>
+            <div id="more-actions-dropdown-menu" class="actions-dropdown-menu" style="min-width: 170px;">
+              <button type="button" class="actions-menu-item" id="btn-export-csv">
+                📄 Export CSV
+              </button>
+              <button type="button" class="actions-menu-item" id="btn-generate-pdf">
+                🖨️ Print Inventory
+              </button>
+              <button type="button" class="actions-menu-item" id="btn-column-visibility-toggle">
+                👁️ Columns (${visibleCols.size})
+              </button>
+              ${(authService.hasAccess('machines', 'DELETE') && queryResult.total > 0 && hasActiveFilters) ? `
+                <div class="actions-menu-divider"></div>
+                <button type="button" class="actions-menu-item danger-item" id="btn-delete-all-filtered">
+                  🗑️ Delete Filtered (${queryResult.total})
+                </button>
+              ` : ''}
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- 2. Single-Row Ultra-Compact Filter Bar -->
+      <div class="compact-filter-bar" style="padding: 6px 12px; gap: 6px;">
+        
+        <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap; width: 100%;">
+          
+          <!-- Unified Search Input -->
+          <div class="filter-search-wrap" style="flex: 1.5; min-width: 180px;">
+            <span class="filter-search-icon" style="font-size: 12px; left: 8px;">🔍</span>
+            <input 
+              type="text" 
+              id="filter-search-input" 
+              class="filter-search-input" 
+              placeholder="Search Machine, Serial, Brand, Model..." 
+              value="${filters.search || ''}"
+              style="height: 30px; font-size: 12px; padding: 4px 10px 4px 28px;"
+            />
+            ${filters.search ? `
+              <button id="btn-clear-search" type="button" class="btn btn-ghost btn-sm" style="position: absolute; right: 4px; top: 50%; transform: translateY(-50%); padding: 0 4px; font-size: 11px; color: var(--text-muted);" title="Clear Search">✕</button>
+            ` : ''}
+          </div>
+
+          <!-- Group -->
+          <div class="filter-select-item" style="min-width: 100px;">
+            <select id="filter-group" class="filter-select-compact" style="height: 30px; font-size: 11.5px;">
+              <option value="">All Groups (${groups.length})</option>
+              ${groups.map(g => `<option value="${g.id}" ${filters.groupId === g.id ? 'selected' : ''}>${g.name}</option>`).join('')}
+            </select>
+          </div>
+
+          <!-- Unit / Factory -->
+          <div class="filter-select-item" style="min-width: 110px;">
+            <select id="filter-unit" class="filter-select-compact" style="height: 30px; font-size: 11.5px;">
+              <option value="">All Units (${units.length})</option>
+              ${units.map(u => `<option value="${u.id}" ${filters.unitId === u.id ? 'selected' : ''}>${u.name}</option>`).join('')}
+            </select>
+          </div>
+
+          <!-- Floor -->
+          <div class="filter-select-item" style="min-width: 95px;">
+            <select id="filter-floor" class="filter-select-compact" style="height: 30px; font-size: 11.5px;">
+              <option value="">All Floors (${floors.length})</option>
+              ${floors.map(f => `<option value="${f.id}" ${filters.floorId === f.id ? 'selected' : ''}>${f.name}</option>`).join('')}
+            </select>
+          </div>
+
+          <!-- Line -->
+          <div class="filter-select-item" style="min-width: 95px;">
+            <select id="filter-line" class="filter-select-compact" style="height: 30px; font-size: 11.5px;">
+              <option value="">All Lines (${lines.length})</option>
+              ${lines.map(l => {
+                const clean = formatDisplayLine(l.name, 'NORMAL');
+                const label = clean !== l.name ? `${clean} (${l.name})` : l.name;
+                return `<option value="${l.id}" ${filters.lineId === l.id ? 'selected' : ''}>${label}</option>`;
+              }).join('')}
+            </select>
+          </div>
+
+          <!-- Machine Name -->
+          <div class="filter-select-item" style="min-width: 110px;">
+            <select id="filter-machine-name" class="filter-select-compact" style="height: 30px; font-size: 11.5px;">
+              <option value="">All Machines (${machineNames.length})</option>
+              ${machineNames.map(mn => `<option value="${mn.id}" ${filters.machineNameId === mn.id ? 'selected' : ''}>${mn.name}</option>`).join('')}
+            </select>
+          </div>
+
+          <!-- Status -->
+          <div class="filter-select-item" style="min-width: 95px;">
+            <select id="filter-status-select" class="filter-select-compact" style="height: 30px; font-size: 11.5px;">
+              <option value="ALL" ${!filters.status || filters.status === 'ALL' ? 'selected' : ''}>All Status</option>
+              <option value="ACTIVE" ${filters.status === 'ACTIVE' ? 'selected' : ''}>🟢 Active</option>
+              <option value="IDLE" ${filters.status === 'IDLE' ? 'selected' : ''}>💤 Idle</option>
+              <option value="MAINTENANCE" ${filters.status === 'MAINTENANCE' ? 'selected' : ''}>🟡 Maint</option>
+              <option value="BREAKDOWN" ${filters.status === 'BREAKDOWN' ? 'selected' : ''}>🔴 Breakdown</option>
+            </select>
+          </div>
+
+          <!-- Action Buttons -->
+          <button id="btn-toggle-advanced-filters" class="btn btn-ghost btn-sm" style="font-size: 11.5px; padding: 4px 8px; color: #38bdf8; height: 30px;" title="Toggle Brand and Model filters">
+            ${showAdvancedFilters ? '▲ Less' : 'More ▾'}
+          </button>
+          
+          <button id="btn-reset-filters" class="btn btn-secondary btn-sm" style="font-weight: 700; font-size: 11.5px; padding: 4px 10px; height: 30px;" title="Reset filters">
+            ↺ Reset
+          </button>
+
+          <button id="btn-column-picker-inline" class="btn btn-ghost btn-sm" style="font-size: 11.5px; padding: 4px 8px; color: var(--text-secondary); height: 30px;" title="Configure visible columns">
+            Columns ▾
+          </button>
+
+        </div>
+
+        <!-- Active filter tags badge strip if active -->
+        ${hasActiveFilters ? `
+          <div style="display: flex; align-items: center; gap: 5px; flex-wrap: wrap; margin-top: 4px; padding-top: 4px; border-top: 1px solid rgba(255, 255, 255, 0.06);">
+            <span style="font-size: 10.5px; color: var(--text-muted); font-weight: 700; text-transform: uppercase;">Active Filters:</span>
+            ${activeTags.map(tag => `
+              <span class="active-filter-tag" data-key="${tag.key}" style="display: inline-flex; align-items: center; gap: 4px; background: rgba(56, 189, 248, 0.1); border: 1px solid rgba(56, 189, 248, 0.3); border-radius: 4px; padding: 1px 6px; font-size: 11px; color: #38bdf8; cursor: pointer;" title="Click to remove">
+                ${tag.label} <span style="color: #f87171; font-weight: bold; margin-left: 2px;">✕</span>
+              </span>
+            `).join('')}
+          </div>
+        ` : ''}
+
+        <!-- Collapsible Advanced Filters Panel (Brand, Model) -->
+        ${showAdvancedFilters ? `
+          <div class="advanced-filters-panel" style="padding: 6px 8px; margin-top: 4px; display: flex; gap: 10px;">
+            <div style="flex: 1;">
+              <label style="font-size: 10px; font-weight: 700; color: var(--text-secondary); margin-bottom: 2px; display: block;">Brand</label>
+              <select id="filter-brand" class="filter-select-compact" style="height: 28px; font-size: 11px;">
+                <option value="">All Brands (${brands.length})</option>
+                ${brands.map(b => `<option value="${b.id}" ${filters.brandId === b.id ? 'selected' : ''}>${b.name}</option>`).join('')}
+              </select>
+            </div>
+
+            <div style="flex: 1;">
+              <label style="font-size: 10px; font-weight: 700; color: var(--text-secondary); margin-bottom: 2px; display: block;">Model</label>
+              <select id="filter-model" class="filter-select-compact" style="height: 28px; font-size: 11px;">
+                <option value="">All Models (${models.length})</option>
+                ${models.map(m => `<option value="${m.id}" ${filters.modelId === m.id ? 'selected' : ''}>${m.name}</option>`).join('')}
+              </select>
+            </div>
+          </div>
+        ` : ''}
+
+      </div>
+
+      <!-- 4. Bulk Selection Action Bar (when rows are selected) -->
+      <div id="inventory-bulk-actions-bar" style="display: ${selectedIds.size > 0 ? 'flex' : 'none'}; background: rgba(15, 23, 42, 0.98); border: 1.5px solid #ef4444; border-radius: var(--radius-md); padding: 8px 14px; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; box-shadow: 0 4px 14px rgba(220, 38, 38, 0.25);">
+        <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+          <span style="font-weight: 800; color: #fff; font-size: 13px; display: flex; align-items: center; gap: 6px;">
+            <span>☑️</span> <strong id="bulk-selected-count" style="color: #38bdf8;">${selectedIds.size}</strong> machine(s) selected
+          </span>
+          <button id="btn-select-all-filtered" class="btn btn-ghost btn-sm" style="display: ${selectedIds.size < queryResult.total ? 'inline-block' : 'none'}; color: #38bdf8; font-size: 11.5px; font-weight: 700; text-decoration: underline; padding: 2px 6px;">
+            Select all ${queryResult.total} machines in current filter
+          </button>
+        </div>
+        <div style="display: flex; gap: 8px; align-items: center;">
+          ${authService.hasAccess('machines', 'DELETE') ? `
+            <button id="btn-bulk-delete" class="btn btn-danger btn-sm" style="font-weight: 800; background: #dc2626; border-color: #ef4444; color: #fff; padding: 5px 14px; box-shadow: 0 2px 8px rgba(220, 38, 38, 0.4);">
+              🗑️ Delete Selected (${selectedIds.size})
+            </button>
+          ` : ''}
+          <button id="btn-bulk-clear" class="btn btn-secondary btn-sm" style="padding: 5px 10px; font-size: 12px;">✕ Clear Selection</button>
+        </div>
+      </div>
+
+      <!-- 5. Real Excel-Style Machine Data Grid with Native Horizontal & Vertical Scroll -->
+      <div class="inventory-table-scroll-container" id="inventory-table-scroll-viewport">
+        <table class="excel-grid-table">
+          <thead>
+            ${headerHtml}
+          </thead>
+          <tbody>
+            ${rowsHtml}
+          </tbody>
+        </table>
+      </div>
+
+      <!-- 6. Simplified Clean Pagination Bar -->
+      <div class="inventory-pagination-bar">
+        
+        <!-- Left: Showing 1–50 of 178 machines -->
+        <div class="pagination-counter">
+          Showing <strong style="color: #fff;">${startItem}–${endItem}</strong> of <strong style="color: #38bdf8;">${queryResult.total}</strong> machines
+        </div>
+
+        <!-- Middle: Rows per page: [ 25 | 50 | 100 ] -->
+        <div style="display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text-secondary);">
+          <span>Rows per page:</span>
+          <select id="select-per-page" class="filter-select-compact" style="width: 80px; height: 32px; font-size: 12px;">
+            <option value="25" ${queryResult.limit === 25 ? 'selected' : ''}>25</option>
+            <option value="50" ${queryResult.limit === 50 ? 'selected' : ''}>50</option>
+            <option value="100" ${queryResult.limit === 100 ? 'selected' : ''}>100</option>
+            <option value="ALL" ${queryResult.limit === 'ALL' ? 'selected' : ''}>All</option>
+          </select>
+        </div>
+
+        <!-- Right: Previous | 1 | 2 | 3 | Next -->
+        <div class="pagination-controls">
+          <button id="btn-prev-page" class="page-btn" ${curPage <= 1 ? 'disabled' : ''} title="Previous page">
+            ◀ Previous
+          </button>
+          
+          ${pageButtonsHtml}
+
+          <button id="btn-next-page" class="page-btn" ${curPage >= totalPages ? 'disabled' : ''} title="Next page">
+            Next ▶
+          </button>
+        </div>
+
+      </div>
+
+    </div>
+  `;
+}
+
+export function initInventoryTableEvents() {
+  // Relocate Page Navigation
+  const btnRelocate = document.getElementById('btn-inventory-relocate');
+  if (btnRelocate) {
+    btnRelocate.addEventListener('click', () => {
+      state.set('currentView', 'relocate');
+    });
+  }
+
+  // QR Codes & Studio Page Navigation
+  const btnQrCodes = document.getElementById('btn-inventory-qr-codes');
+  if (btnQrCodes) {
+    btnQrCodes.addEventListener('click', () => {
+      state.set('currentView', 'qr-codes');
+    });
+  }
+
+  // 1. Live Instant Search Input
+  const searchInput = document.getElementById('filter-search-input');
+  if (searchInput) {
+    let timeout = null;
+    searchInput.addEventListener('input', (e) => {
+      clearTimeout(timeout);
+      timeout = setTimeout(() => {
+        state.updateFilters({ search: e.target.value, page: 1 });
+      }, 150);
+    });
+
+    searchInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        clearTimeout(timeout);
+        state.updateFilters({ search: e.target.value, page: 1 });
+      }
+    });
+  }
+
+  const clearSearchBtn = document.getElementById('btn-clear-search');
+  if (clearSearchBtn) {
+    clearSearchBtn.addEventListener('click', () => {
+      state.updateFilters({ search: '', page: 1 });
+    });
+  }
+
+  // 2. Status Dropdown
+  const statusSelect = document.getElementById('filter-status-select');
+  if (statusSelect) {
+    statusSelect.addEventListener('change', (e) => {
+      state.updateFilters({ status: e.target.value, page: 1 });
+    });
+  }
+
+  // 3. Hierarchical Cascading Dropdown Handlers (Group -> Unit -> Floor -> Line)
+  const groupSelect = document.getElementById('filter-group');
+  if (groupSelect) {
+    groupSelect.addEventListener('change', (e) => {
+      state.updateFilters({ 
+        groupId: e.target.value, 
+        unitId: '', 
+        floorId: '', 
+        lineId: '', 
+        page: 1 
+      });
+    });
+  }
+
+  const unitSelect = document.getElementById('filter-unit');
+  if (unitSelect) {
+    unitSelect.addEventListener('change', (e) => {
+      const uid = e.target.value;
+      const unit = uid ? masterDataService.getUnitById(uid) : null;
+      state.updateFilters({ 
+        unitId: uid, 
+        groupId: unit?.groupId || state.get('filters')?.groupId || '',
+        floorId: '', 
+        lineId: '', 
+        page: 1 
+      });
+    });
+  }
+
+  const floorSelect = document.getElementById('filter-floor');
+  if (floorSelect) {
+    floorSelect.addEventListener('change', (e) => {
+      const fid = e.target.value;
+      const floor = fid ? masterDataService.getFloorById(fid) : null;
+      const unit = floor ? masterDataService.getUnitById(floor.unitId) : null;
+      state.updateFilters({ 
+        floorId: fid, 
+        unitId: unit?.id || state.get('filters')?.unitId || '',
+        groupId: unit?.groupId || state.get('filters')?.groupId || '',
+        lineId: '', 
+        page: 1 
+      });
+    });
+  }
+
+  const lineSelect = document.getElementById('filter-line');
+  if (lineSelect) {
+    lineSelect.addEventListener('change', (e) => {
+      const lid = e.target.value;
+      if (lid) {
+        const line = masterDataService.getLineById(lid);
+        const floor = line ? masterDataService.getFloorById(line.floorId) : null;
+        const unit = floor ? masterDataService.getUnitById(floor.unitId) : null;
+        state.updateFilters({ 
+          lineId: lid,
+          floorId: floor?.id || state.get('filters')?.floorId || '',
+          unitId: unit?.id || state.get('filters')?.unitId || '',
+          groupId: unit?.groupId || state.get('filters')?.groupId || '',
+          page: 1 
+        });
+      } else {
+        state.updateFilters({ 
+          lineId: '', 
+          page: 1 
+        });
+      }
+    });
+  }
+
+  // Machine Name Dropdown
+  const mnSelect = document.getElementById('filter-machine-name');
+  if (mnSelect) {
+    mnSelect.addEventListener('change', (e) => {
+      state.updateFilters({ 
+        machineNameId: e.target.value, 
+        brandId: '', 
+        modelId: '', 
+        page: 1 
+      });
+    });
+  }
+
+  // Advanced Filters (Brand, Model)
+  const brandSelect = document.getElementById('filter-brand');
+  if (brandSelect) {
+    brandSelect.addEventListener('change', (e) => {
+      state.updateFilters({ 
+        brandId: e.target.value, 
+        modelId: '', 
+        page: 1 
+      });
+    });
+  }
+
+  const modelSelect = document.getElementById('filter-model');
+  if (modelSelect) {
+    modelSelect.addEventListener('change', (e) => {
+      state.updateFilters({ 
+        modelId: e.target.value, 
+        page: 1 
+      });
+    });
+  }
+
+  // Toggle Advanced Filters Panel
+  const btnToggleAdv = document.getElementById('btn-toggle-advanced-filters');
+  if (btnToggleAdv) {
+    btnToggleAdv.addEventListener('click', () => {
+      showAdvancedFilters = !showAdvancedFilters;
+      state.emit('filters:changed', state.get('filters'));
+    });
+  }
+
+  // 4. Reset Filters Buttons
+  const resetBtn = document.getElementById('btn-reset-filters');
+  if (resetBtn) {
+    resetBtn.addEventListener('click', () => {
+      state.resetFilters();
+      notificationService.info('All filters reset. Showing full machine inventory.');
+    });
+  }
+
+  const emptyResetBtn = document.getElementById('btn-empty-reset-filters');
+  if (emptyResetBtn) {
+    emptyResetBtn.addEventListener('click', () => {
+      state.resetFilters();
+    });
+  }
+
+  // 5. Active Filter Tag Removal
+  document.querySelectorAll('.active-filter-tag').forEach(tag => {
+    tag.addEventListener('click', () => {
+      const key = tag.getAttribute('data-key');
+      if (key) {
+        if (key === 'search') state.updateFilters({ search: '', page: 1 });
+        else if (key === 'groupId') state.updateFilters({ groupId: '', unitId: '', floorId: '', lineId: '', page: 1 });
+        else if (key === 'unitId') state.updateFilters({ unitId: '', floorId: '', lineId: '', page: 1 });
+        else if (key === 'floorId') state.updateFilters({ floorId: '', lineId: '', page: 1 });
+        else if (key === 'lineId') state.updateFilters({ lineId: '', page: 1 });
+        else if (key === 'machineNameId') state.updateFilters({ machineNameId: '', brandId: '', modelId: '', page: 1 });
+        else if (key === 'brandId') state.updateFilters({ brandId: '', modelId: '', page: 1 });
+        else if (key === 'modelId') state.updateFilters({ modelId: '', page: 1 });
+        else if (key === 'status') state.updateFilters({ status: 'ALL', page: 1 });
+      }
+    });
+  });
+
+  // 6. Top Bar Action Buttons
+  const btnAdd = document.getElementById('btn-add-machine-modal');
+  if (btnAdd) {
+    btnAdd.addEventListener('click', () => {
+      state.set('activeMachineId', null);
+      state.set('activeModal', 'machine-form');
+    });
+  }
+
+  const emptyAddBtn = document.getElementById('btn-empty-add-machine');
+  if (emptyAddBtn) {
+    emptyAddBtn.addEventListener('click', () => {
+      state.set('activeMachineId', null);
+      state.set('activeModal', 'machine-form');
+    });
+  }
+
+  const btnImport = document.getElementById('btn-import-excel-modal');
+  if (btnImport) {
+    btnImport.addEventListener('click', () => {
+      state.set('activeModal', 'import-excel');
+    });
+  }
+
+  const btnTemplate = document.getElementById('btn-download-template');
+  if (btnTemplate) {
+    btnTemplate.addEventListener('click', () => {
+      notificationService.withLoading(btnTemplate, async () => {
+        await excelService.generateTemplate();
+      }, 'Generating Template...', 'Excel template downloaded successfully!');
+    });
+  }
+
+  const btnExportExcel = document.getElementById('btn-export-excel');
+  if (btnExportExcel) {
+    btnExportExcel.addEventListener('click', async () => {
+      notificationService.withLoading(btnExportExcel, async () => {
+        const filters = state.get('filters') || {};
+        const qRes = machineService.getMachines({ ...filters, limit: 'ALL' });
+        
+        if (qRes.items.length === 0) {
+          notificationService.warning('No machines match current filters to export.');
+          return;
+        }
+
+        const dateStr = new Date().toISOString().split('T')[0];
+        const fileName = `AlMuslim_Machine_Inventory_${dateStr}.xlsx`;
+        await excelService.exportFilteredMachinesToExcel(qRes.items, fileName);
+      }, 'Exporting Excel...', `Exported ${machineService.getMachines({ ...state.get('filters'), limit: 'ALL' }).total} machines to Excel!`);
+    });
+  }
+
+  // More Dropdown Handler
+  const btnMoreTrigger = document.getElementById('btn-more-actions-trigger');
+  const moreMenu = document.getElementById('more-actions-dropdown-menu');
+  if (btnMoreTrigger && moreMenu) {
+    btnMoreTrigger.addEventListener('click', (e) => {
+      e.stopPropagation();
+      moreMenu.classList.toggle('show');
+    });
+  }
+
+  // Helper to cleanly close all action menus
+  const closeAllActionMenus = () => {
+    if (moreMenu) moreMenu.classList.remove('show');
+    document.querySelectorAll('.actions-dropdown-menu.show').forEach(m => {
+      m.classList.remove('show');
+      m.style.display = 'none';
+    });
+    document.querySelectorAll('.btn-actions-trigger.active').forEach(b => {
+      b.classList.remove('active');
+      b.innerHTML = '⋮ Actions ▾';
+    });
+    document.querySelectorAll('tr.row-actions-active').forEach(r => r.classList.remove('row-actions-active'));
+    document.querySelectorAll('td.td-actions-active').forEach(d => d.classList.remove('td-actions-active'));
+  };
+
+  // Close menus on outside click or Escape key
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('.actions-dropdown-container') && !e.target.closest('.actions-dropdown-menu')) {
+      closeAllActionMenus();
+    }
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeAllActionMenus();
+  });
+
+  // Table horizontal and vertical scroll listener (closes open floating menus to prevent detaching)
+  const scrollViewport = document.getElementById('inventory-table-scroll-viewport');
+  if (scrollViewport) {
+    scrollViewport.addEventListener('scroll', closeAllActionMenus, { passive: true });
+    scrollViewport.addEventListener('wheel', (e) => {
+      if (e.shiftKey) {
+        scrollViewport.scrollLeft += e.deltaY;
+      }
+    }, { passive: true });
+  }
+  window.addEventListener('scroll', closeAllActionMenus, { passive: true });
+  window.addEventListener('resize', closeAllActionMenus, { passive: true });
+
+  const btnExportCsv = document.getElementById('btn-export-csv');
+  if (btnExportCsv) {
+    btnExportCsv.addEventListener('click', () => {
+      const filters = state.get('filters') || {};
+      const qRes = machineService.getMachines({ ...filters, limit: 'ALL' });
+
+      if (qRes.items.length === 0) {
+        notificationService.warning('No machines match current filters to export.');
+        return;
+      }
+
+      const dateStr = new Date().toISOString().split('T')[0];
+      const fileName = `AlMuslim_Machine_Inventory_${dateStr}.csv`;
+      excelService.exportFilteredMachinesToCsv(qRes.items, fileName);
+      notificationService.success(`Exported ${qRes.items.length} machines to CSV!`);
+    });
+  }
+
+  const btnPdf = document.getElementById('btn-generate-pdf');
+  if (btnPdf) {
+    btnPdf.addEventListener('click', () => {
+      notificationService.withLoading(btnPdf, async () => {
+        const filters = state.get('filters') || {};
+        const qRes = machineService.getMachines({ ...filters, limit: 'ALL' });
+
+        if (qRes.items.length === 0) {
+          notificationService.warning('No machines match current filters to generate PDF.');
+          return;
+        }
+
+        pdfService.generateReport({
+          title: 'Machine Inventory Report',
+          subtitle: 'Central Maintenance Department Machine Register',
+          filterSummary: `Filtered Dataset: ${qRes.total} Machines`,
+          machines: qRes.items
+        });
+      }, 'Generating Report...', 'Machine inventory PDF report generated successfully!');
+    });
+  }
+
+  const btnColVis = document.getElementById('btn-column-visibility-toggle');
+  if (btnColVis) {
+    btnColVis.addEventListener('click', () => {
+      state.set('activeModal', 'column-visibility');
+    });
+  }
+
+  const btnColPickerInline = document.getElementById('btn-column-picker-inline');
+  if (btnColPickerInline) {
+    btnColPickerInline.addEventListener('click', () => {
+      state.set('activeModal', 'column-visibility');
+    });
+  }
+
+  // 7. Table Header Sorting Handler
+  document.querySelectorAll('.th-sortable').forEach(th => {
+    th.addEventListener('click', () => {
+      const sortField = th.getAttribute('data-sort');
+      const curFilters = state.get('filters') || {};
+      const curField = curFilters.sortField;
+      const curOrder = curFilters.sortOrder || 'asc';
+
+      let newOrder = 'asc';
+      if (curField === sortField) {
+        newOrder = curOrder === 'asc' ? 'desc' : 'asc';
+      }
+
+      state.updateFilters({ sortField: sortField, sortOrder: newOrder, page: 1 });
+    });
+  });
+
+  // 8. Pagination Handlers
+  const perPageSelect = document.getElementById('select-per-page');
+  if (perPageSelect) {
+    perPageSelect.addEventListener('change', (e) => {
+      const val = e.target.value === 'ALL' ? 'ALL' : parseInt(e.target.value, 10);
+      state.updateFilters({ limit: val, page: 1 });
+    });
+  }
+
+  const btnPrev = document.getElementById('btn-prev-page');
+  if (btnPrev) {
+    btnPrev.addEventListener('click', () => {
+      const curPage = state.get('filters')?.page || 1;
+      if (curPage > 1) state.updateFilters({ page: curPage - 1 });
+    });
+  }
+
+  const btnNext = document.getElementById('btn-next-page');
+  if (btnNext) {
+    btnNext.addEventListener('click', () => {
+      const curPage = state.get('filters')?.page || 1;
+      state.updateFilters({ page: curPage + 1 });
+    });
+  }
+
+  document.querySelectorAll('.btn-page-number').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const p = parseInt(btn.getAttribute('data-page'), 10);
+      if (p) state.updateFilters({ page: p });
+    });
+  });
+
+
+  // 9. Row Actions Dropdown Toggle with Smart Floating Positioning & Auto-Flip
+  document.querySelectorAll('.btn-trigger-row-actions').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const id = btn.getAttribute('data-id');
+      const menu = document.getElementById(`actions-menu-${id}`);
+      const tr = btn.closest('tr');
+      const td = btn.closest('td');
+      const wasOpen = menu && menu.classList.contains('show');
+      
+      // Close other open menus
+      closeAllActionMenus();
+
+      if (menu && !wasOpen) {
+        menu.classList.add('show');
+        menu.style.display = 'flex';
+        btn.classList.add('active');
+        if (tr) tr.classList.add('row-actions-active');
+        if (td) td.classList.add('td-actions-active');
+
+        // Smart floating coordinates: completely escapes table overflow-y/x clipping
+        const rect = btn.getBoundingClientRect();
+        const menuWidth = 215;
+        const menuHeight = menu.offsetHeight || 235;
+
+        const spaceBelow = window.innerHeight - rect.bottom;
+        const spaceAbove = rect.top;
+
+        let isDropup = false;
+        let top;
+
+        // If not enough room below (less than menuHeight + 15px) and there's more room above:
+        if (spaceBelow < (menuHeight + 15) && spaceAbove > spaceBelow) {
+          isDropup = true;
+          top = Math.max(10, rect.top - menuHeight - 4);
+        } else {
+          isDropup = false;
+          top = rect.bottom + 4;
+          // Guard against viewport overflow
+          if (top + menuHeight > window.innerHeight - 10) {
+            if (spaceAbove > menuHeight) {
+              isDropup = true;
+              top = Math.max(10, rect.top - menuHeight - 4);
+            } else {
+              top = Math.max(10, window.innerHeight - menuHeight - 10);
+            }
+          }
+        }
+
+        // Horizontal alignment: right-align with button, bounded within viewport
+        let left = rect.right - menuWidth;
+        if (left < 10) left = 10;
+        if (left + menuWidth > window.innerWidth - 10) {
+          left = window.innerWidth - menuWidth - 10;
+        }
+
+        menu.style.position = 'fixed';
+        menu.style.top = `${top}px`;
+        menu.style.left = `${left}px`;
+        menu.style.right = 'auto';
+        menu.style.bottom = 'auto';
+        menu.style.width = `${menuWidth}px`;
+        menu.style.zIndex = '999999';
+
+        btn.innerHTML = isDropup ? '⋮ Actions ▴' : '⋮ Actions ▾';
+      }
+    });
+  });
+
+  // 10. Inspect Machine (Click on Serial Number or View Details)
+  document.querySelectorAll('.btn-inspect-machine').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      closeAllActionMenus();
+      const id = btn.getAttribute('data-id');
+      if (id) {
+        state.set('activeMachineId', id);
+        state.set('activeModal', 'machine-details');
+      }
+    });
+  });
+
+  // Machine History & Timeline
+  document.querySelectorAll('.btn-history-machine').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      closeAllActionMenus();
+      const id = btn.getAttribute('data-id');
+      if (id) {
+        state.set('activeMachineId', id);
+        state.set('currentView', 'machine-history');
+      }
+    });
+  });
+
+  // Spare Parts History
+  document.querySelectorAll('.btn-spare-parts-machine').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      closeAllActionMenus();
+      const id = btn.getAttribute('data-id');
+      if (id) {
+        state.set('activeMachineId', id);
+        state.set('currentView', 'machine-history');
+      }
+    });
+  });
+
+  // Edit Machine
+  document.querySelectorAll('.btn-edit-machine').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      closeAllActionMenus();
+      const id = btn.getAttribute('data-id');
+      if (id) {
+        state.set('activeMachineId', id);
+        state.set('activeModal', 'machine-form');
+      }
+    });
+  });
+
+  // Transfer Machine
+  document.querySelectorAll('.btn-transfer-machine').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      closeAllActionMenus();
+      state.set('activeMachineId', null);
+      state.set('activeModal', 'transfer-machine');
+    });
+  });
+
+  // Delete Machine
+  document.querySelectorAll('.btn-delete-machine').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      closeAllActionMenus();
+      const id = btn.getAttribute('data-id');
+      if (id) {
+        const m = storage.getItem(TABLE_NAMES.MACHINES, id);
+        const confirmed = await notificationService.confirm({
+          title: 'Delete Machine',
+          message: `Permanently delete machine <strong>${m?.serialNumber || id}</strong>?`,
+          icon: '🗑️',
+          confirmText: 'Delete Machine',
+          isDestructive: true
+        });
+        if (confirmed) {
+          try {
+            machineService.deleteMachine(id);
+            state.emit('inventory:updated');
+            notificationService.success('Machine deleted successfully.');
+          } catch (err) {
+            notificationService.error(err.message);
+          }
+        }
+      }
+    });
+  });
+
+  // Delete All Filtered
+  const btnDeleteAllFiltered = document.getElementById('btn-delete-all-filtered');
+  if (btnDeleteAllFiltered) {
+    btnDeleteAllFiltered.addEventListener('click', async () => {
+      const filters = state.get('filters') || {};
+      const qRes = machineService.getMachines(filters);
+      
+      const confirmed = await notificationService.confirm({
+        title: 'Delete All Filtered Machines',
+        message: `Permanently delete all <strong>${qRes.total}</strong> machines currently matching the active filters? This action cannot be undone.`,
+        icon: '🗑️',
+        confirmText: 'Delete All Filtered',
+        isDestructive: true
+      });
+
+      if (confirmed) {
+        try {
+          const allFiltered = machineService.getMachines({ ...filters, limit: 'ALL' });
+          const idsToDelete = allFiltered.items.map(m => m.id);
+          const res = machineService.bulkPermanentDelete(idsToDelete, 'Admin mass delete filtered');
+          state.clearSelection();
+          state.resetFilters();
+          state.emit('inventory:updated');
+          notificationService.success(`Deleted ${res.deletedCount} machines successfully.`);
+        } catch (err) {
+          notificationService.error(err.message);
+        }
+      }
+    });
+  }
+
+  // 11. Checkboxes & Bulk Selection Handlers
+  const selectAll = document.getElementById('check-select-all');
+  if (selectAll) {
+    selectAll.addEventListener('change', (e) => {
+      const curFilters = state.get('filters') || {};
+      const allFiltered = machineService.getMachines({ ...curFilters, limit: 'ALL' });
+      const ids = (allFiltered.items || []).map(m => m.id);
+
+      if (e.target.checked) {
+        // Select ALL machines currently matching the active filters
+        state.selectAllMachines(ids);
+        notificationService.info(`Selected all ${ids.length} machine(s) matching current filters.`);
+      } else {
+        state.clearSelection();
+      }
+    });
+  }
+
+  const btnSelectAllFiltered = document.getElementById('btn-select-all-filtered');
+  if (btnSelectAllFiltered) {
+    btnSelectAllFiltered.addEventListener('click', () => {
+      const curFilters = state.get('filters') || {};
+      const allFiltered = machineService.getMachines({ ...curFilters, limit: 'ALL' });
+      const ids = (allFiltered.items || []).map(m => m.id);
+      state.selectAllMachines(ids);
+      notificationService.info(`Selected all ${ids.length} machine(s) in current filtered view.`);
+    });
+  }
+
+  document.querySelectorAll('.machine-row-check').forEach(chk => {
+    chk.addEventListener('change', (e) => {
+      const id = e.target.getAttribute('data-id');
+      if (id) state.toggleSelectMachine(id);
+    });
+  });
+
+  const clearSelBtn = document.getElementById('btn-bulk-clear');
+  if (clearSelBtn) {
+    clearSelBtn.addEventListener('click', () => state.clearSelection());
+  }
+
+  // Common Reusable Bulk Delete Function
+  const executeBulkDelete = async () => {
+    const selIds = state.get('selectedMachineIds');
+    if (!selIds || selIds.size === 0) {
+      notificationService.warning('Please select at least one machine to delete.');
+      return;
+    }
+
+    const count = selIds.size;
+    const confirmed = await notificationService.confirm({
+      title: 'Delete Selected Machines',
+      message: `Are you sure you want to permanently delete <strong>${count}</strong> selected machine(s)? This action cannot be undone.`,
+      icon: '🗑️',
+      confirmText: `Delete ${count} Machine(s)`,
+      isDestructive: true
+    });
+
+    if (confirmed) {
+      try {
+        const idList = Array.from(selIds);
+        const result = machineService.bulkPermanentDelete(idList, 'Admin selected bulk deletion');
+        state.clearSelection();
+        state.emit('inventory:updated');
+        notificationService.success(`Successfully deleted ${result.deletedCount} machine(s). Inventory updated.`);
+      } catch (err) {
+        notificationService.error(err.message || 'Failed to delete selected machines.');
+      }
+    }
+  };
+
+  const btnBulkDelete = document.getElementById('btn-bulk-delete');
+  if (btnBulkDelete) {
+    btnBulkDelete.addEventListener('click', executeBulkDelete);
+  }
+
+  const btnTopBulkDelete = document.getElementById('btn-top-bulk-delete');
+  if (btnTopBulkDelete) {
+    btnTopBulkDelete.addEventListener('click', executeBulkDelete);
+  }
+
+  // Initial synchronization of selection state on load
+  syncInventorySelectionDOM();
+}
+
+/**
+ * Fast in-place DOM synchronization for machine selection state without destroying scroll position
+ */
+export function syncInventorySelectionDOM(selectedIdsInput) {
+  const selectedIds = selectedIdsInput instanceof Set ? selectedIdsInput : new Set(selectedIdsInput || state.get('selectedMachineIds') || []);
+  const curFilters = state.get('filters') || {};
+  const qRes = machineService.getMachines({ ...curFilters, limit: 'ALL' });
+  const totalFiltered = qRes.total || 0;
+
+  // 1. Update row checkboxes and <tr> selected class in the current table viewport
+  const rowCheckboxes = document.querySelectorAll('.machine-row-check');
+  let visibleSelectedCount = 0;
+
+  rowCheckboxes.forEach(chk => {
+    const id = chk.getAttribute('data-id');
+    const isChecked = selectedIds.has(id);
+    chk.checked = isChecked;
+    if (isChecked) visibleSelectedCount++;
+    const tr = chk.closest('tr');
+    if (tr) tr.classList.toggle('selected', isChecked);
+  });
+
+  // 2. Update Header Select All Checkbox (#check-select-all)
+  const selectAll = document.getElementById('check-select-all');
+  if (selectAll) {
+    if (rowCheckboxes.length > 0 && visibleSelectedCount === rowCheckboxes.length) {
+      selectAll.checked = true;
+      selectAll.indeterminate = false;
+    } else if (visibleSelectedCount > 0 || (selectedIds.size > 0 && rowCheckboxes.length > 0)) {
+      selectAll.checked = false;
+      selectAll.indeterminate = true;
+    } else {
+      selectAll.checked = false;
+      selectAll.indeterminate = false;
+    }
+  }
+
+  // 3. Update Persistent Bulk Action Bar
+  const bulkBar = document.getElementById('inventory-bulk-actions-bar');
+  if (bulkBar) {
+    if (selectedIds.size > 0) {
+      bulkBar.style.display = 'flex';
+      const countEl = document.getElementById('bulk-selected-count');
+      if (countEl) countEl.textContent = selectedIds.size;
+      const selectAllFilteredBtn = document.getElementById('btn-select-all-filtered');
+      if (selectAllFilteredBtn) {
+        if (selectedIds.size < totalFiltered) {
+          selectAllFilteredBtn.style.display = 'inline-block';
+          selectAllFilteredBtn.textContent = `Select all ${totalFiltered} machines in current filter`;
+        } else {
+          selectAllFilteredBtn.style.display = 'none';
+        }
+      }
+      const bulkDelBtn = document.getElementById('btn-bulk-delete');
+      if (bulkDelBtn) bulkDelBtn.innerHTML = `🗑️ Delete Selected (${selectedIds.size})`;
+    } else {
+      bulkBar.style.display = 'none';
+    }
+  }
+
+  // 4. Update Top Bar Delete Button
+  const topBulkDelBtn = document.getElementById('btn-top-bulk-delete');
+  if (topBulkDelBtn) {
+    if (selectedIds.size > 0) {
+      topBulkDelBtn.removeAttribute('disabled');
+      topBulkDelBtn.style.opacity = '1';
+      topBulkDelBtn.style.cursor = 'pointer';
+      topBulkDelBtn.style.background = '#dc2626';
+      topBulkDelBtn.style.borderColor = '#ef4444';
+      topBulkDelBtn.style.color = '#fff';
+      topBulkDelBtn.innerHTML = `🗑️ Delete Selected (${selectedIds.size})`;
+      topBulkDelBtn.title = `Delete ${selectedIds.size} selected machine(s)`;
+    } else {
+      topBulkDelBtn.setAttribute('disabled', 'true');
+      topBulkDelBtn.style.opacity = '0.6';
+      topBulkDelBtn.style.cursor = 'not-allowed';
+      topBulkDelBtn.style.background = 'rgba(220, 38, 38, 0.18)';
+      topBulkDelBtn.style.borderColor = 'rgba(239, 68, 68, 0.35)';
+      topBulkDelBtn.style.color = '#fca5a5';
+      topBulkDelBtn.innerHTML = '🗑️ Delete Selected';
+      topBulkDelBtn.title = 'Select machines to delete';
+    }
+  }
+}

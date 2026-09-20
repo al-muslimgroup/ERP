@@ -1,0 +1,860 @@
+/**
+ * Al-Muslim Group Garments Factory Maintenance Machine ERP
+ * Machine Transfer Management & Configurable Multi-Level Approval Execution Service
+ */
+
+import { storage } from '../db/storage.js';
+import { TABLE_NAMES, TRANSFER_STATUSES, ROLES, APPROVER_TYPES } from '../db/schema.js';
+import { authService } from './authService.js';
+import { masterDataService } from './masterDataService.js';
+import { workflowService } from './workflowService.js';
+import { auditService } from './auditService.js';
+import { notificationService } from './notificationService.js';
+import { historyService } from './historyService.js';
+
+class TransferService {
+  /**
+   * Returns all transfer requests with multi-field filtering
+   */
+  getTransferRequests(params = {}) {
+    let list = storage.getTable(TABLE_NAMES.TRANSFER_REQUESTS) || [];
+    list = [...list].sort((a, b) => new Date(b.requestedAt) - new Date(a.requestedAt));
+
+    // Scoped location filtering for technician accounts
+    const scoped = authService.getScopedFilter();
+    if (scoped && !authService.isAdmin()) {
+      list = list.filter(t => {
+        const matchesSource = (!scoped.unitIds?.length || scoped.unitIds.includes(t.sourceUnitId)) &&
+                              (!scoped.floorIds?.length || scoped.floorIds.includes(t.sourceFloorId)) &&
+                              (!scoped.lineIds?.length || scoped.lineIds.includes(t.sourceLineId));
+        const matchesDest = (!scoped.unitIds?.length || scoped.unitIds.includes(t.destUnitId)) &&
+                            (!scoped.floorIds?.length || scoped.floorIds.includes(t.destFloorId)) &&
+                            (!scoped.lineIds?.length || scoped.lineIds.includes(t.destLineId));
+        return matchesSource || matchesDest;
+      });
+    }
+
+    if (params.status && params.status !== 'ALL') {
+      list = list.filter(t => t.status === params.status);
+    }
+
+    if (params.search) {
+      const q = params.search.trim().toLowerCase();
+      list = list.filter(t => 
+        t.requestNumber?.toLowerCase().includes(q) ||
+        t.machineInfo?.serialNumber?.toLowerCase().includes(q) ||
+        t.machineInfo?.machineName?.toLowerCase().includes(q) ||
+        t.machineInfo?.brand?.toLowerCase().includes(q) ||
+        t.sourcePath?.toLowerCase().includes(q) ||
+        t.destPath?.toLowerCase().includes(q) ||
+        t.requestedByName?.toLowerCase().includes(q) ||
+        t.reason?.toLowerCase().includes(q)
+      );
+    }
+
+    return list;
+  }
+
+  getTransferRequestById(id) {
+    const list = storage.getTable(TABLE_NAMES.TRANSFER_REQUESTS) || [];
+    return list.find(t => t.id === id || t.requestNumber === id) || null;
+  }
+
+  getPendingCount() {
+    const list = this.getTransferRequests({ status: 'ALL' });
+    const user = authService.getCurrentUser();
+    return list.filter(t => {
+      const isPendingStatus = t.status === TRANSFER_STATUSES.PENDING_APPROVAL || t.status === TRANSFER_STATUSES.PARTIALLY_APPROVED;
+      if (!isPendingStatus) return false;
+      return workflowService.canUserApproveStep(t, user);
+    }).length;
+  }
+
+  getMachineTransferHistory(machineIdOrSerial) {
+    const requests = storage.getTable(TABLE_NAMES.TRANSFER_REQUESTS) || [];
+    const m = storage.getItem(TABLE_NAMES.MACHINES, machineIdOrSerial) || 
+              (storage.getTable(TABLE_NAMES.MACHINES) || []).find(x => x.serialNumber === machineIdOrSerial);
+    const mId = m?.id || machineIdOrSerial;
+    const mSerial = m?.serialNumber || machineIdOrSerial;
+
+    const filtered = requests.filter(r => r.machineId === mId || r.machineInfo?.serialNumber === mSerial);
+    return filtered.sort((a, b) => new Date(b.requestedAt || 0) - new Date(a.requestedAt || 0));
+  }
+
+  /**
+   * Helper to generate human-readable unique sequential Transfer Request ID (e.g. TR-2026-000001)
+   */
+  generateRequestNumber() {
+    const year = new Date().getFullYear();
+    const all = storage.getTable(TABLE_NAMES.TRANSFER_REQUESTS) || [];
+    const count = all.length + 1;
+    return `TR-${year}-${String(count).padStart(6, '0')}`;
+  }
+
+  /**
+   * Initiates a new Machine Transfer Request through the dynamic approval workflow engine
+   */
+  createTransferRequest({ machineId, destGroupId, destUnitId, destFloorId, destLineId, reason, remarks, documents = [] }) {
+    const user = authService.getCurrentUser() || { id: 'usr-1', name: 'Authorized User', role: 'USER' };
+    const machine = storage.getItem(TABLE_NAMES.MACHINES, machineId);
+    if (!machine) throw new Error('Machine record not found in ERP database.');
+
+    // 1. Validate destination is not identical to source
+    if (machine.unitId === destUnitId && machine.floorId === destFloorId && machine.lineId === destLineId) {
+      throw new Error('Invalid Destination: Target Line is identical to the machine\'s current location.');
+    }
+
+    if (!destUnitId || !destFloorId || !destLineId) {
+      throw new Error('Destination Unit, Floor, and Production Line are required.');
+    }
+
+    if (!reason || !reason.trim()) {
+      throw new Error('Transfer Reason / Order Reference is required.');
+    }
+
+    // 2. Resolve Master Data Paths & Equipment Details
+    const mn = storage.getItem(TABLE_NAMES.MACHINE_NAMES, machine.machineNameId);
+    const brd = storage.getItem(TABLE_NAMES.BRANDS, machine.brandId);
+    const mdl = storage.getItem(TABLE_NAMES.MODELS, machine.modelId);
+    const cat = mn?.categoryId;
+
+    const sourcePath = masterDataService.getFullLocationPath(machine.unitId, machine.floorId, machine.lineId, machine.groupId);
+    const destPath = masterDataService.getFullLocationPath(destUnitId, destFloorId, destLineId, destGroupId);
+
+    const sourceUnit = storage.getItem(TABLE_NAMES.UNITS, machine.unitId)?.name || 'Unit';
+    const sourceFloor = storage.getItem(TABLE_NAMES.FLOORS, machine.floorId)?.name || 'Floor';
+    const sourceLine = storage.getItem(TABLE_NAMES.LINES, machine.lineId)?.name || 'Line';
+
+    const destUnit = storage.getItem(TABLE_NAMES.UNITS, destUnitId)?.name || 'Unit';
+    const destFloor = storage.getItem(TABLE_NAMES.FLOORS, destFloorId)?.name || 'Floor';
+    const destLine = storage.getItem(TABLE_NAMES.LINES, destLineId)?.name || 'Line';
+
+    // 3. Match Configured Approval Workflow
+    let workflow;
+    try {
+      workflow = workflowService.matchWorkflow({
+        sourceGroupId: machine.groupId,
+        sourceUnitId: machine.unitId,
+        sourceFloorId: machine.floorId,
+        sourceLineId: machine.lineId,
+        destUnitId,
+        destFloorId,
+        destLineId,
+        categoryId: cat
+      });
+    } catch (e) {
+      workflow = {
+        id: 'wf-default',
+        name: 'Standard Management Approval Workflow',
+        levels: [
+          { level: 1, title: 'Central Maintenance Admin Approval', approverType: 'ADMIN' }
+        ]
+      };
+    }
+
+    if (!workflow || !workflow.levels || workflow.levels.length === 0) {
+      workflow = {
+        id: 'wf-default',
+        name: 'Standard Management Approval Workflow',
+        levels: [
+          { level: 1, title: 'Central Maintenance Admin Approval', approverType: 'ADMIN' }
+        ]
+      };
+    }
+
+    // 4. Process attached documents or generate digital requisition note
+    const processedDocs = (documents && documents.length > 0) ? documents.map((doc, idx) => ({
+      id: `doc-${Date.now()}-${idx}`,
+      name: doc.name || 'Management_Approval.pdf',
+      type: doc.type || 'application/pdf',
+      size: doc.size || '120 KB',
+      dataUrl: doc.dataUrl || null,
+      uploadedBy: user.id,
+      uploadedByName: user.name,
+      uploadedAt: new Date().toISOString(),
+      approvalLevel: 0
+    })) : [
+      {
+        id: `doc-${Date.now()}-auto`,
+        name: `Transfer_Requisition_${machine.serialNumber}.pdf`,
+        type: 'application/pdf',
+        size: '64 KB',
+        dataUrl: null,
+        uploadedBy: user.id,
+        uploadedByName: user.name,
+        uploadedAt: new Date().toISOString(),
+        approvalLevel: 0,
+        isAutoGenerated: true
+      }
+    ];
+
+    // 5. Build normalized approval levels snapshot
+    const levels = workflow.levels.map(lvl => ({
+      level: lvl.level,
+      title: lvl.title,
+      approverType: lvl.approverType,
+      approverRole: lvl.approverRole || '',
+      approverUserId: lvl.approverUserId || '',
+      description: lvl.description || '',
+      status: 'PENDING',
+      approvedBy: null,
+      approvedByName: null,
+      approvedAt: null,
+      remarks: null
+    }));
+
+    const reqNumber = this.generateRequestNumber();
+    const requestId = `trq-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+
+    const newRequest = {
+      id: requestId,
+      requestNumber: reqNumber,
+      machineId: machine.id,
+      machineInfo: {
+        machineName: mn?.name || 'Machine',
+        brand: brd?.name || 'Brand',
+        model: mdl?.name || 'Model',
+        serialNumber: machine.serialNumber,
+        category: storage.getItem(TABLE_NAMES.CATEGORIES, cat)?.name || 'Sewing Equipment'
+      },
+      sourceGroupId: machine.groupId,
+      sourceUnitId: machine.unitId,
+      sourceFloorId: machine.floorId,
+      sourceLineId: machine.lineId,
+      sourceLocation: { unit: sourceUnit, floor: sourceFloor, line: sourceLine },
+      sourcePath: sourcePath,
+      destGroupId: destGroupId || machine.groupId,
+      destUnitId: destUnitId,
+      destFloorId: destFloorId,
+      destLineId: destLineId,
+      destLocation: { unit: destUnit, floor: destFloor, line: destLine },
+      destPath: destPath,
+      reason: reason.trim(),
+      remarks: remarks?.trim() || '',
+      workflowId: workflow.id,
+      workflowName: workflow.name,
+      currentLevel: 1,
+      totalLevels: levels.length,
+      levels: levels,
+      documents: processedDocs,
+      approvalHistory: [
+        {
+          level: 0,
+          action: 'REQUEST_SUBMITTED',
+          approverName: user.name,
+          approverRole: user.role,
+          date: new Date().toLocaleDateString('en-GB'),
+          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          timestamp: new Date().toISOString(),
+          remarks: `Transfer request created for ${machine.serialNumber} (${sourceLine} → ${destLine}). Workflow: ${workflow.name}`
+        }
+      ],
+      status: TRANSFER_STATUSES.PENDING_APPROVAL,
+      requestedBy: user.id,
+      requestedByName: user.name,
+      requestedByRole: user.role,
+      requestedAt: new Date().toISOString(),
+      completedAt: null,
+      completedBy: null
+    };
+
+    // NOTE: CRITICAL SECURITY RULE: The physical machine's live location is NOT changed here!
+    // We update machine status to 'IN_TRANSFER' to indicate pending relocation in live inventory table
+    storage.update(TABLE_NAMES.MACHINES, machine.id, {
+      status: 'IN_TRANSFER',
+      updatedBy: user.id,
+      updatedAt: new Date().toISOString()
+    });
+
+    storage.insert(TABLE_NAMES.TRANSFER_REQUESTS, newRequest);
+
+    // Send notifications to approvers
+    notificationService.notify({
+      title: '⚠️ Machine Transfer Approval Required',
+      message: `${user.name} submitted transfer request ${reqNumber} for Machine ${machine.serialNumber} (${sourceLine} → ${destLine}).`,
+      type: 'APPROVAL_REQUEST',
+      module: 'transfers',
+      action: 'APPROVE',
+      entityType: 'TRANSFER',
+      entityId: newRequest.id,
+      targetUrl: '#approvals'
+    });
+
+    auditService.log(
+      'TRANSFER_REQUEST_CREATED',
+      'TRANSFER',
+      reqNumber,
+      `Created transfer request ${reqNumber} for Machine ${machine.serialNumber} from ${sourcePath} to ${destPath}. Reason: ${reason}`
+    );
+
+    return newRequest;
+  }
+
+  /**
+   * Approves the current step in the transfer approval workflow
+   */
+  approveStep(requestId, remarks = '', additionalDocuments = []) {
+    const user = authService.getCurrentUser();
+    const req = this.getTransferRequestById(requestId);
+    if (!req) throw new Error('Transfer request not found.');
+
+    if (req.status !== TRANSFER_STATUSES.PENDING_APPROVAL && req.status !== TRANSFER_STATUSES.PARTIALLY_APPROVED) {
+      throw new Error(`Cannot approve request in '${req.status}' status.`);
+    }
+
+    // Check authorization for this level
+    if (!workflowService.canUserApproveStep(req, user)) {
+      throw new Error('Access Denied: You are not authorized to approve this workflow stage.');
+    }
+
+    const currentLevelIdx = (req.currentLevel || 1) - 1;
+    const currentStep = req.levels[currentLevelIdx];
+    if (!currentStep) throw new Error('Invalid workflow level.');
+
+    const now = new Date();
+    const dateStr = now.toLocaleDateString('en-GB');
+    const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+    // Determine if this is an Admin overriding on behalf of user/floor
+    const isMasterOverride = authService.isAdmin() && currentStep.approverType !== APPROVER_TYPES.ADMIN;
+    const finalRemarks = remarks?.trim() ? remarks.trim() : (isMasterOverride ? 'Approved by Admin (Master Override)' : 'Approved');
+
+    // Update current step record
+    currentStep.status = 'APPROVED';
+    currentStep.approvedBy = user.id;
+    currentStep.approvedByName = user.name;
+    currentStep.approvedAt = now.toISOString();
+    currentStep.remarks = finalRemarks;
+
+    // Append new supporting documents if provided
+    let updatedDocs = [...(req.documents || [])];
+    if (additionalDocuments && additionalDocuments.length > 0) {
+      additionalDocuments.forEach((doc, idx) => {
+        updatedDocs.push({
+          id: `doc-${Date.now()}-${idx}`,
+          name: doc.name,
+          type: doc.type,
+          size: doc.size,
+          dataUrl: doc.dataUrl,
+          uploadedBy: user.id,
+          uploadedByName: user.name,
+          uploadedAt: now.toISOString(),
+          approvalLevel: req.currentLevel
+        });
+      });
+    }
+
+    // Append to immutable approval history log
+    const updatedHistory = [
+      ...(req.approvalHistory || []),
+      {
+        level: req.currentLevel,
+        levelTitle: currentStep.title,
+        action: 'APPROVED',
+        approverName: user.name,
+        approverRole: user.role,
+        date: dateStr,
+        time: timeStr,
+        timestamp: now.toISOString(),
+        remarks: finalRemarks
+      }
+    ];
+
+    // Check if this was the final level
+    if (req.currentLevel >= req.totalLevels) {
+      // All approval levels completed! Execute final machine relocation
+      return this.executeFinalTransfer(requestId, updatedHistory, updatedDocs);
+    } else {
+      // Advance to next approval level
+      const nextLevel = req.currentLevel + 1;
+      const updated = storage.update(TABLE_NAMES.TRANSFER_REQUESTS, req.id, {
+        currentLevel: nextLevel,
+        status: TRANSFER_STATUSES.PARTIALLY_APPROVED,
+        levels: req.levels,
+        documents: updatedDocs,
+        approvalHistory: updatedHistory,
+        updatedAt: now.toISOString()
+      });
+
+      notificationService.notify(
+        'Transfer Advanced to Next Level',
+        `Transfer ${req.requestNumber} (Machine ${req.machineInfo.serialNumber}) approved by ${user.name}. Now awaiting Level ${nextLevel} approval.`,
+        'TRANSFER_PROGRESS',
+        '#approvals'
+      );
+
+      auditService.log(
+        'TRANSFER_STEP_APPROVED',
+        'TRANSFER',
+        req.requestNumber,
+        `Level ${req.currentLevel} (${currentStep.title}) approved by ${user.name}. Remarks: ${remarks}`
+      );
+
+      return updated;
+    }
+  }
+
+  /**
+   * Rejects the transfer request with a mandatory reason
+   */
+  rejectTransfer(requestId, rejectionReason) {
+    const user = authService.getCurrentUser();
+    const req = this.getTransferRequestById(requestId);
+    if (!req) throw new Error('Transfer request not found.');
+
+    if (!rejectionReason || !rejectionReason.trim()) {
+      throw new Error('Rejection Reason is mandatory.');
+    }
+
+    // Check authorization
+    if (!workflowService.canUserApproveStep(req, user) && !authService.isAdmin()) {
+      throw new Error('Access Denied: You are not authorized to reject this transfer request.');
+    }
+
+    const now = new Date();
+    const dateStr = now.toLocaleDateString('en-GB');
+    const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+    const currentLevelIdx = (req.currentLevel || 1) - 1;
+    if (req.levels[currentLevelIdx]) {
+      req.levels[currentLevelIdx].status = 'REJECTED';
+      req.levels[currentLevelIdx].approvedBy = user.id;
+      req.levels[currentLevelIdx].approvedByName = user.name;
+      req.levels[currentLevelIdx].approvedAt = now.toISOString();
+      req.levels[currentLevelIdx].remarks = rejectionReason;
+    }
+
+    const updatedHistory = [
+      ...(req.approvalHistory || []),
+      {
+        level: req.currentLevel,
+        levelTitle: req.levels[currentLevelIdx]?.title || `Level ${req.currentLevel}`,
+        action: 'REJECTED',
+        approverName: user.name,
+        approverRole: user.role,
+        date: dateStr,
+        time: timeStr,
+        timestamp: now.toISOString(),
+        remarks: rejectionReason.trim()
+      }
+    ];
+
+    // Restore machine status back to ACTIVE at source
+    const machine = storage.getItem(TABLE_NAMES.MACHINES, req.machineId);
+    if (machine) {
+      storage.update(TABLE_NAMES.MACHINES, machine.id, {
+        status: 'ACTIVE',
+        updatedBy: user.id,
+        updatedAt: now.toISOString()
+      });
+    }
+
+    const updated = storage.update(TABLE_NAMES.TRANSFER_REQUESTS, req.id, {
+      status: TRANSFER_STATUSES.REJECTED,
+      rejectionReason: rejectionReason.trim(),
+      levels: req.levels,
+      approvalHistory: updatedHistory,
+      updatedAt: now.toISOString()
+    });
+
+    notificationService.notify(
+      'Machine Transfer Rejected',
+      `Transfer request ${req.requestNumber} for Machine ${req.machineInfo.serialNumber} was rejected by ${user.name}. Reason: ${rejectionReason}`,
+      'TRANSFER_REJECTED',
+      '#approvals'
+    );
+
+    auditService.log(
+      'TRANSFER_REJECTED',
+      'TRANSFER',
+      req.requestNumber,
+      `Rejected at Level ${req.currentLevel} by ${user.name}. Reason: ${rejectionReason}`
+    );
+
+    return updated;
+  }
+
+  /**
+   * Returns transfer request back to requester for revision
+   */
+  returnForRevision(requestId, revisionComments) {
+    const user = authService.getCurrentUser();
+    const req = this.getTransferRequestById(requestId);
+    if (!req) throw new Error('Transfer request not found.');
+
+    if (!revisionComments || !revisionComments.trim()) {
+      throw new Error('Revision instructions/comments are required.');
+    }
+
+    if (!workflowService.canUserApproveStep(req, user) && !authService.isAdmin()) {
+      throw new Error('Access Denied: Unauthorized to request revision.');
+    }
+
+    const now = new Date();
+    const updatedHistory = [
+      ...(req.approvalHistory || []),
+      {
+        level: req.currentLevel,
+        action: 'RETURNED_FOR_REVISION',
+        approverName: user.name,
+        approverRole: user.role,
+        date: now.toLocaleDateString('en-GB'),
+        time: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        timestamp: now.toISOString(),
+        remarks: revisionComments.trim()
+      }
+    ];
+
+    const updated = storage.update(TABLE_NAMES.TRANSFER_REQUESTS, req.id, {
+      status: TRANSFER_STATUSES.REVISION_REQUESTED,
+      revisionComments: revisionComments.trim(),
+      approvalHistory: updatedHistory,
+      updatedAt: now.toISOString()
+    });
+
+    notificationService.notify(
+      'Transfer Returned for Revision',
+      `Transfer ${req.requestNumber} for Machine ${req.machineInfo.serialNumber} was returned by ${user.name} for revision. Note: ${revisionComments}`,
+      'TRANSFER_REVISION',
+      '#approvals'
+    );
+
+    auditService.log(
+      'TRANSFER_REVISION_REQUESTED',
+      'TRANSFER',
+      req.requestNumber,
+      `Returned for revision by ${user.name}: ${revisionComments}`
+    );
+
+    return updated;
+  }
+
+  /**
+   * Resubmits a revised transfer request
+   */
+  resubmitTransfer(requestId, { destGroupId, destUnitId, destFloorId, destLineId, reason, remarks, documents = [] }) {
+    const user = authService.getCurrentUser();
+    const req = this.getTransferRequestById(requestId);
+    if (!req) throw new Error('Transfer request not found.');
+
+    if (req.status !== TRANSFER_STATUSES.REVISION_REQUESTED) {
+      throw new Error('Only requests in Revision Requested state can be resubmitted.');
+    }
+
+    const destPath = masterDataService.getFullLocationPath(destUnitId, destFloorId, destLineId, destGroupId);
+    const destUnit = storage.getItem(TABLE_NAMES.UNITS, destUnitId)?.name || 'Unit';
+    const destFloor = storage.getItem(TABLE_NAMES.FLOORS, destFloorId)?.name || 'Floor';
+    const destLine = storage.getItem(TABLE_NAMES.LINES, destLineId)?.name || 'Line';
+
+    // Reset levels back to pending starting from Level 1
+    const resetLevels = req.levels.map(lvl => ({
+      ...lvl,
+      status: 'PENDING',
+      approvedBy: null,
+      approvedByName: null,
+      approvedAt: null,
+      remarks: null
+    }));
+
+    const now = new Date();
+    const updatedHistory = [
+      ...(req.approvalHistory || []),
+      {
+        level: 0,
+        action: 'RESUBMITTED_AFTER_REVISION',
+        approverName: user.name,
+        approverRole: user.role,
+        date: now.toLocaleDateString('en-GB'),
+        time: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        timestamp: now.toISOString(),
+        remarks: `Updated destination to ${destPath}. Reason: ${reason}`
+      }
+    ];
+
+    const updated = storage.update(TABLE_NAMES.TRANSFER_REQUESTS, req.id, {
+      destGroupId: destGroupId || req.destGroupId,
+      destUnitId,
+      destFloorId,
+      destLineId,
+      destLocation: { unit: destUnit, floor: destFloor, line: destLine },
+      destPath,
+      reason: reason.trim(),
+      remarks: remarks?.trim() || req.remarks,
+      documents: [...(req.documents || []), ...documents],
+      currentLevel: 1,
+      levels: resetLevels,
+      status: TRANSFER_STATUSES.PENDING_APPROVAL,
+      approvalHistory: updatedHistory,
+      updatedAt: now.toISOString()
+    });
+
+    notificationService.notify(
+      'Transfer Request Resubmitted',
+      `${user.name} resubmitted revised transfer request ${req.requestNumber} for Machine ${req.machineInfo.serialNumber}.`,
+      'TRANSFER_REQUEST',
+      '#approvals'
+    );
+
+    auditService.log(
+      'TRANSFER_RESUBMITTED',
+      'TRANSFER',
+      req.requestNumber,
+      `Resubmitted with new destination ${destPath}.`
+    );
+
+    return updated;
+  }
+
+  /**
+   * Cancels a transfer request
+   */
+  cancelTransfer(requestId, reason = 'Cancelled by requester') {
+    const user = authService.getCurrentUser();
+    const req = this.getTransferRequestById(requestId);
+    if (!req) throw new Error('Transfer request not found.');
+
+    if (req.status === TRANSFER_STATUSES.COMPLETED) {
+      throw new Error('Cannot cancel an already completed transfer.');
+    }
+
+    const now = new Date();
+    // Restore machine status
+    const machine = storage.getItem(TABLE_NAMES.MACHINES, req.machineId);
+    if (machine) {
+      storage.update(TABLE_NAMES.MACHINES, machine.id, {
+        status: 'ACTIVE',
+        updatedBy: user.id,
+        updatedAt: now.toISOString()
+      });
+    }
+
+    const updatedHistory = [
+      ...(req.approvalHistory || []),
+      {
+        level: req.currentLevel,
+        action: 'CANCELLED',
+        approverName: user.name,
+        approverRole: user.role,
+        date: now.toLocaleDateString('en-GB'),
+        time: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        timestamp: now.toISOString(),
+        remarks: reason
+      }
+    ];
+
+    const updated = storage.update(TABLE_NAMES.TRANSFER_REQUESTS, req.id, {
+      status: TRANSFER_STATUSES.CANCELLED,
+      cancelReason: reason,
+      approvalHistory: updatedHistory,
+      updatedAt: now.toISOString()
+    });
+
+    auditService.log(
+      'TRANSFER_CANCELLED',
+      'TRANSFER',
+      req.requestNumber,
+      `Transfer ${req.requestNumber} cancelled by ${user.name}: ${reason}`
+    );
+
+    return updated;
+  }
+
+  /**
+   * FINAL EXECUTION: Atomically changes physical machine location in live inventory database
+   */
+  executeFinalTransfer(requestId, history = null, docs = null) {
+    const user = authService.getCurrentUser();
+    const req = this.getTransferRequestById(requestId);
+    if (!req) throw new Error('Transfer request not found.');
+
+    const machine = storage.getItem(TABLE_NAMES.MACHINES, req.machineId);
+    if (!machine) throw new Error('Machine not found.');
+
+    const now = new Date();
+    const dateStr = now.toLocaleDateString('en-GB');
+    const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+    const finalHistory = history || [
+      ...(req.approvalHistory || []),
+      {
+        level: req.totalLevels,
+        action: 'FINAL_APPROVAL_COMPLETED',
+        approverName: user.name,
+        approverRole: user.role,
+        date: dateStr,
+        time: timeStr,
+        timestamp: now.toISOString(),
+        remarks: 'All approval levels completed. Physical machine location updated in live inventory.'
+      }
+    ];
+
+    // 1. Atomically UPDATE PHYSICAL MACHINE LOCATION in live inventory database
+    storage.update(TABLE_NAMES.MACHINES, machine.id, {
+      groupId: req.destGroupId,
+      unitId: req.destUnitId,
+      floorId: req.destFloorId,
+      lineId: req.destLineId,
+      status: 'ACTIVE',
+      remarks: `${machine.remarks || ''} [Transferred from ${req.sourcePath} via ${req.requestNumber} on ${dateStr}]`.trim(),
+      updatedBy: user.id,
+      updatedAt: now.toISOString()
+    });
+
+    // 2. Insert into permanent historical TRANSFERS log
+    const transferRecord = {
+      id: `trf-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      requestId: req.id,
+      requestNumber: req.requestNumber,
+      machineId: machine.id,
+      serialNumber: machine.serialNumber,
+      machineName: req.machineInfo?.machineName || 'Machine',
+      sourceGroupId: req.sourceGroupId,
+      sourceUnitId: req.sourceUnitId,
+      sourceFloorId: req.sourceFloorId,
+      sourceLineId: req.sourceLineId,
+      sourcePath: req.sourcePath,
+      destGroupId: req.destGroupId,
+      destUnitId: req.destUnitId,
+      destFloorId: req.destFloorId,
+      destLineId: req.destLineId,
+      destPath: req.destPath,
+      reason: req.reason,
+      transferredBy: req.requestedBy,
+      transferredByName: req.requestedByName,
+      transferredAt: req.requestedAt,
+      completedAt: now.toISOString(),
+      completedBy: user.id,
+      completedByName: user.name,
+      approvedBy: user.name
+    };
+    storage.insert(TABLE_NAMES.TRANSFERS, transferRecord);
+
+    // 3. Mark Transfer Request as COMPLETED
+    const updated = storage.update(TABLE_NAMES.TRANSFER_REQUESTS, req.id, {
+      status: TRANSFER_STATUSES.COMPLETED,
+      approvalHistory: finalHistory,
+      documents: docs || req.documents,
+      completedAt: now.toISOString(),
+      completedBy: user.id,
+      completedByName: user.name,
+      updatedAt: now.toISOString()
+    });
+
+    // 4. Send high-priority notifications & audit trail
+    notificationService.notify(
+      '🎉 Machine Transfer Completed!',
+      `Machine ${machine.serialNumber} (${req.machineInfo.machineName}) officially relocated to ${req.destPath} under ${req.requestNumber}.`,
+      'TRANSFER_COMPLETED',
+      '#inventory'
+    );
+
+    auditService.log(
+      'MACHINE_LOCATION_COMMITTED',
+      'MACHINE',
+      machine.serialNumber,
+      `Physical location moved from [${req.sourcePath}] to [${req.destPath}] via Request ${req.requestNumber}. Approved by ${user.name}.`
+    );
+
+    // 5. Automatic Machine Lifecycle History Record
+    historyService.recordActivity({
+      machineId: machine.id,
+      serialNumber: machine.serialNumber,
+      actionType: 'TRANSFER_MACHINE',
+      title: `Inter-Plant/Line Transfer Executed (${req.requestNumber})`,
+      details: `Machine transferred from ${req.sourcePath} to ${req.destPath}. Reason: ${req.reason || 'Line balancing'}`,
+      fromLocation: {
+        groupId: req.sourceGroupId,
+        unitId: req.sourceUnitId,
+        floorId: req.sourceFloorId,
+        lineId: req.sourceLineId,
+        unitName: req.sourceLocation?.unit,
+        floorName: req.sourceLocation?.floor,
+        lineName: req.sourceLocation?.line
+      },
+      toLocation: {
+        groupId: req.destGroupId,
+        unitId: req.destUnitId,
+        floorId: req.destFloorId,
+        lineId: req.destLineId,
+        unitName: req.destLocation?.unit,
+        floorName: req.destLocation?.floor,
+        lineName: req.destLocation?.line
+      },
+      previousValue: { location: req.sourcePath },
+      newValue: { location: req.destPath },
+      remarks: req.remarks || req.reason
+    });
+
+    return updated;
+  }
+
+  /**
+   * Exports filtered machine transfer requests to formatted Excel
+   * Columns: Machine Serial Number | From Location | To Location | Request Date | Approval Date | Requested By | Approved By | Status | Reason
+   */
+  exportTransfersToExcel(list = null) {
+    if (typeof XLSX === 'undefined') {
+      alert('Excel export library is loading, please try again.');
+      return;
+    }
+
+    const requests = list || this.getTransferRequests({ status: 'ALL' });
+    const wb = XLSX.utils.book_new();
+
+    const headers = [
+      'Sl.',
+      'Machine Serial Number',
+      'Machine Name & Model',
+      'From Location (Source)',
+      'To Location (Destination)',
+      'Request Date',
+      'Approval Date',
+      'Requested By',
+      'Approved By',
+      'Status',
+      'Transfer Reason / Remarks'
+    ];
+
+    const rows = [headers];
+
+    requests.forEach((r, idx) => {
+      const isCompleted = r.status === TRANSFER_STATUSES.COMPLETED;
+      const approvalDate = isCompleted && r.completedAt ? new Date(r.completedAt).toLocaleDateString('en-GB') : (r.status === TRANSFER_STATUSES.REJECTED ? 'Rejected' : 'Pending');
+      const approvedBy = r.completedByName || (r.approvalHistory?.find(h => h.action === 'APPROVED')?.approverName) || (isCompleted ? 'Admin' : '—');
+
+      rows.push([
+        String(idx + 1).padStart(2, '0'),
+        r.machineInfo?.serialNumber || r.machineSerial || '—',
+        `${r.machineInfo?.machineName || 'Machine'} (${r.machineInfo?.brand || ''} ${r.machineInfo?.model || ''})`.trim(),
+        r.sourcePath || `${r.sourceLocation?.unit || ''} > ${r.sourceLocation?.floor || ''} > ${r.sourceLocation?.line || ''}`,
+        r.destPath || `${r.destLocation?.unit || ''} > ${r.destLocation?.floor || ''} > ${r.destLocation?.line || ''}`,
+        r.requestedAt ? new Date(r.requestedAt).toLocaleDateString('en-GB') : '—',
+        approvalDate,
+        `${r.requestedByName || 'User'} (${r.requestedByRole || 'Staff'})`,
+        approvedBy,
+        r.status === 'PENDING_APPROVAL' ? 'Pending' : r.status.replace(/_/g, ' '),
+        r.reason || r.remarks || '—'
+      ]);
+    });
+
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    ws['!cols'] = [
+      { wch: 6 },
+      { wch: 22 },
+      { wch: 32 },
+      { wch: 36 },
+      { wch: 36 },
+      { wch: 15 },
+      { wch: 15 },
+      { wch: 22 },
+      { wch: 20 },
+      { wch: 18 },
+      { wch: 35 }
+    ];
+
+    XLSX.utils.book_append_sheet(wb, ws, 'Machine Transfers');
+    XLSX.writeFile(wb, `Machine_Transfers_Report_${new Date().toISOString().split('T')[0]}.xlsx`);
+  }
+}
+
+export const transferService = new TransferService();

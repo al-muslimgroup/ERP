@@ -1,0 +1,21 @@
+{
+  "name": "al-muslim-garments-erp",
+  "version": "1.0.0",
+  "description": "Garments Factory Maintenance Machine Inventory ERP System - Al-Muslim Group",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "keywords": [
+    "erp",
+    "garments",
+    "maintenance",
+    "inventory",
+    "machine-management"
+  ],
+  "author": "Al-Muslim Group IT & Maintenance Systems",
+  "license": "UNLICENSED",
+  "dependencies": {
+    "nodemailer": "^10.0.10"
+  }
+}

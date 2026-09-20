@@ -1,0 +1,9 @@
+node_modules/
+client_errors.log
+scratch/
+scratch_chrome_prof/
+scratch_chrome_prof_hist/
+.DS_Store
+Thumbs.db
+*serviceAccountKey*.json
+data/

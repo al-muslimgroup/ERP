@@ -1,0 +1,3390 @@
+/**
+ * Al-Muslim Group Garments Factory Maintenance Machine ERP
+ * User Management & Individual Permission Matrix Component (Admin Panel)
+ * 
+ * Simple, clean, and user-friendly interface for user administration and granular permissions.
+ */
+
+import { storage } from '../db/storage.js';
+import { TABLE_NAMES, DEFAULT_PERMISSION_TEMPLATES } from '../db/schema.js';
+import { authService } from '../services/authService.js';
+import { cryptoService } from '../services/cryptoService.js';
+import { emailService } from '../services/emailService.js';
+import { notificationService } from '../services/notificationService.js';
+import { state } from '../state.js';
+
+import { masterDataService } from '../services/masterDataService.js';
+
+let searchQuery = '';
+let roleFilter = 'ALL'; // 'ALL' | 'SUPER_ADMIN' | 'ADMIN' | 'USER'
+let statusFilter = 'ALL'; // 'ALL' | 'ACTIVE' | 'INACTIVE'
+let presetFilter = 'ALL'; // 'ALL' | presetId
+let activeUserSection = (typeof localStorage !== 'undefined' && localStorage.getItem('al_muslim_user_mgmt_section')) || 'USERS'; // 'USERS' | 'PRESETS'
+let presetViewMode = (typeof localStorage !== 'undefined' && localStorage.getItem('al_muslim_preset_view_mode')) || 'CARDS'; // 'CARDS' | 'TABLE'
+
+// Modal state
+let activeModalType = null; // 'ADD_USER' | 'EDIT_USER' | 'USER_PERMISSIONS' | 'RESET_PASSWORD' | 'CREATE_EDIT_PRESET' | 'ASSIGN_USERS_TO_PRESET' | 'USER_QUICK_PRESET'
+let activeModalTab = 'PERMISSIONS'; // 'PERMISSIONS' | 'LOCATION_SCOPE'
+let targetUser = null;
+let targetPreset = null;
+let editingPreset = null;
+let editingPermissions = {};
+let editingScope = { allGroups: true, groupIds: [], unitIds: [], floorIds: [], lineIds: [] };
+let applyToAssignedUsers = true;
+let syncScopeOnPresetAssign = true;
+let selectedUserIdsForPreset = [];
+
+// Granular 7-Action Permissions Modules Definition
+export const PERMISSION_CONFIG_MODULES = [
+  {
+    group: '🏭 Core Machinery & Operations',
+    modules: [
+      { id: 'machines', name: 'Machine Inventory & Catalog', actions: ['VIEW', 'ADD', 'EDIT', 'DELETE', 'IMPORT', 'EXPORT', 'APPROVE'] },
+      { id: 'transfers', name: 'Machine Movement & Transfers', actions: ['VIEW', 'ADD', 'EDIT', 'DELETE', 'IMPORT', 'EXPORT', 'APPROVE'] },
+      { id: 'relocate', name: 'Relocate & Physical Verification', actions: ['VIEW', 'ADD', 'EDIT', 'DELETE', 'IMPORT', 'EXPORT', 'APPROVE'] },
+      { id: 'qr_codes', name: 'QR Codes & Stickers / Labels', actions: ['VIEW', 'ADD', 'EDIT', 'DELETE', 'EXPORT'] },
+      { id: 'preventive_maintenance', name: 'Preventive Maintenance (PM)', actions: ['VIEW', 'ADD', 'EDIT', 'DELETE', 'IMPORT', 'EXPORT', 'APPROVE'] },
+      { id: 'machine_history', name: 'Machine History & Lifecycles', actions: ['VIEW', 'ADD', 'EDIT', 'DELETE', 'EXPORT'] },
+      { id: 'storage', name: 'Storage & Warehouse Rules', actions: ['VIEW', 'ADD', 'EDIT', 'DELETE', 'EXPORT'] },
+      { id: 'dashboard', name: 'Dashboard Overview', actions: ['VIEW'] }
+    ]
+  },
+  {
+    group: '🔬 Specialized Technical Departments (Individual User Access)',
+    modules: [
+      { id: 'et_lab', name: 'ENT Lab Management', actions: ['VIEW', 'ADD', 'EDIT', 'DELETE', 'IMPORT', 'EXPORT'] },
+      { id: 'spare_parts', name: 'ENT Spare Parts Catalog & Configuration', actions: ['VIEW', 'ADD', 'EDIT', 'DELETE', 'IMPORT', 'EXPORT'] },
+      { id: 'tools_management', name: 'Tools & Equipment Management', actions: ['VIEW', 'ADD', 'EDIT', 'DELETE', 'IMPORT', 'EXPORT'] },
+      { id: 'document_library', name: 'Document & Technical Library', actions: ['VIEW', 'ADD', 'EDIT', 'DELETE', 'EXPORT'] }
+    ]
+  },
+  {
+    group: '👥 Workforce & Analytics',
+    modules: [
+      { id: 'manpower', name: 'Manpower Management', actions: ['VIEW', 'ADD', 'EDIT', 'DELETE', 'IMPORT', 'EXPORT'] },
+      { id: 'reports', name: 'Reports & Analytics Hub', actions: ['VIEW', 'EXPORT'] }
+    ]
+  },
+  {
+    group: '⚙️ Administration & Security',
+    modules: [
+      { id: 'user_management', name: 'User Management & Permissions', actions: ['VIEW', 'ADD', 'EDIT', 'DELETE', 'EXPORT'] },
+      { id: 'master_data', name: 'Plant Hierarchy & Master Data', actions: ['VIEW', 'ADD', 'EDIT', 'DELETE', 'IMPORT', 'EXPORT'] },
+      { id: 'transfer_workflows', name: 'Transfer Workflows Builder', actions: ['VIEW', 'ADD', 'EDIT', 'DELETE'] },
+      { id: 'excel_manager', name: 'Excel Structure & Templates', actions: ['VIEW', 'EDIT', 'EXPORT'] },
+      { id: 'audit_logs', name: 'Activity Logs & Audit Trail', actions: ['VIEW', 'EXPORT'] },
+      { id: 'settings', name: 'System Settings', actions: ['VIEW', 'EDIT'] },
+      { id: 'email_config', name: 'Email Configuration', actions: ['VIEW', 'EDIT'] },
+      { id: 'homepage_management', name: 'Home Page Management', actions: ['VIEW', 'EDIT'] }
+    ]
+  }
+];
+
+export function renderUserManagement() {
+  const users = authService.getAllUsers();
+  const currentUser = authService.getCurrentUser();
+  const isSuperAdmin = authService.isSuperAdmin();
+  const isAdmin = authService.isAdmin();
+
+  const presets = authService.getAllPresets();
+
+  // Filter users
+  const filteredUsers = users.filter(u => {
+    if (roleFilter !== 'ALL') {
+      const uRole = (u.role || '').toUpperCase();
+      if (roleFilter === 'SUPER_ADMIN' && uRole !== 'SUPER_ADMIN') return false;
+      if (roleFilter === 'ADMIN' && (uRole !== 'ADMIN' || uRole === 'SUPER_ADMIN')) return false;
+      if (roleFilter === 'USER' && (uRole.includes('ADMIN') || uRole.includes('SUPER'))) return false;
+    }
+    if (statusFilter !== 'ALL' && u.status !== statusFilter) return false;
+    if (presetFilter !== 'ALL') {
+      const userPresetId = u.presetId || (
+        ((u.role || '').toUpperCase() === 'SUPER_ADMIN' || u.username === 'superadmin') ? 'preset_super_admin' :
+        ((u.role || '').toUpperCase() === 'ADMIN' ? 'preset_admin' : 'preset_maintenance_user')
+      );
+      if (userPresetId !== presetFilter) return false;
+    }
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      const matchName = u.name?.toLowerCase().includes(q);
+      const matchEmail = u.email?.toLowerCase().includes(q);
+      const matchUsername = u.username?.toLowerCase().includes(q);
+      const matchDept = u.department?.toLowerCase().includes(q);
+      const matchPreset = u.presetName?.toLowerCase().includes(q);
+      if (!matchName && !matchEmail && !matchUsername && !matchDept && !matchPreset) return false;
+    }
+    return true;
+  });
+
+  // Calculate quick stats
+  const totalCount = users.length;
+  const superAdminCount = users.filter(u => (u.role || '').toUpperCase() === 'SUPER_ADMIN' || u.username === 'superadmin').length;
+  const adminCount = users.filter(u => (u.role || '').toUpperCase() === 'ADMIN' && u.username !== 'superadmin').length;
+  const standardUserCount = totalCount - superAdminCount - adminCount;
+  const activeCount = users.filter(u => u.status === 'ACTIVE').length;
+
+  return `
+    <div class="page-view" style="gap: 14px; max-width: 1350px; margin: 0 auto; width: 100%; min-height: 100%; padding-bottom: 60px; box-sizing: border-box;">
+      
+      <!-- 1. Top Command Bar (Compact, Modern & Integrated Stats) -->
+      <div style="background: var(--bg-surface); border: 1px solid var(--border-color); border-radius: var(--radius-lg); padding: 14px 20px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; box-shadow: var(--shadow-sm);">
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <div style="width: 42px; height: 42px; border-radius: 10px; background: rgba(2, 132, 199, 0.15); border: 1px solid rgba(56, 189, 248, 0.3); display: flex; align-items: center; justify-content: center; font-size: 22px;">
+            👥
+          </div>
+          <div>
+            <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+              <h1 style="font-size: 18px; font-weight: 800; color: #fff; margin: 0; letter-spacing: -0.2px;">
+                User Management &amp; Permissions
+              </h1>
+              <!-- Inline compact KPI stats pill strip (Fit Screen friendly) -->
+              <div style="display: inline-flex; align-items: center; gap: 6px; background: rgba(15, 23, 42, 0.6); border: 1px solid var(--border-color); border-radius: 20px; padding: 2px 10px; font-size: 11px;">
+                <span style="color: var(--text-muted);">Users: <strong style="color: #fff;">${totalCount}</strong></span>
+                <span style="color: rgba(255,255,255,0.2);">&bull;</span>
+                <span style="color: var(--text-muted);">Admins: <strong style="color: #38bdf8;">${superAdminCount + adminCount}</strong></span>
+                <span style="color: rgba(255,255,255,0.2);">&bull;</span>
+                <span style="color: var(--text-muted);">Standard: <strong style="color: #a78bfa;">${standardUserCount}</strong></span>
+                <span style="color: rgba(255,255,255,0.2);">&bull;</span>
+                <span style="color: var(--text-muted);">Presets: <strong style="color: #34d399;">${presets.length}</strong></span>
+              </div>
+            </div>
+            <div style="font-size: 11.5px; color: var(--text-secondary); margin-top: 2px;">
+              Manage system users, login credentials, 7-action granular permissions, and factory location scopes.
+            </div>
+          </div>
+        </div>
+
+        <!-- Top Right Action Buttons -->
+        <div style="display: flex; gap: 8px; align-items: center;">
+          ${isAdmin ? `
+            <button id="btn-reset-default-presets-top" class="btn btn-secondary" style="font-weight: 700; color: #f59e0b; border-color: rgba(245, 158, 11, 0.35); background: rgba(245, 158, 11, 0.12); padding: 7px 13px; font-size: 12px; border-radius: 7px;">
+              🔄 Reset Default Presets
+            </button>
+            <button id="btn-open-create-preset-modal-top" class="btn btn-secondary" style="font-weight: 700; color: #38bdf8; border-color: rgba(56, 189, 248, 0.4); background: rgba(14, 165, 233, 0.12); padding: 7px 14px; font-size: 12.5px; border-radius: 7px;">
+              🛡️ + Create Preset
+            </button>
+            <button id="btn-open-add-user-modal" class="btn btn-primary" style="font-weight: 700; background: linear-gradient(135deg, #0284c7, #0369a1); padding: 7px 16px; font-size: 12.5px; border-radius: 7px; box-shadow: 0 2px 8px rgba(2, 132, 199, 0.35);">
+              ➕ Add New User
+            </button>
+          ` : ''}
+        </div>
+      </div>
+
+      <!-- 2. Segmented Navigation Bar (100% Fit Screen Navigation) -->
+      <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-color); padding-bottom: 4px; gap: 12px; flex-wrap: wrap;">
+        <!-- Left: Segmented Switcher -->
+        <div style="display: inline-flex; background: rgba(15, 23, 42, 0.85); border: 1px solid var(--border-color); border-radius: 10px; padding: 3px; gap: 4px;">
+          <button 
+            type="button" 
+            id="tab-btn-users" 
+            class="btn btn-sm" 
+            style="padding: 7px 20px; font-size: 13px; font-weight: 800; border-radius: 8px; border: none; cursor: pointer; transition: all 0.2s ease; display: inline-flex; align-items: center; gap: 8px; background: ${activeUserSection === 'USERS' ? 'linear-gradient(135deg, #0284c7, #0369a1)' : 'transparent'}; color: ${activeUserSection === 'USERS' ? '#fff' : 'var(--text-secondary)'}; box-shadow: ${activeUserSection === 'USERS' ? '0 2px 8px rgba(2, 132, 199, 0.4)' : 'none'};"
+          >
+            <span>👥 User Accounts</span>
+            <span style="background: ${activeUserSection === 'USERS' ? 'rgba(255, 255, 255, 0.25)' : 'rgba(148, 163, 184, 0.15)'}; color: ${activeUserSection === 'USERS' ? '#fff' : '#94a3b8'}; padding: 1px 8px; border-radius: 12px; font-size: 11px; font-weight: 800;">
+              ${totalCount}
+            </span>
+          </button>
+
+          <button 
+            type="button" 
+            id="tab-btn-presets" 
+            class="btn btn-sm" 
+            style="padding: 7px 20px; font-size: 13px; font-weight: 800; border-radius: 8px; border: none; cursor: pointer; transition: all 0.2s ease; display: inline-flex; align-items: center; gap: 8px; background: ${activeUserSection === 'PRESETS' ? 'linear-gradient(135deg, #0284c7, #0369a1)' : 'transparent'}; color: ${activeUserSection === 'PRESETS' ? '#fff' : 'var(--text-secondary)'}; box-shadow: ${activeUserSection === 'PRESETS' ? '0 2px 8px rgba(2, 132, 199, 0.4)' : 'none'};"
+          >
+            <span>🛡️ Permission Presets &amp; Profiles</span>
+            <span style="background: ${activeUserSection === 'PRESETS' ? 'rgba(255, 255, 255, 0.25)' : 'rgba(14, 165, 233, 0.2)'}; color: ${activeUserSection === 'PRESETS' ? '#fff' : '#38bdf8'}; padding: 1px 8px; border-radius: 12px; font-size: 11px; font-weight: 800;">
+              ${presets.length}
+            </span>
+          </button>
+        </div>
+
+        <!-- Right: Helpful Section Status / Quick Jump Link -->
+        <div style="font-size: 12px; color: var(--text-muted); display: flex; align-items: center; gap: 8px;">
+          ${activeUserSection === 'USERS' ? `
+            <span>Access Profiles: <a href="javascript:void(0)" id="link-jump-to-presets" style="color: #38bdf8; font-weight: 700; text-decoration: none;">Configure Permission Presets &rarr;</a></span>
+          ` : `
+            <span>Switch: <a href="javascript:void(0)" id="link-jump-to-users" style="color: #38bdf8; font-weight: 700; text-decoration: none;">&larr; View User Accounts (${totalCount})</a></span>
+          `}
+        </div>
+      </div>
+
+      <!-- ============================================================== -->
+      <!-- TAB CONTENT A: USER ACCOUNTS TAB (100% FIT SCREEN WORKSPACE)   -->
+      <!-- ============================================================== -->
+      ${activeUserSection === 'USERS' ? `
+        <!-- Sleek 1-Line Quick Preset Filter Pills Ribbon -->
+        <div style="background: var(--bg-surface); border: 1px solid var(--border-color); border-radius: var(--radius-md); padding: 8px 14px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; box-shadow: var(--shadow-sm);">
+          <div style="font-size: 11.5px; font-weight: 800; color: #38bdf8; display: inline-flex; align-items: center; gap: 5px; flex-shrink: 0;">
+            ⚡ Quick Filter:
+          </div>
+
+          <!-- All Users Pill -->
+          <button 
+            type="button" 
+            class="btn-pill-filter-preset" 
+            data-id="ALL"
+            style="padding: 3px 11px; font-size: 11.5px; font-weight: 700; border-radius: 20px; border: 1px solid ${presetFilter === 'ALL' ? '#38bdf8' : 'var(--border-color)'}; background: ${presetFilter === 'ALL' ? 'rgba(14, 165, 233, 0.25)' : 'rgba(15, 23, 42, 0.6)'}; color: ${presetFilter === 'ALL' ? '#fff' : 'var(--text-secondary)'}; cursor: pointer; transition: all 0.15s ease;"
+          >
+            All Users (${totalCount})
+          </button>
+
+          <!-- 8 Presets Filter Pills -->
+          ${presets.map(p => {
+            const pCount = users.filter(u => {
+              if (u.presetId) return u.presetId === p.id || u.presetId === p.code;
+              if (p.code === 'SUPER_ADMIN') return (u.role || '').toUpperCase() === 'SUPER_ADMIN' || u.username === 'superadmin';
+              if (p.code === 'ADMIN') return (u.role || '').toUpperCase() === 'ADMIN' && u.username !== 'superadmin';
+              if (p.code === 'MAINTENANCE_USER') return (u.role || '').toUpperCase() === 'USER';
+              return false;
+            }).length;
+            const isSelected = presetFilter === p.id || presetFilter === p.code;
+            return `
+              <button 
+                type="button" 
+                class="btn-pill-filter-preset" 
+                data-id="${p.id}"
+                title="${p.name}: ${p.accessLevel || ''}"
+                style="padding: 3px 10px; font-size: 11.5px; font-weight: 700; border-radius: 20px; border: 1px solid ${isSelected ? '#38bdf8' : 'var(--border-color)'}; background: ${isSelected ? 'rgba(14, 165, 233, 0.25)' : 'rgba(15, 23, 42, 0.6)'}; color: ${isSelected ? '#38bdf8' : 'var(--text-secondary)'}; cursor: pointer; transition: all 0.15s ease; display: inline-flex; align-items: center; gap: 5px;"
+              >
+                <span>${p.icon || '🛡️'}</span>
+                <span>${p.name}</span>
+                <span style="background: ${isSelected ? 'rgba(56, 189, 248, 0.35)' : 'rgba(255, 255, 255, 0.08)'}; color: ${isSelected ? '#fff' : '#94a3b8'}; padding: 0 6px; border-radius: 10px; font-size: 10px;">${pCount}</span>
+              </button>
+            `;
+          }).join('')}
+
+          <button 
+            type="button" 
+            id="btn-goto-presets-mgmt" 
+            style="margin-left: auto; padding: 3px 12px; font-size: 11.5px; font-weight: 700; border-radius: 20px; border: 1px solid rgba(56, 189, 248, 0.35); background: rgba(14, 165, 233, 0.12); color: #38bdf8; cursor: pointer; display: inline-flex; align-items: center; gap: 5px;"
+            title="Switch to dedicated Presets & Profiles tab"
+          >
+            ⚙️ Manage All Profiles &rarr;
+          </button>
+        </div>
+
+        <!-- Search & Filter Controls -->
+        <div style="background: var(--bg-surface); border: 1px solid var(--border-color); border-radius: var(--radius-md); padding: 10px 16px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+          <div style="flex: 1; min-width: 260px; max-width: 360px; position: relative;">
+            <input 
+              type="text" 
+              id="user-search-input" 
+              class="form-control" 
+              placeholder="🔍 Search name, email, username..." 
+              value="${searchQuery}"
+              style="font-size: 12.5px; height: 34px; padding-left: 12px;"
+            />
+          </div>
+
+          <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+            <div style="display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-secondary);">
+              <span>Preset Profile:</span>
+              <select id="user-preset-filter" class="filter-select" style="height: 32px; font-size: 12px; padding: 2px 8px;">
+                <option value="ALL" ${presetFilter === 'ALL' ? 'selected' : ''}>All Profiles</option>
+                ${presets.map(p => `
+                  <option value="${p.id}" ${presetFilter === p.id ? 'selected' : ''}>${p.icon || '🛡️'} ${p.name}</option>
+                `).join('')}
+                <option value="CUSTOM" ${presetFilter === 'CUSTOM' ? 'selected' : ''}>👤 Custom User</option>
+              </select>
+            </div>
+
+            <div style="display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-secondary);">
+              <span>Role:</span>
+              <select id="user-role-filter" class="filter-select" style="height: 32px; font-size: 12px; padding: 2px 8px;">
+                <option value="ALL" ${roleFilter === 'ALL' ? 'selected' : ''}>All Roles</option>
+                <option value="SUPER_ADMIN" ${roleFilter === 'SUPER_ADMIN' ? 'selected' : ''}>Super Admin</option>
+                <option value="ADMIN" ${roleFilter === 'ADMIN' ? 'selected' : ''}>Admin</option>
+                <option value="USER" ${roleFilter === 'USER' ? 'selected' : ''}>Standard User</option>
+              </select>
+            </div>
+
+            <div style="display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-secondary);">
+              <span>Status:</span>
+              <select id="user-status-filter" class="filter-select" style="height: 32px; font-size: 12px; padding: 2px 8px;">
+                <option value="ALL" ${statusFilter === 'ALL' ? 'selected' : ''}>All Status</option>
+                <option value="ACTIVE" ${statusFilter === 'ACTIVE' ? 'selected' : ''}>Active</option>
+                <option value="INACTIVE" ${statusFilter === 'INACTIVE' ? 'selected' : ''}>Inactive</option>
+              </select>
+            </div>
+
+            ${(roleFilter !== 'ALL' || statusFilter !== 'ALL' || presetFilter !== 'ALL' || searchQuery) ? `
+              <button type="button" id="btn-clear-user-filters" class="btn btn-ghost btn-xs" style="color: #f87171; font-weight: 700; font-size: 11.5px; padding: 4px 8px;">
+                ✕ Reset Filters
+              </button>
+            ` : ''}
+          </div>
+        </div>
+
+        <!-- Users Data Table (100% Fit Screen Layout) -->
+        <div style="background: var(--bg-surface); border: 1px solid var(--border-color); border-radius: var(--radius-lg); box-shadow: var(--shadow-sm); width: 100%; overflow-x: auto;">
+          <table class="user-management-table" style="margin: 0; width: 100% !important; min-width: 0 !important; border-collapse: collapse; table-layout: auto;">
+            <thead>
+              <tr>
+                <th style="width: 36px; text-align: center; padding: 11px 6px;">#</th>
+                <th style="width: 28%; min-width: 190px; padding: 11px 14px;">User Profile</th>
+                <th style="width: 16%; min-width: 120px; text-align: center; padding: 11px 8px;">Role &amp; Preset</th>
+                <th style="width: 27%; min-width: 180px; padding: 11px 14px;">Access &amp; Scope</th>
+                <th style="width: 29%; min-width: 230px; text-align: center; padding: 11px 10px;">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${filteredUsers.length === 0 ? `
+                <tr>
+                  <td colspan="5" style="text-align: center; padding: 36px; color: var(--text-muted); font-size: 13px;">
+                    No users match current filters. Click <strong>"✕ Reset Filters"</strong> or <strong>"➕ Add New User"</strong>.
+                  </td>
+                </tr>
+              ` : filteredUsers.map((u, idx) => {
+                const uRole = (u.role || '').toUpperCase();
+                const isSuper = uRole === 'SUPER_ADMIN' || u.username === 'superadmin';
+                const isAdminRole = uRole === 'ADMIN';
+                const isSelf = currentUser?.id === u.id;
+
+                // Action authorization checks for badges
+                const uPerms = u.permissions || {};
+                const hasRead = isSuper || Object.values(uPerms).some(arr => Array.isArray(arr) && (arr.includes('VIEW') || arr.includes('READ')));
+                const hasAdd = isSuper || Object.values(uPerms).some(arr => Array.isArray(arr) && arr.includes('ADD'));
+                const hasEdit = isSuper || Object.values(uPerms).some(arr => Array.isArray(arr) && arr.includes('EDIT'));
+                const hasDelete = isSuper || Object.values(uPerms).some(arr => Array.isArray(arr) && arr.includes('DELETE'));
+                const hasImport = isSuper || Object.values(uPerms).some(arr => Array.isArray(arr) && arr.includes('IMPORT'));
+                const hasExport = isSuper || Object.values(uPerms).some(arr => Array.isArray(arr) && arr.includes('EXPORT'));
+                const hasApprove = isSuper || Object.values(uPerms).some(arr => Array.isArray(arr) && arr.includes('APPROVE'));
+
+                // Location Scope info
+                const scope = u.assignedScope;
+                const isGlobalScope = isSuper || !scope || scope.allGroups;
+                const unitCount = scope?.unitIds?.length || 0;
+                const floorCount = scope?.floorIds?.length || 0;
+                const lineCount = scope?.lineIds?.length || 0;
+
+                return `
+                  <tr style="border-bottom: 1px solid var(--border-color); transition: background 0.15s ease;">
+                    <td style="text-align: center; color: var(--text-muted); font-size: 12px; font-weight: 700;">${idx + 1}</td>
+                    
+                    <!-- User Profile -->
+                    <td style="padding: 10px 14px;">
+                      <div style="display: flex; align-items: center; gap: 10px;">
+                        <div class="user-avatar-circle" style="width: 34px; height: 34px; font-size: 13px; font-weight: 800; background: linear-gradient(135deg, #0284c7, #0369a1); color: #fff; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0; border: 1.5px solid rgba(56, 189, 248, 0.5);">
+                          ${u.name?.charAt(0) || 'U'}
+                        </div>
+                        <div style="min-width: 0;">
+                          <div style="font-weight: 800; color: #fff; font-size: 13.5px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
+                            <span>${u.name}</span>
+                            ${isSelf ? '<span class="badge" style="font-size: 9.5px; padding: 1px 6px; background: rgba(56, 189, 248, 0.2); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.4); font-weight: 700;">YOU</span>' : ''}
+                          </div>
+                          <div style="font-size: 11.5px; color: var(--text-muted); margin-top: 1px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap;">
+                            ${u.designation ? `<span style="color: #cbd5e1;">${u.designation}</span>` : ''}
+                            <span style="font-family: var(--font-mono); color: #38bdf8; font-weight: 600;">@${u.username}</span>
+                            ${u.email ? `<span style="color: var(--text-muted);">(${u.email})</span>` : ''}
+                          </div>
+                        </div>
+                      </div>
+                    </td>
+
+                    <!-- Role & Preset & Status -->
+                    <td style="text-align: center; padding: 10px 8px;">
+                      <div style="display: flex; flex-direction: column; align-items: center; gap: 4px;">
+                        <span class="badge ${isSuper ? 'badge-maint' : (isAdminRole ? 'badge-active' : 'badge-idle')}" style="font-size: 11px; padding: 3px 8px; font-weight: 700;">
+                          ${isSuper ? '🛡️ Super Admin' : (isAdminRole ? '👑 Admin' : '👤 User')}
+                        </span>
+                        <span class="badge" style="background: rgba(14, 165, 233, 0.15); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.35); font-size: 10px; padding: 2px 7px; font-weight: 700;" title="Permission Preset">
+                          🛡️ ${u.presetName || (isSuper ? 'Super Admin' : (isAdminRole ? 'Admin' : 'Maintenance User'))}
+                        </span>
+                        <span class="badge ${u.status === 'ACTIVE' ? 'badge-active' : 'badge-inactive'}" style="font-size: 9.5px; padding: 1px 6px;">
+                          ${u.status === 'ACTIVE' ? '🟢 Active' : '🔴 Inactive'}
+                        </span>
+                      </div>
+                    </td>
+
+                    <!-- Access Rights & Scope -->
+                    <td style="padding: 10px 14px;">
+                      ${isSuper ? `
+                        <div style="display: flex; flex-direction: column; gap: 4px;">
+                          <span class="badge" style="background: rgba(56, 189, 248, 0.15); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.35); font-size: 11px; padding: 2px 8px; font-weight: 700; width: fit-content;">
+                            🛡️ Full 7-Action Master Access
+                          </span>
+                          <div style="font-size: 11px; color: #38bdf8; display: flex; align-items: center; gap: 4px; font-weight: 600;">
+                            🌐 All Factory Locations &amp; Lines
+                          </div>
+                        </div>
+                      ` : `
+                        <div style="display: flex; flex-direction: column; gap: 6px;">
+                          <div style="display: flex; gap: 3px; flex-wrap: wrap; align-items: center;">
+                            <span class="badge" style="font-size: 10px; padding: 1px 5px; ${hasRead ? 'background: rgba(16, 185, 129, 0.2); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.35);' : 'background: rgba(148, 163, 184, 0.1); color: var(--text-muted); opacity: 0.5;'}">Read ${hasRead ? '✓' : '✕'}</span>
+                            <span class="badge" style="font-size: 10px; padding: 1px 5px; ${hasAdd ? 'background: rgba(14, 165, 233, 0.2); color: #38bdf8; border: 1px solid rgba(14, 165, 233, 0.35);' : 'background: rgba(148, 163, 184, 0.1); color: var(--text-muted); opacity: 0.5;'}">Add ${hasAdd ? '✓' : '✕'}</span>
+                            <span class="badge" style="font-size: 10px; padding: 1px 5px; ${hasEdit ? 'background: rgba(245, 158, 11, 0.2); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.35);' : 'background: rgba(148, 163, 184, 0.1); color: var(--text-muted); opacity: 0.5;'}">Edit ${hasEdit ? '✓' : '✕'}</span>
+                            <span class="badge" style="font-size: 10px; padding: 1px 5px; ${hasDelete ? 'background: rgba(239, 68, 68, 0.2); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.35);' : 'background: rgba(148, 163, 184, 0.1); color: var(--text-muted); opacity: 0.5;'}">Del ${hasDelete ? '✓' : '✕'}</span>
+                            <span class="badge" style="font-size: 10px; padding: 1px 5px; ${hasImport ? 'background: rgba(168, 85, 247, 0.2); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.35);' : 'background: rgba(148, 163, 184, 0.1); color: var(--text-muted); opacity: 0.5;'}">Imp ${hasImport ? '✓' : '✕'}</span>
+                            <span class="badge" style="font-size: 10px; padding: 1px 5px; ${hasExport ? 'background: rgba(99, 102, 241, 0.2); color: #818cf8; border: 1px solid rgba(99, 102, 241, 0.35);' : 'background: rgba(148, 163, 184, 0.1); color: var(--text-muted); opacity: 0.5;'}">Exp ${hasExport ? '✓' : '✕'}</span>
+                            <span class="badge" style="font-size: 10px; padding: 1px 5px; ${hasApprove ? 'background: rgba(236, 72, 153, 0.2); color: #f472b6; border: 1px solid rgba(236, 72, 153, 0.35);' : 'background: rgba(148, 163, 184, 0.1); color: var(--text-muted); opacity: 0.5;'}">Appr ${hasApprove ? '✓' : '✕'}</span>
+                          </div>
+                          <div style="font-size: 11.5px;">
+                            ${isGlobalScope ? `
+                              <span class="badge" style="background: rgba(56, 189, 248, 0.15); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3); font-size: 10.5px; padding: 2px 7px;">
+                                🌐 All Locations
+                              </span>
+                            ` : (unitCount === 0 && floorCount === 0 && lineCount === 0) ? `
+                              <span class="badge" style="background: rgba(239, 68, 68, 0.15); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.3); font-size: 10.5px; padding: 2px 7px;">
+                                ⚠️ No Scope Assigned
+                              </span>
+                            ` : `
+                              <span class="badge" style="background: rgba(234, 179, 8, 0.15); color: #facc15; border: 1px solid rgba(234, 179, 8, 0.3); font-size: 10.5px; padding: 2px 7px; font-weight: 700;">
+                                📍 ${unitCount} Unit, ${floorCount} Floor, ${lineCount} Line
+                              </span>
+                            `}
+                          </div>
+                        </div>
+                      `}
+                    </td>
+
+                    <!-- Quick Actions -->
+                    <td style="text-align: center; padding: 10px;">
+                      <div style="display: flex; gap: 5px; justify-content: center; align-items: center; flex-wrap: wrap;">
+                        
+                        <!-- 1. Permissions Button -->
+                        <button 
+                          class="btn btn-primary btn-xs btn-action-user-perms" 
+                          data-id="${u.id}" 
+                          title="Configure 7 Actions (Read, Add, Edit, Delete, Import, Export, Approve)"
+                          style="padding: 5px 10px; font-size: 12px; background: linear-gradient(135deg, #0284c7, #0369a1); font-weight: 700; border-radius: 6px; box-shadow: 0 2px 5px rgba(2, 132, 199, 0.3);"
+                        >
+                          🔐 Permissions
+                        </button>
+
+                        <!-- 2. Location Scope Button -->
+                        <button 
+                          class="btn btn-secondary btn-xs btn-action-user-scope" 
+                          data-id="${u.id}" 
+                          title="Configure Location Scope (Unit, Floor, Line)"
+                          style="padding: 5px 10px; font-size: 12px; color: #facc15; border-color: rgba(250, 204, 21, 0.4); background: rgba(234, 179, 8, 0.12); font-weight: 700; border-radius: 6px;"
+                        >
+                          📍 Scope
+                        </button>
+
+                        <!-- 2b. Assign Preset Button -->
+                        <button 
+                          class="btn btn-secondary btn-xs btn-action-user-preset" 
+                          data-id="${u.id}" 
+                          title="Assign Permission Preset / Access Profile"
+                          style="padding: 5px 9px; font-size: 12px; color: #38bdf8; border-color: rgba(56, 189, 248, 0.4); background: rgba(14, 165, 233, 0.12); font-weight: 700; border-radius: 6px;"
+                        >
+                          🛡️ Preset
+                        </button>
+
+                        <!-- 3. Edit User Details -->
+                        <button 
+                          class="btn btn-secondary btn-xs btn-action-edit-user" 
+                          data-id="${u.id}" 
+                          title="Edit User Profile"
+                          style="padding: 5px 8px; font-size: 11.5px; border-radius: 6px;"
+                        >
+                          ✏️ Edit
+                        </button>
+
+                        <!-- 4. Reset Password -->
+                        <button 
+                          class="btn btn-secondary btn-xs btn-action-reset-pwd" 
+                          data-id="${u.id}" 
+                          title="Reset User Password"
+                          style="padding: 5px 8px; font-size: 11.5px; color: #fbbf24; border-color: rgba(251, 191, 36, 0.3); border-radius: 6px;"
+                        >
+                          🔑
+                        </button>
+
+                        <!-- 5. Activate / Deactivate Toggle -->
+                        ${!isSuper ? `
+                          <button 
+                            class="btn btn-secondary btn-xs btn-action-toggle-status" 
+                            data-id="${u.id}" 
+                            title="${u.status === 'ACTIVE' ? 'Deactivate User Account' : 'Activate User Account'}"
+                            style="padding: 5px 8px; font-size: 11.5px; color: ${u.status === 'ACTIVE' ? '#f87171' : '#34d399'}; border-radius: 6px;"
+                          >
+                            ${u.status === 'ACTIVE' ? '🚫' : '🟢'}
+                          </button>
+                        ` : ''}
+
+                        <!-- 6. Delete User -->
+                        ${!isSuper && !isSelf ? `
+                          <button 
+                            class="btn btn-ghost btn-xs btn-action-delete-user" 
+                            data-id="${u.id}" 
+                            title="Delete User"
+                            style="padding: 5px 8px; font-size: 11.5px; color: #f87171; border-radius: 6px;"
+                          >
+                            🗑️
+                          </button>
+                        ` : ''}
+
+                      </div>
+                    </td>
+                  </tr>
+                `;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>
+      ` : `
+        <!-- ====================================================================== -->
+        <!-- TAB CONTENT B: PERMISSION PRESETS & ACCESS PROFILES (DEDICATED HUB)   -->
+        <!-- ====================================================================== -->
+        <div id="permission-presets-card" style="background: var(--bg-surface); border: 1px solid var(--border-color); border-radius: var(--radius-lg); box-shadow: var(--shadow-sm); overflow: visible; margin-bottom: 24px;">
+          <!-- Header Toolbar for Presets -->
+          <div style="padding: 14px 20px; background: rgba(15, 23, 42, 0.7); border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+            <div style="display: flex; align-items: center; gap: 12px;">
+              <div style="width: 38px; height: 38px; border-radius: 10px; background: rgba(14, 165, 233, 0.15); border: 1px solid rgba(56, 189, 248, 0.35); display: flex; align-items: center; justify-content: center; font-size: 20px;">
+                🛡️
+              </div>
+              <div>
+                <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+                  <h2 style="font-size: 16px; font-weight: 800; color: #fff; margin: 0;">
+                    Factory Permission Presets &amp; Profiles
+                  </h2>
+                  <span class="badge" style="background: rgba(56, 189, 248, 0.2); color: #38bdf8; font-size: 11px; font-weight: 700;">
+                    ${presets.length} Presets Available
+                  </span>
+                </div>
+                <div style="font-size: 12px; color: var(--text-secondary); margin-top: 2px;">
+                  Pre-configured security profiles with 7-action granular rights across all 22 modules and factory location scopes.
+                </div>
+              </div>
+            </div>
+
+            <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+              <!-- View Mode Switcher -->
+              <div style="display: inline-flex; background: rgba(15, 23, 42, 0.8); border: 1px solid var(--border-color); border-radius: 7px; padding: 2px;">
+                <button 
+                  type="button" 
+                  id="btn-preset-view-cards" 
+                  class="btn btn-xs" 
+                  style="padding: 5px 12px; font-size: 11.5px; font-weight: 700; border-radius: 5px; border: none; background: ${presetViewMode === 'CARDS' ? 'linear-gradient(135deg, #0284c7, #0369a1)' : 'transparent'}; color: ${presetViewMode === 'CARDS' ? '#fff' : 'var(--text-muted)'}; cursor: pointer;"
+                >
+                  🎴 Profile Cards
+                </button>
+                <button 
+                  type="button" 
+                  id="btn-preset-view-table" 
+                  class="btn btn-xs" 
+                  style="padding: 5px 12px; font-size: 11.5px; font-weight: 700; border-radius: 5px; border: none; background: ${presetViewMode === 'TABLE' ? 'linear-gradient(135deg, #0284c7, #0369a1)' : 'transparent'}; color: ${presetViewMode === 'TABLE' ? '#fff' : 'var(--text-muted)'}; cursor: pointer;"
+                >
+                  📋 Table View
+                </button>
+              </div>
+
+              ${isAdmin ? `
+                <button 
+                  type="button" 
+                  id="btn-reset-default-presets" 
+                  class="btn btn-secondary btn-xs" 
+                  style="font-weight: 700; color: #f59e0b; border-color: rgba(245, 158, 11, 0.4); background: rgba(245, 158, 11, 0.12); padding: 6px 12px; border-radius: 6px; cursor: pointer;" 
+                  title="Restore factory default permission presets"
+                >
+                  🔄 Reset Default Presets
+                </button>
+                <button 
+                  type="button" 
+                  id="btn-open-create-preset-modal" 
+                  class="btn btn-primary btn-xs" 
+                  style="font-weight: 700; background: linear-gradient(135deg, #0284c7, #0369a1); padding: 6px 14px; font-size: 12px; border-radius: 6px;"
+                >
+                  ➕ Create Preset
+                </button>
+              ` : ''}
+            </div>
+          </div>
+
+          <!-- Presets Content (Cards or Table) -->
+          ${presetViewMode === 'CARDS' ? `
+            <div style="padding: 16px 20px; display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; background: rgba(11, 17, 33, 0.5);">
+              ${presets.map(p => {
+                const assignedUsers = users.filter(u => {
+                  if (u.presetId) return u.presetId === p.id || u.presetId === p.code;
+                  if (p.code === 'SUPER_ADMIN') return (u.role || '').toUpperCase() === 'SUPER_ADMIN' || u.username === 'superadmin';
+                  if (p.code === 'ADMIN') return (u.role || '').toUpperCase() === 'ADMIN' && u.username !== 'superadmin';
+                  if (p.code === 'MAINTENANCE_USER') return (u.role || '').toUpperCase() === 'USER';
+                  return false;
+                });
+
+                const isGlobalScope = !p.scope || p.scope.allGroups;
+                const isFiltered = presetFilter === p.id || presetFilter === p.code;
+                const activeModuleCount = Object.keys(p.permissions || {}).filter(k => Array.isArray(p.permissions[k]) && p.permissions[k].length > 0).length;
+
+                return `
+                  <div class="preset-card ${isFiltered ? 'preset-card-active' : ''}" 
+                       style="background: ${isFiltered ? 'rgba(14, 165, 233, 0.12)' : 'rgba(15, 23, 42, 0.75)'}; 
+                              border: 1.5px solid ${isFiltered ? '#38bdf8' : 'var(--border-color)'}; 
+                              border-radius: var(--radius-lg); 
+                              padding: 16px 18px; 
+                              display: flex; 
+                              flex-direction: column; 
+                              justify-content: space-between; 
+                              gap: 12px; 
+                              position: relative; 
+                              box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25); 
+                              transition: all 0.2s ease;">
+                    
+                    <div>
+                      <!-- Top Card Header -->
+                      <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 8px;">
+                        <div style="display: flex; align-items: center; gap: 10px;">
+                          <div style="width: 40px; height: 40px; border-radius: 10px; background: ${p.badgeColor ? p.badgeColor + '20' : 'rgba(56, 189, 248, 0.15)'}; border: 1px solid ${p.badgeColor ? p.badgeColor + '40' : 'rgba(56, 189, 248, 0.3)'}; display: flex; align-items: center; justify-content: center; font-size: 20px; flex-shrink: 0;">
+                            ${p.icon || '🛡️'}
+                          </div>
+                          <div>
+                            <div style="font-size: 14.5px; font-weight: 800; color: #fff; line-height: 1.2;">
+                              ${p.name}
+                            </div>
+                            <div style="display: flex; gap: 5px; margin-top: 4px; align-items: center; flex-wrap: wrap;">
+                              <span class="badge" style="font-size: 10px; padding: 2px 7px; background: ${p.badgeColor ? p.badgeColor + '25' : 'rgba(56, 189, 248, 0.15)'}; color: ${p.badgeColor || '#38bdf8'}; border: 1px solid ${p.badgeColor ? p.badgeColor + '40' : 'rgba(56, 189, 248, 0.3)'}; font-weight: 700;">
+                                ${p.accessLevel || 'Standard Access'}
+                              </span>
+                              ${!p.isSystem ? '<span class="badge" style="font-size: 9px; padding: 1px 5px; background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3); font-weight: 700;">CUSTOM</span>' : ''}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      <!-- Description -->
+                      <div style="font-size: 11.5px; color: var(--text-secondary); margin: 10px 0 6px 0; line-height: 1.4; min-height: 32px;">
+                        ${p.description || 'Pre-configured access profile for factory personnel.'}
+                      </div>
+
+                      <!-- Status & Scope Chips -->
+                      <div style="display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px;">
+                        <span style="font-size: 10.5px; font-weight: 700; background: rgba(15, 23, 42, 0.85); border: 1px solid var(--border-color); border-radius: 6px; padding: 3px 8px; color: #cbd5e1; display: inline-flex; align-items: center; gap: 4px;">
+                          📊 ${activeModuleCount} Modules Active
+                        </span>
+                        <span style="font-size: 10.5px; font-weight: 600; background: ${isGlobalScope ? 'rgba(56, 189, 248, 0.12)' : 'rgba(234, 179, 8, 0.12)'}; border: 1px solid ${isGlobalScope ? 'rgba(56, 189, 248, 0.3)' : 'rgba(234, 179, 8, 0.3)'}; border-radius: 6px; padding: 3px 8px; color: ${isGlobalScope ? '#38bdf8' : '#facc15'}; display: inline-flex; align-items: center; gap: 4px;">
+                          ${isGlobalScope ? '🌐 All Locations' : `📍 ${p.scope?.unitIds?.length || 0} Units`}
+                        </span>
+                        <span class="btn-card-filter-preset" data-id="${p.id}" style="font-size: 10.5px; font-weight: 700; background: ${assignedUsers.length > 0 ? 'rgba(16, 185, 129, 0.15)' : 'rgba(148, 163, 184, 0.1)'}; border: 1px solid ${assignedUsers.length > 0 ? 'rgba(16, 185, 129, 0.35)' : 'var(--border-color)'}; border-radius: 6px; padding: 3px 8px; color: ${assignedUsers.length > 0 ? '#34d399' : 'var(--text-muted)'}; display: inline-flex; align-items: center; gap: 4px; cursor: pointer;" title="Click to view & filter assigned users in User Accounts">
+                          👥 ${assignedUsers.length} User${assignedUsers.length === 1 ? '' : 's'} &rarr;
+                        </span>
+                      </div>
+                    </div>
+
+                    <!-- Card Action Bar -->
+                    <div style="border-top: 1px solid rgba(255, 255, 255, 0.08); padding-top: 10px; display: flex; justify-content: space-between; align-items: center; gap: 6px;">
+                      <div style="display: flex; gap: 6px;">
+                        <button 
+                          type="button" 
+                          class="btn btn-secondary btn-xs btn-preset-edit" 
+                          data-id="${p.id}" 
+                          title="Configure permissions, module access, and scope" 
+                          style="font-weight: 800; font-size: 11.5px; color: #38bdf8; border-color: rgba(56, 189, 248, 0.4); background: rgba(14, 165, 233, 0.15); padding: 5px 12px; border-radius: 6px; display: inline-flex; align-items: center; gap: 5px;"
+                        >
+                          ⚙️ Config
+                        </button>
+                        <button 
+                          type="button" 
+                          class="btn btn-secondary btn-xs btn-preset-quick-assign" 
+                          data-id="${p.id}" 
+                          title="Assign users to this profile" 
+                          style="font-weight: 700; font-size: 11.5px; padding: 5px 9px; border-radius: 6px; display: inline-flex; align-items: center; gap: 4px;"
+                        >
+                          👥 Assign
+                        </button>
+                      </div>
+
+                      <div style="display: flex; gap: 4px;">
+                        <button 
+                          type="button" 
+                          class="btn btn-ghost btn-xs btn-preset-duplicate" 
+                          data-id="${p.id}" 
+                          title="Duplicate this preset" 
+                          style="padding: 5px 7px; font-size: 12px; color: #a78bfa; border-radius: 6px;"
+                        >
+                          📋
+                        </button>
+                        ${!p.isSystem ? `
+                          <button 
+                            type="button" 
+                            class="btn btn-ghost btn-xs btn-preset-delete" 
+                            data-id="${p.id}" 
+                            title="Delete custom preset" 
+                            style="padding: 5px 7px; font-size: 12px; color: #f87171; border-radius: 6px;"
+                          >
+                            🗑️
+                          </button>
+                        ` : ''}
+                      </div>
+                    </div>
+
+                  </div>
+                `;
+              }).join('')}
+            </div>
+          ` : `
+            <!-- Presets Table View -->
+            <div style="overflow-x: auto; width: 100%;">
+              <table class="user-management-table" style="margin: 0; width: 100%; border-collapse: collapse;">
+                <thead>
+                  <tr style="background: rgba(15, 23, 42, 0.4);">
+                    <th style="padding: 12px 18px; font-size: 11.5px; width: 28%; text-align: left;">Preset Name</th>
+                    <th style="padding: 12px 14px; font-size: 11.5px; text-align: center; width: 15%;">Users</th>
+                    <th style="padding: 12px 16px; font-size: 11.5px; width: 20%;">Access Level</th>
+                    <th style="padding: 12px 16px; font-size: 11.5px; width: 17%;">Scope</th>
+                    <th style="padding: 12px 16px; font-size: 11.5px; text-align: center; width: 20%;">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${presets.map(p => {
+                    const assignedUsers = users.filter(u => {
+                      if (u.presetId) return u.presetId === p.id || u.presetId === p.code;
+                      if (p.code === 'SUPER_ADMIN') return (u.role || '').toUpperCase() === 'SUPER_ADMIN' || u.username === 'superadmin';
+                      if (p.code === 'ADMIN') return (u.role || '').toUpperCase() === 'ADMIN' && u.username !== 'superadmin';
+                      if (p.code === 'MAINTENANCE_USER') return (u.role || '').toUpperCase() === 'USER';
+                      return false;
+                    });
+
+                    const isGlobalScope = !p.scope || p.scope.allGroups;
+                    const unitCount = p.scope?.unitIds?.length || 0;
+
+                    return `
+                      <tr style="border-bottom: 1px solid var(--border-color); transition: background 0.15s ease;">
+                        <!-- Preset Name -->
+                        <td style="padding: 12px 18px;">
+                          <div style="display: flex; align-items: center; gap: 12px;">
+                            <div style="width: 36px; height: 36px; border-radius: 8px; background: rgba(56, 189, 248, 0.1); border: 1px solid rgba(56, 189, 248, 0.25); display: flex; align-items: center; justify-content: center; font-size: 18px; flex-shrink: 0;">
+                              ${p.icon || '🛡️'}
+                            </div>
+                            <div>
+                              <div style="font-weight: 800; color: #fff; font-size: 13.5px; display: flex; align-items: center; gap: 8px;">
+                                <span>${p.name}</span>
+                                ${!p.isSystem ? '<span class="badge" style="font-size: 9px; padding: 1px 5px; background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3); font-weight: 700;">CUSTOM</span>' : ''}
+                              </div>
+                              <div style="font-size: 11.5px; color: var(--text-secondary); margin-top: 2px;">
+                                ${p.description || ''}
+                              </div>
+                            </div>
+                          </div>
+                        </td>
+
+                        <!-- Users -->
+                        <td style="text-align: center; padding: 12px 14px;">
+                          <div style="display: flex; flex-direction: column; align-items: center; gap: 4px;">
+                            <button type="button" class="btn-card-filter-preset" data-id="${p.id}" class="badge" style="background: ${assignedUsers.length > 0 ? 'rgba(56, 189, 248, 0.18)' : 'rgba(148, 163, 184, 0.1)'}; color: ${assignedUsers.length > 0 ? '#38bdf8' : 'var(--text-muted)'}; font-weight: 800; font-size: 12px; padding: 3px 10px; border: 1px solid ${assignedUsers.length > 0 ? 'rgba(56, 189, 248, 0.35)' : 'transparent'}; border-radius: 6px; cursor: pointer;" title="View users in User Accounts">
+                              👥 ${assignedUsers.length} &rarr;
+                            </button>
+                          </div>
+                        </td>
+
+                        <!-- Access Level -->
+                        <td style="padding: 12px 16px;">
+                          <div style="display: flex; flex-direction: column; gap: 4px;">
+                            <span class="badge" style="background: ${p.badgeColor ? p.badgeColor + '25' : 'rgba(56, 189, 248, 0.15)'}; color: ${p.badgeColor || '#38bdf8'}; border: 1px solid ${p.badgeColor ? p.badgeColor + '50' : 'rgba(56, 189, 248, 0.35)'}; font-size: 11px; padding: 2px 8px; font-weight: 700; width: fit-content;">
+                              ${p.accessLevel || 'Access Profile'}
+                            </span>
+                          </div>
+                        </td>
+
+                        <!-- Scope -->
+                        <td style="padding: 12px 16px;">
+                          ${isGlobalScope ? `
+                            <span class="badge" style="background: rgba(56, 189, 248, 0.15); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3); font-size: 11px; padding: 2px 8px; font-weight: 600;">
+                              🌐 All Locations
+                            </span>
+                          ` : `
+                            <span class="badge" style="background: rgba(234, 179, 8, 0.15); color: #facc15; border: 1px solid rgba(234, 179, 8, 0.3); font-size: 11px; padding: 2px 8px; font-weight: 700;">
+                              📍 ${unitCount > 0 ? `${unitCount} Unit(s)` : 'Selected Units'}
+                            </span>
+                          `}
+                        </td>
+
+                        <!-- Actions -->
+                        <td style="text-align: center; padding: 12px 16px;">
+                          <div style="display: flex; gap: 6px; justify-content: center; align-items: center; flex-wrap: wrap;">
+                            <button 
+                              class="btn btn-secondary btn-xs btn-preset-edit" 
+                              data-id="${p.id}" 
+                              title="Configure permissions and scope" 
+                              style="padding: 5px 10px; font-size: 11.5px; font-weight: 800; color: #38bdf8; border-color: rgba(56, 189, 248, 0.4); background: rgba(14, 165, 233, 0.15); border-radius: 6px; display: inline-flex; align-items: center; gap: 4px;"
+                            >
+                              ⚙️ Config
+                            </button>
+
+                            <button 
+                              class="btn btn-secondary btn-xs btn-preset-quick-assign" 
+                              data-id="${p.id}" 
+                              title="Assign users to this preset" 
+                              style="padding: 5px 9px; font-size: 11.5px; font-weight: 700; border-radius: 6px;"
+                            >
+                              👥 Assign
+                            </button>
+
+                            <button 
+                              class="btn btn-ghost btn-xs btn-preset-duplicate" 
+                              data-id="${p.id}" 
+                              title="Duplicate this preset" 
+                              style="padding: 5px 7px; font-size: 11.5px; color: #a78bfa; border-radius: 6px;"
+                            >
+                              📋
+                            </button>
+
+                            ${!p.isSystem ? `
+                              <button 
+                                class="btn btn-ghost btn-xs btn-preset-delete" 
+                                data-id="${p.id}" 
+                                title="Delete custom preset" 
+                                style="padding: 5px 7px; font-size: 11.5px; color: #f87171; border-radius: 6px;"
+                              >
+                                🗑️
+                              </button>
+                            ` : ''}
+                          </div>
+                        </td>
+                      </tr>
+                    `;
+                  }).join('')}
+                </tbody>
+              </table>
+            </div>
+          `}
+        </div>
+      `}
+
+      <!-- Modals Container -->
+      ${renderActiveModalHtml()}
+
+    </div>
+  `;
+}
+
+function renderActiveModalHtml() {
+  if (!activeModalType) return '';
+
+  // 1. ADD NEW USER MODAL
+  if (activeModalType === 'ADD_USER') {
+    return `
+      <div class="modal-overlay" style="display: flex; align-items: center; justify-content: center; background: rgba(8, 13, 26, 0.85); backdrop-filter: blur(8px); z-index: 9999;">
+        <div class="modal-card" style="width: 520px; max-width: 95vw; max-height: 90vh; display: flex; flex-direction: column; min-height: 0; background: linear-gradient(145deg, #0f172a, #1e293b); border: 1.5px solid rgba(56, 189, 248, 0.4); border-radius: var(--radius-xl); box-shadow: 0 20px 60px rgba(0, 0, 0, 0.7); overflow: hidden;">
+          
+          <!-- Header -->
+          <div style="background: linear-gradient(135deg, #0284c7, #0369a1); padding: 18px 24px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(255, 255, 255, 0.15); flex-shrink: 0;">
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <span style="font-size: 22px;">➕</span>
+              <div>
+                <h2 style="font-size: 16px; font-weight: 800; color: #fff; margin: 0;">Add New User</h2>
+                <div style="font-size: 11.5px; color: #e0f2fe;">Create account with credentials and role</div>
+              </div>
+            </div>
+            <button type="button" id="btn-close-modal" class="btn btn-ghost btn-sm" style="color: #fff; font-size: 18px; padding: 2px 6px;">✕</button>
+          </div>
+
+          <!-- Add User Form -->
+          <form id="form-add-new-user" style="padding: 24px; display: flex; flex-direction: column; gap: 15px; overflow-y: auto; flex: 1; min-height: 0;">
+            
+            <div class="form-group">
+              <label class="form-label" style="font-size: 12px; font-weight: 700; color: #fff;">
+                Full Name <span class="req">*</span>
+              </label>
+              <input 
+                type="text" 
+                id="add-user-fullname" 
+                class="form-control" 
+                placeholder="e.g. Md. Rafiqul Islam" 
+                required 
+                style="font-size: 13px;"
+              />
+            </div>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+              <div class="form-group">
+                <label class="form-label" style="font-size: 12px; font-weight: 700; color: #fff;">
+                  Email Address <span class="req">*</span>
+                </label>
+                <input 
+                  type="email" 
+                  id="add-user-email" 
+                  class="form-control" 
+                  placeholder="e.g. rafiq@al-muslim.com" 
+                  required 
+                  style="font-size: 13px;"
+                />
+              </div>
+
+              <div class="form-group">
+                <label class="form-label" style="font-size: 12px; font-weight: 700; color: #fff;">
+                  Username
+                </label>
+                <input 
+                  type="text" 
+                  id="add-user-username" 
+                  class="form-control" 
+                  placeholder="e.g. rafiq (auto-generated if empty)" 
+                  style="font-size: 13px;"
+                />
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" style="font-size: 12px; font-weight: 700; color: #fff;">
+                Password <span class="req">*</span>
+              </label>
+              <div style="position: relative;">
+                <input 
+                  type="password" 
+                  id="add-user-password" 
+                  class="form-control" 
+                  placeholder="Minimum 4 characters" 
+                  required 
+                  minlength="4"
+                  style="font-size: 13px; padding-right: 36px;"
+                />
+                <span id="btn-toggle-add-pwd" style="position: absolute; right: 10px; top: 50%; transform: translateY(-50%); cursor: pointer; opacity: 0.7; font-size: 14px;" title="Toggle Visibility">👁️</span>
+              </div>
+              <div style="font-size: 11px; color: #34d399; margin-top: 3px;">🔒 Passwords are cryptographically salted and hashed.</div>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" style="font-size: 12px; font-weight: 700; color: #fff;">
+                Permission Preset / Access Profile <span class="req">*</span>
+              </label>
+              <select id="add-user-preset" class="form-control" style="font-size: 13px; font-weight: 600;">
+                ${authService.getAllPresets().map(p => `
+                  <option value="${p.id}" ${p.code === 'MAINTENANCE_USER' ? 'selected' : ''}>
+                    ${p.icon || '🛡️'} ${p.name} — ${p.accessLevel || p.description}
+                  </option>
+                `).join('')}
+              </select>
+              <div style="font-size: 11px; color: var(--text-muted); margin-top: 3px;">
+                Pre-configures all 7-action permissions and factory location scopes automatically.
+              </div>
+            </div>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+              <div class="form-group">
+                <label class="form-label" style="font-size: 12px; font-weight: 700; color: #fff;">
+                  Role <span class="req">*</span>
+                </label>
+                <select id="add-user-role" class="form-control" required style="font-size: 13px;">
+                  <option value="USER" selected>👤 User (Standard)</option>
+                  <option value="ADMIN">👑 Admin (Management Access)</option>
+                  <option value="SUPER_ADMIN">🛡️ Super Admin (Full Unrestricted)</option>
+                </select>
+              </div>
+
+              <div class="form-group">
+                <label class="form-label" style="font-size: 12px; font-weight: 700; color: #fff;">
+                  Status <span class="req">*</span>
+                </label>
+                <select id="add-user-status" class="form-control" required style="font-size: 13px;">
+                  <option value="ACTIVE" selected>🟢 Active</option>
+                  <option value="INACTIVE">🔴 Inactive</option>
+                </select>
+              </div>
+            </div>
+
+            <div style="display: flex; justify-content: flex-end; gap: 10px; padding-top: 14px; border-top: 1px solid var(--border-color);">
+              <button type="button" id="btn-cancel-modal" class="btn btn-secondary btn-sm" style="font-weight: 600;">Cancel</button>
+              <button type="submit" class="btn btn-primary btn-sm" style="font-weight: 700; background: linear-gradient(135deg, #0284c7, #0369a1); padding: 8px 20px;">
+                💾 Save User
+              </button>
+            </div>
+
+          </form>
+
+        </div>
+      </div>
+    `;
+  }
+
+  // 2. EDIT USER MODAL
+  if (activeModalType === 'EDIT_USER' && targetUser) {
+    const isSuper = (targetUser.role || '').toUpperCase() === 'SUPER_ADMIN' || targetUser.username === 'superadmin';
+    const isAdmin = (targetUser.role || '').toUpperCase() === 'ADMIN';
+
+    return `
+      <div class="modal-overlay" style="display: flex; align-items: center; justify-content: center; background: rgba(8, 13, 26, 0.85); backdrop-filter: blur(8px); z-index: 9999;">
+        <div class="modal-card" style="width: 520px; max-width: 95vw; max-height: 90vh; display: flex; flex-direction: column; min-height: 0; background: linear-gradient(145deg, #0f172a, #1e293b); border: 1.5px solid rgba(56, 189, 248, 0.4); border-radius: var(--radius-xl); box-shadow: 0 20px 60px rgba(0, 0, 0, 0.7); overflow: hidden;">
+          
+          <!-- Header -->
+          <div style="background: linear-gradient(135deg, #0284c7, #0369a1); padding: 18px 24px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(255, 255, 255, 0.15); flex-shrink: 0;">
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <span style="font-size: 22px;">✏️</span>
+              <div>
+                <h2 style="font-size: 16px; font-weight: 800; color: #fff; margin: 0;">Edit User: ${targetUser.name}</h2>
+                <div style="font-size: 11.5px; color: #e0f2fe;">Update profile credentials and role</div>
+              </div>
+            </div>
+            <button type="button" id="btn-close-modal" class="btn btn-ghost btn-sm" style="color: #fff; font-size: 18px; padding: 2px 6px;">✕</button>
+          </div>
+
+          <!-- Edit User Form -->
+          <form id="form-edit-user" style="padding: 24px; display: flex; flex-direction: column; gap: 15px; overflow-y: auto; flex: 1; min-height: 0;">
+            
+            <div class="form-group">
+              <label class="form-label" style="font-size: 12px; font-weight: 700; color: #fff;">
+                Full Name <span class="req">*</span>
+              </label>
+              <input 
+                type="text" 
+                id="edit-user-fullname" 
+                class="form-control" 
+                value="${targetUser.name || ''}" 
+                required 
+                style="font-size: 13px;"
+              />
+            </div>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+              <div class="form-group">
+                <label class="form-label" style="font-size: 12px; font-weight: 700; color: #fff;">
+                  Email Address <span class="req">*</span>
+                </label>
+                <input 
+                  type="email" 
+                  id="edit-user-email" 
+                  class="form-control" 
+                  value="${targetUser.email || ''}" 
+                  required 
+                  style="font-size: 13px;"
+                />
+              </div>
+
+              <div class="form-group">
+                <label class="form-label" style="font-size: 12px; font-weight: 700; color: #fff;">
+                  Username <span class="req">*</span>
+                </label>
+                <input 
+                  type="text" 
+                  id="edit-user-username" 
+                  class="form-control" 
+                  value="${targetUser.username || ''}" 
+                  required 
+                  minlength="3"
+                  maxlength="30"
+                  placeholder="e.g. admin or custom_user"
+                  style="font-size: 13px; font-family: var(--font-mono); font-weight: 700; color: #38bdf8;"
+                />
+                <div style="font-size: 10.5px; color: var(--text-muted); margin-top: 3px;">Unique login username (3-30 letters, numbers, _, -)</div>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" style="font-size: 12px; font-weight: 700; color: #fff;">
+                Permission Preset / Access Profile
+              </label>
+              <select id="edit-user-preset" class="form-control" style="font-size: 13px; font-weight: 600;">
+                ${authService.getAllPresets().map(p => `
+                  <option value="${p.id}" ${(targetUser.presetId === p.id || targetUser.presetId === p.code) ? 'selected' : ''}>
+                    ${p.icon || '🛡️'} ${p.name} — ${p.accessLevel || p.description}
+                  </option>
+                `).join('')}
+                <option value="CUSTOM" ${targetUser.presetId === 'CUSTOM' ? 'selected' : ''}>👤 Custom User (Individual Permissions)</option>
+              </select>
+            </div>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+              <div class="form-group">
+                <label class="form-label" style="font-size: 12px; font-weight: 700; color: #fff;">
+                  Role <span class="req">*</span>
+                </label>
+                <select id="edit-user-role" class="form-control" required style="font-size: 13px;" ${targetUser.username === 'superadmin' ? 'disabled' : ''}>
+                  <option value="USER" ${!isSuper && !isAdmin ? 'selected' : ''}>👤 User (Standard)</option>
+                  <option value="ADMIN" ${isAdmin ? 'selected' : ''}>👑 Admin (Management Access)</option>
+                  <option value="SUPER_ADMIN" ${isSuper ? 'selected' : ''}>🛡️ Super Admin (Full Access)</option>
+                </select>
+              </div>
+
+              <div class="form-group">
+                <label class="form-label" style="font-size: 12px; font-weight: 700; color: #fff;">
+                  Status <span class="req">*</span>
+                </label>
+                <select id="edit-user-status" class="form-control" required style="font-size: 13px;" ${targetUser.username === 'superadmin' ? 'disabled' : ''}>
+                  <option value="ACTIVE" ${targetUser.status === 'ACTIVE' ? 'selected' : ''}>🟢 Active</option>
+                  <option value="INACTIVE" ${targetUser.status === 'INACTIVE' ? 'selected' : ''}>🔴 Inactive</option>
+                </select>
+              </div>
+            </div>
+
+            <div style="display: flex; justify-content: flex-end; gap: 10px; padding-top: 14px; border-top: 1px solid var(--border-color);">
+              <button type="button" id="btn-cancel-modal" class="btn btn-secondary btn-sm" style="font-weight: 600;">Cancel</button>
+              <button type="submit" class="btn btn-primary btn-sm" style="font-weight: 700; background: linear-gradient(135deg, #0284c7, #0369a1); padding: 8px 20px;">
+                💾 Save Changes
+              </button>
+            </div>
+
+          </form>
+
+        </div>
+      </div>
+    `;
+  }
+
+  // 3. DEDICATED PERMISSION & LOCATION SCOPE MODAL (7-ACTION CHECKBOX MATRIX + UNIT/FLOOR/LINE DATA ACCESS SCOPING)
+  if (activeModalType === 'USER_PERMISSIONS' && targetUser) {
+    const userPerms = editingPermissions || targetUser.permissions || {};
+    const isSuper = (targetUser.role || '').toUpperCase() === 'SUPER_ADMIN' || targetUser.username === 'superadmin';
+    const currentScope = editingScope || targetUser.assignedScope || { allGroups: true, groupIds: [], unitIds: [], floorIds: [], lineIds: [] };
+
+    // Master data for location scope selection
+    const allUnits = masterDataService.getAllUnits();
+    const selectedUnitIds = currentScope.unitIds || [];
+    
+    // Floors belonging to selected units (or all if none explicitly selected)
+    const availableFloors = selectedUnitIds.length > 0
+      ? masterDataService.getAllFloors().filter(f => selectedUnitIds.includes(f.unitId))
+      : masterDataService.getAllFloors();
+    const selectedFloorIds = currentScope.floorIds || [];
+
+    // Lines belonging to selected floors
+    const availableLines = selectedFloorIds.length > 0
+      ? masterDataService.getAllLines().filter(l => selectedFloorIds.includes(l.floorId))
+      : (selectedUnitIds.length > 0
+          ? masterDataService.getAllLines().filter(l => availableFloors.some(f => f.id === l.floorId))
+          : masterDataService.getAllLines());
+    const selectedLineIds = currentScope.lineIds || [];
+
+    return `
+      <div class="modal-overlay" style="display: flex; align-items: center; justify-content: center; background: rgba(8, 13, 26, 0.85); backdrop-filter: blur(8px); z-index: 9999;">
+        <div class="modal-card" style="width: 1040px; max-width: 96vw; height: 90vh; max-height: 920px; background: linear-gradient(145deg, #0f172a, #1e293b); border: 1.5px solid rgba(56, 189, 248, 0.4); border-radius: var(--radius-xl); box-shadow: 0 20px 60px rgba(0, 0, 0, 0.8); display: flex; flex-direction: column; min-height: 0; overflow: hidden;">
+          
+          <!-- Modal Header -->
+          <div style="background: linear-gradient(135deg, #0284c7, #0369a1); padding: 12px 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(255, 255, 255, 0.15); flex-shrink: 0;">
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <span style="font-size: 22px;">🛡️</span>
+              <div>
+                <h2 style="font-size: 15px; font-weight: 800; color: #fff; margin: 0;">
+                  User Access Control: ${targetUser.name}
+                </h2>
+                <div style="font-size: 11px; color: #e0f2fe; display: flex; gap: 8px; align-items: center; margin-top: 1px;">
+                  <span>ID: <strong style="font-family: var(--font-mono);">@${targetUser.username}</strong></span>
+                  <span>&bull;</span>
+                  <span>Role: <strong>${targetUser.role}</strong></span>
+                  <span>&bull;</span>
+                  <span>Status: <strong>${targetUser.status}</strong></span>
+                </div>
+              </div>
+            </div>
+            <button type="button" id="btn-close-modal" class="btn btn-ghost btn-sm" style="color: #fff; font-size: 18px; padding: 2px 6px;">✕</button>
+          </div>
+
+          <!-- Tab Navigation Bar -->
+          <div style="display: flex; gap: 8px; background: rgba(15, 23, 42, 0.95); padding: 6px 20px; border-bottom: 1px solid var(--border-color); flex-shrink: 0;">
+            <button 
+              type="button" 
+              id="tab-btn-perms" 
+              class="btn ${activeModalTab === 'PERMISSIONS' ? 'btn-primary' : 'btn-ghost'}" 
+              style="font-weight: 700; font-size: 12px; padding: 6px 16px; border-radius: var(--radius-md); ${activeModalTab === 'PERMISSIONS' ? 'background: linear-gradient(135deg, #0284c7, #0369a1); color: #fff;' : 'color: var(--text-secondary);'}"
+            >
+              🔐 1. Permission Matrix (7 Actions)
+            </button>
+            <button 
+              type="button" 
+              id="tab-btn-scope" 
+              class="btn ${activeModalTab === 'LOCATION_SCOPE' ? 'btn-primary' : 'btn-ghost'}" 
+              style="font-weight: 700; font-size: 12px; padding: 6px 16px; border-radius: var(--radius-md); ${activeModalTab === 'LOCATION_SCOPE' ? 'background: linear-gradient(135deg, #0284c7, #0369a1); color: #fff;' : 'color: var(--text-secondary);'}"
+            >
+              📍 2. Plant &amp; Line Scope (Unit, Floor, Line)
+            </button>
+          </div>
+
+          ${activeModalTab === 'PERMISSIONS' ? `
+            <!-- TAB 1: 7-ACTION PERMISSION MATRIX -->
+            <!-- Quick Action Preset Toolbar -->
+            <div style="background: rgba(15, 23, 42, 0.85); padding: 8px 20px; border-bottom: 1px solid var(--border-color); display: flex; flex-direction: column; gap: 6px; flex-shrink: 0;">
+              
+              <!-- 1. Quick Presets -->
+              <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+                <div style="font-size: 11.5px; font-weight: 800; color: #38bdf8; text-transform: uppercase; letter-spacing: 0.5px; display: flex; align-items: center; gap: 6px;">
+                  <span>⚡ Quick Presets:</span>
+                </div>
+                <div style="display: flex; gap: 5px; flex-wrap: wrap;">
+                  <button type="button" id="btn-perm-select-all" class="btn btn-secondary btn-xs" style="font-weight: 700; font-size: 11px; background: rgba(56, 189, 248, 0.15); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.35); padding: 3px 8px;">
+                    🌟 All (✓)
+                  </button>
+                  <button type="button" id="btn-perm-preset-admin" class="btn btn-ghost btn-xs" style="color: #38bdf8; font-weight: 700; font-size: 11px; border: 1px solid rgba(56, 189, 248, 0.3); background: rgba(56, 189, 248, 0.08); padding: 3px 8px;">
+                    👑 Full Admin
+                  </button>
+                  <button type="button" id="btn-perm-preset-approver" class="btn btn-ghost btn-xs" style="color: #f472b6; font-weight: 700; font-size: 11px; border: 1px solid rgba(244, 114, 182, 0.3); background: rgba(244, 114, 182, 0.08); padding: 3px 8px;">
+                    🛡️ Approver
+                  </button>
+                  <button type="button" id="btn-perm-preset-operator" class="btn btn-ghost btn-xs" style="color: #a78bfa; font-weight: 700; font-size: 11px; border: 1px solid rgba(167, 139, 250, 0.3); background: rgba(167, 139, 250, 0.08); padding: 3px 8px;">
+                    📝 Operator
+                  </button>
+                  <button type="button" id="btn-perm-preset-viewonly" class="btn btn-ghost btn-xs" style="color: #34d399; font-weight: 700; font-size: 11px; border: 1px solid rgba(52, 211, 153, 0.3); background: rgba(52, 211, 153, 0.08); padding: 3px 8px;">
+                    👁️ View Only
+                  </button>
+                  <button type="button" id="btn-perm-clear-all" class="btn btn-secondary btn-xs" style="font-weight: 700; font-size: 11px; color: #f87171; border: 1px solid rgba(239, 68, 68, 0.3); background: rgba(239, 68, 68, 0.08); padding: 3px 8px;">
+                    ⬜ Clear All
+                  </button>
+                </div>
+              </div>
+
+              <!-- 2. Master 7-Action Global Toggles -->
+              <div style="background: rgba(2, 132, 199, 0.08); border: 1px solid rgba(56, 189, 248, 0.2); border-radius: var(--radius-md); padding: 4px 10px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 6px;">
+                <div style="font-size: 11px; font-weight: 700; color: #7dd3fc; display: flex; align-items: center; gap: 4px;">
+                  <span>🌐 Global Action Toggles:</span>
+                  <span style="font-size: 10px; color: var(--text-muted); font-weight: 400;">(Apply to all modules)</span>
+                </div>
+                <div style="display: flex; gap: 6px; flex-wrap: wrap; align-items: center;">
+                  <label style="cursor: pointer; display: flex; align-items: center; gap: 4px; font-size: 11px; padding: 2px 7px; border-radius: 4px; background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.35); color: #34d399; font-weight: 700;">
+                    <input type="checkbox" id="master-toggle-VIEW" style="cursor: pointer; accent-color: #10b981; width: 14px; height: 14px;" />
+                    <span>Read</span>
+                  </label>
+                  <label style="cursor: pointer; display: flex; align-items: center; gap: 4px; font-size: 11px; padding: 2px 7px; border-radius: 4px; background: rgba(14, 165, 233, 0.15); border: 1px solid rgba(14, 165, 233, 0.35); color: #38bdf8; font-weight: 700;">
+                    <input type="checkbox" id="master-toggle-ADD" style="cursor: pointer; accent-color: #0284c7; width: 14px; height: 14px;" />
+                    <span>Add</span>
+                  </label>
+                  <label style="cursor: pointer; display: flex; align-items: center; gap: 4px; font-size: 11px; padding: 2px 7px; border-radius: 4px; background: rgba(245, 158, 11, 0.15); border: 1px solid rgba(245, 158, 11, 0.35); color: #fbbf24; font-weight: 700;">
+                    <input type="checkbox" id="master-toggle-EDIT" style="cursor: pointer; accent-color: #f59e0b; width: 14px; height: 14px;" />
+                    <span>Edit</span>
+                  </label>
+                  <label style="cursor: pointer; display: flex; align-items: center; gap: 4px; font-size: 11px; padding: 2px 7px; border-radius: 4px; background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.35); color: #f87171; font-weight: 700;">
+                    <input type="checkbox" id="master-toggle-DELETE" style="cursor: pointer; accent-color: #ef4444; width: 14px; height: 14px;" />
+                    <span>Delete</span>
+                  </label>
+                  <label style="cursor: pointer; display: flex; align-items: center; gap: 4px; font-size: 11px; padding: 2px 7px; border-radius: 4px; background: rgba(168, 85, 247, 0.15); border: 1px solid rgba(168, 85, 247, 0.35); color: #c084fc; font-weight: 700;">
+                    <input type="checkbox" id="master-toggle-IMPORT" style="cursor: pointer; accent-color: #a855f7; width: 14px; height: 14px;" />
+                    <span>Import</span>
+                  </label>
+                  <label style="cursor: pointer; display: flex; align-items: center; gap: 4px; font-size: 11px; padding: 2px 7px; border-radius: 4px; background: rgba(99, 102, 241, 0.15); border: 1px solid rgba(99, 102, 241, 0.35); color: #818cf8; font-weight: 700;">
+                    <input type="checkbox" id="master-toggle-EXPORT" style="cursor: pointer; accent-color: #6366f1; width: 14px; height: 14px;" />
+                    <span>Export</span>
+                  </label>
+                  <label style="cursor: pointer; display: flex; align-items: center; gap: 4px; font-size: 11px; padding: 2px 7px; border-radius: 4px; background: rgba(236, 72, 153, 0.15); border: 1px solid rgba(236, 72, 153, 0.35); color: #f472b6; font-weight: 700;">
+                    <input type="checkbox" id="master-toggle-APPROVE" style="cursor: pointer; accent-color: #ec4899; width: 14px; height: 14px;" />
+                    <span>Approve</span>
+                  </label>
+                </div>
+              </div>
+
+            </div>
+
+            ${isSuper ? `
+              <div style="padding: 6px 20px; background: rgba(56, 189, 248, 0.1); border-bottom: 1px solid rgba(56, 189, 248, 0.2); color: #38bdf8; font-size: 11px; display: flex; align-items: center; gap: 8px;">
+                <span>🛡️</span>
+                <span><strong>Super Admin Account:</strong> This account has unrestricted 100% master authority across all system modules and actions.</span>
+              </div>
+            ` : ''}
+
+            <!-- Scrollable Permission Checkbox Matrix with 7 action columns (Zero top padding) -->
+            <div class="permissions-matrix-scroll-wrap" style="overflow-y: auto; flex: 1; min-height: 0; padding: 0; background: #0b1329;">
+              <form id="form-user-permissions">
+                <table class="permissions-matrix-table" style="margin: 0; width: 100% !important; border-collapse: separate !important; border-spacing: 0 !important; table-layout: fixed !important;">
+                  <thead>
+                    <tr>
+                      <th style="width: 250px; text-align: left; padding-left: 16px;">Module Name</th>
+                      <th style="width: 66px; text-align: center;">
+                        <div style="font-size: 10.5px; margin-bottom: 2px; color: #34d399; font-weight: 800; text-transform: uppercase;">Read</div>
+                        <input type="checkbox" id="col-toggle-VIEW" class="col-header-toggle" title="Toggle Read for all modules" style="cursor: pointer; accent-color: #10b981; width: 14px; height: 14px;" />
+                      </th>
+                      <th style="width: 66px; text-align: center;">
+                        <div style="font-size: 10.5px; margin-bottom: 2px; color: #38bdf8; font-weight: 800; text-transform: uppercase;">Add</div>
+                        <input type="checkbox" id="col-toggle-ADD" class="col-header-toggle" title="Toggle Add for all modules" style="cursor: pointer; accent-color: #0284c7; width: 14px; height: 14px;" />
+                      </th>
+                      <th style="width: 66px; text-align: center;">
+                        <div style="font-size: 10.5px; margin-bottom: 2px; color: #fbbf24; font-weight: 800; text-transform: uppercase;">Edit</div>
+                        <input type="checkbox" id="col-toggle-EDIT" class="col-header-toggle" title="Toggle Edit for all modules" style="cursor: pointer; accent-color: #f59e0b; width: 14px; height: 14px;" />
+                      </th>
+                      <th style="width: 66px; text-align: center;">
+                        <div style="font-size: 10.5px; margin-bottom: 2px; color: #f87171; font-weight: 800; text-transform: uppercase;">Delete</div>
+                        <input type="checkbox" id="col-toggle-DELETE" class="col-header-toggle" title="Toggle Delete for all modules" style="cursor: pointer; accent-color: #ef4444; width: 14px; height: 14px;" />
+                      </th>
+                      <th style="width: 66px; text-align: center;">
+                        <div style="font-size: 10.5px; margin-bottom: 2px; color: #c084fc; font-weight: 800; text-transform: uppercase;">Import</div>
+                        <input type="checkbox" id="col-toggle-IMPORT" class="col-header-toggle" title="Toggle Import for all modules" style="cursor: pointer; accent-color: #a855f7; width: 14px; height: 14px;" />
+                      </th>
+                      <th style="width: 66px; text-align: center;">
+                        <div style="font-size: 10.5px; margin-bottom: 2px; color: #818cf8; font-weight: 800; text-transform: uppercase;">Export</div>
+                        <input type="checkbox" id="col-toggle-EXPORT" class="col-header-toggle" title="Toggle Export for all modules" style="cursor: pointer; accent-color: #6366f1; width: 14px; height: 14px;" />
+                      </th>
+                      <th style="width: 68px; text-align: center;">
+                        <div style="font-size: 10.5px; margin-bottom: 2px; color: #f472b6; font-weight: 800; text-transform: uppercase;">Approve</div>
+                        <input type="checkbox" id="col-toggle-APPROVE" class="col-header-toggle" title="Toggle Approve for all modules" style="cursor: pointer; accent-color: #ec4899; width: 14px; height: 14px;" />
+                      </th>
+                      <th style="width: 68px; text-align: center;">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${PERMISSION_CONFIG_MODULES.map(group => `
+                      <tr class="module-group-header">
+                        <td colspan="9" style="background: #142036 !important; color: #38bdf8 !important; font-weight: 800; font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.6px; padding: 7px 16px !important; border-top: 1px solid rgba(56, 189, 248, 0.25); border-bottom: 1px solid rgba(56, 189, 248, 0.25); border-left: 3px solid #0284c7 !important;">
+                          <div style="display: flex; align-items: center; gap: 8px;">
+                            <span style="font-size: 13px;">📁</span>
+                            <span>${group.group}</span>
+                          </div>
+                        </td>
+                      </tr>
+                      ${group.modules.map(mod => {
+                        const modActions = userPerms[mod.id] || [];
+                        const hasView = modActions.includes('VIEW') || modActions.includes('READ') || modActions.some(a => a.startsWith('VIEW'));
+                        const hasAdd = modActions.includes('ADD') || modActions.some(a => a === 'ADD' || a.startsWith('ADD_') || a === 'CREATE_REQUEST' || a === 'ALLOCATE');
+                        const hasEdit = modActions.includes('EDIT') || modActions.some(a => a === 'EDIT' || a.startsWith('EDIT_') || a === 'MASTER_CONFIG' || a === 'REPLACE');
+                        const hasDelete = modActions.includes('DELETE') || modActions.some(a => a === 'DELETE' || a.startsWith('DELETE_') || a === 'CANCEL_REQUEST');
+                        const hasImport = modActions.includes('IMPORT') || modActions.some(a => a === 'IMPORT' || a.includes('IMPORT'));
+                        const hasExport = modActions.includes('EXPORT') || modActions.some(a => a === 'EXPORT' || a.includes('EXPORT'));
+                        const hasApprove = modActions.includes('APPROVE') || modActions.some(a => a === 'APPROVE' || a.includes('APPROVE') || a === 'COMPLETE_SESSION');
+
+                        const supportsAdd = mod.actions.includes('ADD');
+                        const supportsEdit = mod.actions.includes('EDIT');
+                        const supportsDelete = mod.actions.includes('DELETE');
+                        const supportsImport = mod.actions.includes('IMPORT');
+                        const supportsExport = mod.actions.includes('EXPORT');
+                        const supportsApprove = mod.actions.includes('APPROVE');
+
+                        return `
+                          <tr class="module-row" style="border-bottom: 1px solid rgba(255, 255, 255, 0.05); background: transparent;">
+                            <td style="font-weight: 600; font-size: 12px; color: #f8fafc; padding: 7px 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${mod.name}">
+                              ${mod.name}
+                            </td>
+                            
+                            <!-- 1. Read (View) -->
+                            <td style="text-align: center; padding: 5px 2px;">
+                              <input 
+                                type="checkbox" 
+                                class="chk-perm-action" 
+                                data-module="${mod.id}" 
+                                data-action="VIEW" 
+                                ${hasView ? 'checked' : ''} 
+                                style="width: 16px; height: 16px; cursor: pointer; accent-color: #10b981;"
+                              />
+                            </td>
+
+                            <!-- 2. Add -->
+                            <td style="text-align: center; padding: 5px 2px;">
+                              ${supportsAdd ? `
+                                <input 
+                                  type="checkbox" 
+                                  class="chk-perm-action" 
+                                  data-module="${mod.id}" 
+                                  data-action="ADD" 
+                                  ${hasAdd ? 'checked' : ''} 
+                                  style="width: 16px; height: 16px; cursor: pointer; accent-color: #0284c7;"
+                                />
+                              ` : '<span style="color: var(--text-muted); opacity: 0.25; font-weight: 600;">—</span>'}
+                            </td>
+
+                            <!-- 3. Edit -->
+                            <td style="text-align: center; padding: 5px 2px;">
+                              ${supportsEdit ? `
+                                <input 
+                                  type="checkbox" 
+                                  class="chk-perm-action" 
+                                  data-module="${mod.id}" 
+                                  data-action="EDIT" 
+                                  ${hasEdit ? 'checked' : ''} 
+                                  style="width: 16px; height: 16px; cursor: pointer; accent-color: #f59e0b;"
+                                />
+                              ` : '<span style="color: var(--text-muted); opacity: 0.25; font-weight: 600;">—</span>'}
+                            </td>
+
+                            <!-- 4. Delete -->
+                            <td style="text-align: center; padding: 5px 2px;">
+                              ${supportsDelete ? `
+                                <input 
+                                  type="checkbox" 
+                                  class="chk-perm-action" 
+                                  data-module="${mod.id}" 
+                                  data-action="DELETE" 
+                                  ${hasDelete ? 'checked' : ''} 
+                                  style="width: 16px; height: 16px; cursor: pointer; accent-color: #ef4444;"
+                                />
+                              ` : '<span style="color: var(--text-muted); opacity: 0.25; font-weight: 600;">—</span>'}
+                            </td>
+
+                            <!-- 5. Import -->
+                            <td style="text-align: center; padding: 5px 2px;">
+                              ${supportsImport ? `
+                                <input 
+                                  type="checkbox" 
+                                  class="chk-perm-action" 
+                                  data-module="${mod.id}" 
+                                  data-action="IMPORT" 
+                                  ${hasImport ? 'checked' : ''} 
+                                  style="width: 16px; height: 16px; cursor: pointer; accent-color: #a855f7;"
+                                />
+                              ` : '<span style="color: var(--text-muted); opacity: 0.25; font-weight: 600;">—</span>'}
+                            </td>
+
+                            <!-- 6. Export -->
+                            <td style="text-align: center; padding: 5px 2px;">
+                              ${supportsExport ? `
+                                <input 
+                                  type="checkbox" 
+                                  class="chk-perm-action" 
+                                  data-module="${mod.id}" 
+                                  data-action="EXPORT" 
+                                  ${hasExport ? 'checked' : ''} 
+                                  style="width: 16px; height: 16px; cursor: pointer; accent-color: #6366f1;"
+                                />
+                              ` : '<span style="color: var(--text-muted); opacity: 0.25; font-weight: 600;">—</span>'}
+                            </td>
+
+                            <!-- 7. Approve -->
+                            <td style="text-align: center; padding: 5px 2px;">
+                              ${supportsApprove ? `
+                                <input 
+                                  type="checkbox" 
+                                  class="chk-perm-action" 
+                                  data-module="${mod.id}" 
+                                  data-action="APPROVE" 
+                                  ${hasApprove ? 'checked' : ''} 
+                                  style="width: 16px; height: 16px; cursor: pointer; accent-color: #ec4899;"
+                                />
+                              ` : '<span style="color: var(--text-muted); opacity: 0.25; font-weight: 600;">—</span>'}
+                            </td>
+
+                            <!-- Row Quick Toggle -->
+                            <td style="text-align: center; padding: 5px 4px;">
+                              <button 
+                                type="button" 
+                                class="btn btn-ghost btn-xs btn-perm-toggle-row" 
+                                data-module="${mod.id}"
+                                title="Toggle all supported actions for ${mod.name}"
+                                style="font-size: 10px; padding: 2px 6px; color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.25); border-radius: 4px; background: rgba(56, 189, 248, 0.05);"
+                              >
+                                Toggle
+                              </button>
+                            </td>
+                          </tr>
+                        `;
+                      }).join('')}
+                    `).join('')}
+                  </tbody>
+                </table>
+              </form>
+            </div>
+
+            <!-- Footer Actions -->
+            <div style="background: var(--bg-surface); padding: 12px 24px; border-top: 1px solid var(--border-color); display: flex; justify-content: flex-end; gap: 10px; flex-shrink: 0;">
+              <button type="button" id="btn-cancel-modal" class="btn btn-secondary" style="font-weight: 600;">Cancel</button>
+              <button type="button" id="btn-save-user-perms" class="btn btn-primary" style="font-weight: 700; background: linear-gradient(135deg, #0284c7, #0369a1); padding: 8px 24px;">
+                💾 Save Permissions
+              </button>
+            </div>
+          ` : `
+            <!-- TAB 2: LOCATION-BASED DATA ACCESS SCOPING -->
+            <div style="padding: 16px 24px; overflow-y: auto; flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 16px;">
+              
+              <!-- Scope Mode Selector Card -->
+              <div style="background: var(--bg-surface); border: 1.5px solid var(--border-color); border-radius: var(--radius-lg); padding: 16px 20px;">
+                <div style="font-size: 13.5px; font-weight: 800; color: #fff; margin-bottom: 4px;">
+                  📍 Data Access Scope Mode
+                </div>
+                <div style="font-size: 12px; color: var(--text-secondary); margin-bottom: 12px;">
+                  Configure which factory units, floors, and lines this user is authorized to access:
+                </div>
+
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px;">
+                  <label style="display: flex; align-items: flex-start; gap: 10px; cursor: pointer; color: #fff; background: ${currentScope.allGroups ? 'rgba(56, 189, 248, 0.15)' : 'rgba(15, 23, 42, 0.4)'}; border: 1.5px solid ${currentScope.allGroups ? '#38bdf8' : 'var(--border-color)'}; padding: 12px 16px; border-radius: var(--radius-md);">
+                    <input type="radio" name="scope-mode" id="scope-mode-all" value="ALL" ${currentScope.allGroups ? 'checked' : ''} style="cursor: pointer; accent-color: #38bdf8; margin-top: 3px;" />
+                    <div>
+                      <div style="font-weight: 700; font-size: 13px; color: #38bdf8;">🌐 All Locations (Unrestricted Global Access)</div>
+                      <div style="font-size: 11.5px; color: var(--text-muted); margin-top: 2px;">User has full unrestricted access across all units, floors, and lines in the enterprise.</div>
+                    </div>
+                  </label>
+
+                  <label style="display: flex; align-items: flex-start; gap: 10px; cursor: pointer; color: #fff; background: ${!currentScope.allGroups ? 'rgba(234, 179, 8, 0.15)' : 'rgba(15, 23, 42, 0.4)'}; border: 1.5px solid ${!currentScope.allGroups ? '#facc15' : 'var(--border-color)'}; padding: 12px 16px; border-radius: var(--radius-md);">
+                    <input type="radio" name="scope-mode" id="scope-mode-restricted" value="RESTRICTED" ${!currentScope.allGroups ? 'checked' : ''} style="cursor: pointer; accent-color: #facc15; margin-top: 3px;" />
+                    <div>
+                      <div style="font-weight: 700; font-size: 13px; color: #facc15;">📍 Restricted Scope (Assigned Plants &amp; Lines Only)</div>
+                      <div style="font-size: 11.5px; color: var(--text-muted); margin-top: 2px;">User can only view and manage machines strictly scoped to selected Units, Floors, or Lines.</div>
+                    </div>
+                  </label>
+                </div>
+              </div>
+
+              <!-- Live Summary Box -->
+              <div style="background: rgba(15, 23, 42, 0.6); border: 1px solid var(--border-color); border-radius: var(--radius-md); padding: 10px 18px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px;">
+                <div style="display: flex; align-items: center; gap: 8px; font-size: 12.5px;">
+                  <span style="font-weight: 700; color: #fff;">📌 Live Scope Status:</span>
+                  ${currentScope.allGroups ? `
+                    <span class="badge" style="background: rgba(56, 189, 248, 0.2); color: #38bdf8; font-weight: 700;">🌐 Unrestricted Global Access (All Locations)</span>
+                  ` : `
+                    <span class="badge" style="background: rgba(234, 179, 8, 0.2); color: #facc15; font-weight: 700;">
+                      📍 ${selectedUnitIds.length} Unit(s) &bull; ${selectedFloorIds.length} Floor(s) &bull; ${selectedLineIds.length} Line(s)
+                    </span>
+                  `}
+                </div>
+                <div style="font-size: 11.5px; color: var(--text-muted);">
+                  Equipment outside authorized locations will not be visible or accessible to this account.
+                </div>
+              </div>
+
+              <!-- 3-Panel Granular Selection Area (Visible when restricted) -->
+              <div id="scope-granular-panels" style="display: ${currentScope.allGroups ? 'none' : 'grid'}; grid-template-columns: 1fr 1fr 1fr; gap: 14px; flex: 1; min-height: 280px;">
+                
+                <!-- Panel 1: Units / Factories -->
+                <div style="background: var(--bg-surface); border: 1px solid var(--border-color); border-radius: var(--radius-lg); display: flex; flex-direction: column; overflow: hidden;">
+                  <div style="padding: 10px 14px; background: rgba(2, 132, 199, 0.15); border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center;">
+                    <div style="font-weight: 800; font-size: 12.5px; color: #38bdf8;">
+                      🏭 1. Factory Units (${allUnits.length})
+                    </div>
+                    <div style="display: flex; gap: 6px;">
+                      <button type="button" id="btn-scope-all-units" class="btn btn-ghost btn-xs" style="font-size: 10.5px; padding: 2px 5px; color: #38bdf8;">All</button>
+                      <button type="button" id="btn-scope-clear-units" class="btn btn-ghost btn-xs" style="font-size: 10.5px; padding: 2px 5px; color: var(--text-muted);">Clear</button>
+                    </div>
+                  </div>
+                  <div style="padding: 10px; overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 6px;">
+                    ${allUnits.length === 0 ? `
+                      <div style="color: var(--text-muted); font-size: 12px; text-align: center; padding: 20px;">No Units Found</div>
+                    ` : allUnits.map(unt => {
+                      const isChecked = selectedUnitIds.includes(unt.id);
+                      return `
+                        <label style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: #fff; cursor: pointer; padding: 6px 8px; border-radius: var(--radius-sm); background: ${isChecked ? 'rgba(56, 189, 248, 0.12)' : 'transparent'}; border: 1px solid ${isChecked ? 'rgba(56, 189, 248, 0.3)' : 'transparent'};">
+                          <input 
+                            type="checkbox" 
+                            class="chk-scope-unit" 
+                            data-id="${unt.id}" 
+                            ${isChecked ? 'checked' : ''} 
+                            style="width: 15px; height: 15px; cursor: pointer; accent-color: #0284c7;"
+                          />
+                          <span style="font-weight: 600;">${unt.name}</span>
+                          ${unt.code ? `<span style="font-size: 10px; color: var(--text-muted); font-family: var(--font-mono); margin-left: auto;">[${unt.code}]</span>` : ''}
+                        </label>
+                      `;
+                    }).join('')}
+                  </div>
+                </div>
+
+                <!-- Panel 2: Floors -->
+                <div style="background: var(--bg-surface); border: 1px solid var(--border-color); border-radius: var(--radius-lg); display: flex; flex-direction: column; overflow: hidden;">
+                  <div style="padding: 10px 14px; background: rgba(2, 132, 199, 0.15); border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center;">
+                    <div style="font-weight: 800; font-size: 12.5px; color: #38bdf8;">
+                      🏢 2. Plant Floors (${availableFloors.length})
+                    </div>
+                    <div style="display: flex; gap: 6px;">
+                      <button type="button" id="btn-scope-all-floors" class="btn btn-ghost btn-xs" style="font-size: 10.5px; padding: 2px 5px; color: #38bdf8;">All</button>
+                      <button type="button" id="btn-scope-clear-floors" class="btn btn-ghost btn-xs" style="font-size: 10.5px; padding: 2px 5px; color: var(--text-muted);">Clear</button>
+                    </div>
+                  </div>
+                  <div style="padding: 10px; overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 6px;">
+                    ${availableFloors.length === 0 ? `
+                      <div style="color: var(--text-muted); font-size: 12px; text-align: center; padding: 20px;">
+                        ${selectedUnitIds.length === 0 ? 'Select a Unit on the left first' : 'No floors found under selected Unit(s)'}
+                      </div>
+                    ` : availableFloors.map(flr => {
+                      const isChecked = selectedFloorIds.includes(flr.id);
+                      const parentUnit = allUnits.find(u => u.id === flr.unitId);
+                      return `
+                        <label style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: #fff; cursor: pointer; padding: 6px 8px; border-radius: var(--radius-sm); background: ${isChecked ? 'rgba(56, 189, 248, 0.12)' : 'transparent'}; border: 1px solid ${isChecked ? 'rgba(56, 189, 248, 0.3)' : 'transparent'};">
+                          <input 
+                            type="checkbox" 
+                            class="chk-scope-floor" 
+                            data-id="${flr.id}" 
+                            data-unit="${flr.unitId}" 
+                            ${isChecked ? 'checked' : ''} 
+                            style="width: 15px; height: 15px; cursor: pointer; accent-color: #0284c7;"
+                          />
+                          <span style="font-weight: 600;">${flr.name}</span>
+                          ${parentUnit ? `<span style="font-size: 10px; color: var(--text-muted); margin-left: auto;">(${parentUnit.name})</span>` : ''}
+                        </label>
+                      `;
+                    }).join('')}
+                  </div>
+                </div>
+
+                <!-- Panel 3: Lines -->
+                <div style="background: var(--bg-surface); border: 1px solid var(--border-color); border-radius: var(--radius-lg); display: flex; flex-direction: column; overflow: hidden;">
+                  <div style="padding: 10px 14px; background: rgba(2, 132, 199, 0.15); border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center;">
+                    <div style="font-weight: 800; font-size: 12.5px; color: #38bdf8;">
+                      🧵 3. Production Lines (${availableLines.length})
+                    </div>
+                    <div style="display: flex; gap: 6px;">
+                      <button type="button" id="btn-scope-all-lines" class="btn btn-ghost btn-xs" style="font-size: 10.5px; padding: 2px 5px; color: #38bdf8;">All</button>
+                      <button type="button" id="btn-scope-clear-lines" class="btn btn-ghost btn-xs" style="font-size: 10.5px; padding: 2px 5px; color: var(--text-muted);">Clear</button>
+                    </div>
+                  </div>
+                  <div style="padding: 10px; overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 6px;">
+                    ${availableLines.length === 0 ? `
+                      <div style="color: var(--text-muted); font-size: 12px; text-align: center; padding: 20px;">
+                        ${selectedFloorIds.length === 0 ? 'Select a Floor to assign specific lines' : 'No lines found under selected Floor(s)'}
+                      </div>
+                    ` : availableLines.map(lin => {
+                      const isChecked = selectedLineIds.includes(lin.id);
+                      const parentFloor = availableFloors.find(f => f.id === lin.floorId);
+                      return `
+                        <label style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: #fff; cursor: pointer; padding: 6px 8px; border-radius: var(--radius-sm); background: ${isChecked ? 'rgba(56, 189, 248, 0.12)' : 'transparent'}; border: 1px solid ${isChecked ? 'rgba(56, 189, 248, 0.3)' : 'transparent'};">
+                          <input 
+                            type="checkbox" 
+                            class="chk-scope-line" 
+                            data-id="${lin.id}" 
+                            data-floor="${lin.floorId}" 
+                            ${isChecked ? 'checked' : ''} 
+                            style="width: 15px; height: 15px; cursor: pointer; accent-color: #0284c7;"
+                          />
+                          <span style="font-weight: 600;">${lin.name}</span>
+                          ${parentFloor ? `<span style="font-size: 10px; color: var(--text-muted); margin-left: auto;">(${parentFloor.name})</span>` : ''}
+                        </label>
+                      `;
+                    }).join('')}
+                  </div>
+                </div>
+
+              </div>
+
+            </div>
+
+            <!-- Footer Actions -->
+            <div style="background: var(--bg-surface); padding: 12px 24px; border-top: 1px solid var(--border-color); display: flex; justify-content: flex-end; gap: 10px; flex-shrink: 0;">
+              <button type="button" id="btn-cancel-modal" class="btn btn-secondary" style="font-weight: 600;">Cancel</button>
+              <button type="button" id="btn-save-user-scope" class="btn btn-primary" style="font-weight: 700; background: linear-gradient(135deg, #0284c7, #0369a1); padding: 8px 24px;">
+                💾 Save Location Scope
+              </button>
+            </div>
+          `}
+
+        </div>
+      </div>
+    `;
+  }
+
+  // 4. RESET PASSWORD MODAL
+  if (activeModalType === 'RESET_PASSWORD' && targetUser) {
+    const isConfigured = emailService.isEmailConfigured();
+
+    return `
+      <div class="modal-overlay" style="display: flex; align-items: center; justify-content: center; background: rgba(8, 13, 26, 0.85); backdrop-filter: blur(8px); z-index: 9999;">
+        <div class="modal-card" style="width: 480px; max-width: 95vw; background: linear-gradient(145deg, #0f172a, #1e293b); border: 1.5px solid rgba(251, 191, 36, 0.4); border-radius: var(--radius-xl); box-shadow: 0 20px 60px rgba(0, 0, 0, 0.7); overflow: hidden;">
+          
+          <div style="background: linear-gradient(135deg, #d97706, #b45309); padding: 18px 24px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(255, 255, 255, 0.15);">
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <span style="font-size: 22px;">🔑</span>
+              <div>
+                <h2 style="font-size: 16px; font-weight: 800; color: #fff; margin: 0;">Reset Password</h2>
+                <div style="font-size: 11.5px; color: #fef3c7;">For account: ${targetUser.name} (${targetUser.email || targetUser.username})</div>
+              </div>
+            </div>
+            <button type="button" id="btn-close-modal" class="btn btn-ghost btn-sm" style="color: #fff; font-size: 18px; padding: 2px 6px;">✕</button>
+          </div>
+
+          <form id="form-reset-password" style="padding: 24px; display: flex; flex-direction: column; gap: 16px;">
+            
+            <div class="form-group">
+              <label class="form-label" style="font-size: 12px; font-weight: 700; color: #fff;">
+                New Password <span class="req">*</span>
+              </label>
+              <div style="position: relative;">
+                <input 
+                  type="password" 
+                  id="reset-new-password" 
+                  class="form-control" 
+                  placeholder="Minimum 4 characters" 
+                  required 
+                  minlength="4"
+                  style="font-size: 13px; padding-right: 36px;"
+                />
+                <span id="btn-toggle-reset-pwd" style="position: absolute; right: 10px; top: 50%; transform: translateY(-50%); cursor: pointer; opacity: 0.7; font-size: 14px;" title="Toggle Visibility">👁️</span>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" style="font-size: 12px; font-weight: 700; color: #fff;">
+                Confirm New Password <span class="req">*</span>
+              </label>
+              <input 
+                type="password" 
+                id="reset-confirm-password" 
+                class="form-control" 
+                placeholder="Re-enter new password" 
+                required 
+                minlength="4"
+                style="font-size: 13px;"
+              />
+            </div>
+
+            <div style="display: flex; align-items: center; gap: 8px; margin-top: 4px;">
+              <input type="checkbox" id="chk-send-reset-email" ${isConfigured ? 'checked' : 'disabled'} style="width: 16px; height: 16px;" />
+              <label for="chk-send-reset-email" style="font-size: 12px; color: ${isConfigured ? '#fff' : 'var(--text-muted)'}; cursor: ${isConfigured ? 'pointer' : 'not-allowed'};">
+                Send password reset confirmation email to ${targetUser.email || 'user'}
+              </label>
+            </div>
+
+            <div style="display: flex; justify-content: flex-end; gap: 10px; padding-top: 14px; border-top: 1px solid var(--border-color);">
+              <button type="button" id="btn-cancel-modal" class="btn btn-secondary btn-sm" style="font-weight: 600;">Cancel</button>
+              <button type="submit" class="btn btn-primary btn-sm" style="font-weight: 700; background: linear-gradient(135deg, #d97706, #b45309); padding: 8px 20px;">
+                🔑 Update Password
+              </button>
+            </div>
+
+          </form>
+
+        </div>
+      </div>
+    `;
+  }
+  // 4. CREATE OR EDIT PRESET MODAL
+  if (activeModalType === 'CREATE_EDIT_PRESET') {
+    const isNew = !targetPreset;
+    const allUsers = authService.getAllUsers();
+    const assignedUsers = targetPreset ? allUsers.filter(u => u.presetId === targetPreset.id || u.presetId === targetPreset.code) : [];
+    const currentPerms = editingPermissions || {};
+    const currentScope = editingScope || { allGroups: true, groupIds: [], unitIds: [], floorIds: [], lineIds: [] };
+
+    // Master data for location scope selection
+    const allUnits = masterDataService.getAllUnits();
+    const selectedUnitIds = currentScope.unitIds || [];
+    
+    const availableFloors = selectedUnitIds.length > 0
+      ? masterDataService.getAllFloors().filter(f => selectedUnitIds.includes(f.unitId))
+      : masterDataService.getAllFloors();
+    const selectedFloorIds = currentScope.floorIds || [];
+
+    const availableLines = selectedFloorIds.length > 0
+      ? masterDataService.getAllLines().filter(l => selectedFloorIds.includes(l.floorId))
+      : (selectedUnitIds.length > 0
+          ? masterDataService.getAllLines().filter(l => availableFloors.some(f => f.id === l.floorId))
+          : masterDataService.getAllLines());
+    const selectedLineIds = currentScope.lineIds || [];
+
+    return `
+      <div class="modal-overlay" style="display: flex; align-items: center; justify-content: center; background: rgba(8, 13, 26, 0.85); backdrop-filter: blur(8px); z-index: 9999;">
+        <div class="modal-card" style="width: 1040px; max-width: 96vw; height: 90vh; max-height: 920px; background: linear-gradient(145deg, #0f172a, #1e293b); border: 1.5px solid rgba(56, 189, 248, 0.4); border-radius: var(--radius-xl); box-shadow: 0 20px 60px rgba(0, 0, 0, 0.8); display: flex; flex-direction: column; min-height: 0; overflow: hidden;">
+          
+          <!-- Modal Header -->
+          <div style="background: linear-gradient(135deg, #0284c7, #0369a1); padding: 12px 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(255, 255, 255, 0.15); flex-shrink: 0;">
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <span style="font-size: 22px;">${targetPreset?.icon || '🛡️'}</span>
+              <div>
+                <h2 style="font-size: 15px; font-weight: 800; color: #fff; margin: 0;">
+                  ${isNew ? 'Create Permission Preset / Access Profile' : `Edit Preset Profile: ${targetPreset.name}`}
+                </h2>
+                <div style="font-size: 11px; color: #e0f2fe; margin-top: 1px;">
+                  ${isNew ? 'Configure standard permissions and factory scope profile' : `Code: [${targetPreset.code || targetPreset.id}] &bull; ${assignedUsers.length} Assigned User(s)`}
+                </div>
+              </div>
+            </div>
+            <button type="button" id="btn-close-modal" class="btn btn-ghost btn-sm" style="color: #fff; font-size: 18px; padding: 2px 6px;">✕</button>
+          </div>
+
+          <!-- Preset Profile Metadata Fields (Compact & Clean) -->
+          <div style="padding: 10px 20px; background: rgba(15, 23, 42, 0.75); border-bottom: 1px solid var(--border-color); display: flex; flex-direction: column; gap: 8px; flex-shrink: 0;">
+            <div style="display: grid; grid-template-columns: 2fr 1.5fr 1fr 1fr; gap: 10px;">
+              <div class="form-group" style="margin: 0;">
+                <label class="form-label" style="font-size: 11px; font-weight: 700; color: #e2e8f0; margin-bottom: 3px;">
+                  Preset Name <span class="req" style="color: #f87171;">*</span>
+                </label>
+                <input 
+                  type="text" 
+                  id="preset-name-input" 
+                  class="form-control" 
+                  value="${targetPreset?.name || ''}" 
+                  placeholder="e.g. Maintenance User, Line Supervisor..." 
+                  required 
+                  style="font-size: 12.5px; height: 34px; padding: 6px 10px;"
+                />
+              </div>
+
+              <div class="form-group" style="margin: 0;">
+                <label class="form-label" style="font-size: 11px; font-weight: 700; color: #e2e8f0; margin-bottom: 3px;">
+                  Access Level Title
+                </label>
+                <input 
+                  type="text" 
+                  id="preset-access-level-input" 
+                  class="form-control" 
+                  value="${targetPreset?.accessLevel || 'Module Access'}" 
+                  placeholder="e.g. Full Access, Read Only..." 
+                  style="font-size: 12.5px; height: 34px; padding: 6px 10px;"
+                />
+              </div>
+
+              <div class="form-group" style="margin: 0;">
+                <label class="form-label" style="font-size: 11px; font-weight: 700; color: #e2e8f0; margin-bottom: 3px;">
+                  Icon
+                </label>
+                <select id="preset-icon-input" class="form-control" style="font-size: 12.5px; height: 34px; padding: 4px 8px;">
+                  <option value="🛡️" ${targetPreset?.icon === '🛡️' ? 'selected' : ''}>🛡️ Shield</option>
+                  <option value="👑" ${targetPreset?.icon === '👑' ? 'selected' : ''}>👑 Crown</option>
+                  <option value="⚙️" ${targetPreset?.icon === '⚙️' ? 'selected' : ''}>⚙️ Gear</option>
+                  <option value="✏️" ${targetPreset?.icon === '✏️' ? 'selected' : ''}>✏️ Pencil</option>
+                  <option value="👁️" ${targetPreset?.icon === '👁️' ? 'selected' : ''}>👁️ Eye</option>
+                  <option value="🔬" ${targetPreset?.icon === '🔬' ? 'selected' : ''}>🔬 Microscope</option>
+                  <option value="🏭" ${targetPreset?.icon === '🏭' ? 'selected' : ''}>🏭 Factory</option>
+                  <option value="💼" ${targetPreset?.icon === '💼' ? 'selected' : ''}>💼 Briefcase</option>
+                </select>
+              </div>
+
+              <div class="form-group" style="margin: 0;">
+                <label class="form-label" style="font-size: 11px; font-weight: 700; color: #e2e8f0; margin-bottom: 3px;">
+                  Color Theme
+                </label>
+                <select id="preset-badge-color-input" class="form-control" style="font-size: 12.5px; height: 34px; padding: 4px 8px;">
+                  <option value="#0ea5e9" ${targetPreset?.badgeColor === '#0ea5e9' ? 'selected' : ''}>🔵 Blue</option>
+                  <option value="#38bdf8" ${targetPreset?.badgeColor === '#38bdf8' ? 'selected' : ''}>🔷 Cyan</option>
+                  <option value="#34d399" ${targetPreset?.badgeColor === '#34d399' ? 'selected' : ''}>🟢 Emerald</option>
+                  <option value="#fbbf24" ${targetPreset?.badgeColor === '#fbbf24' ? 'selected' : ''}>🟡 Amber</option>
+                  <option value="#a78bfa" ${targetPreset?.badgeColor === '#a78bfa' ? 'selected' : ''}>🟣 Purple</option>
+                  <option value="#f87171" ${targetPreset?.badgeColor === '#f87171' ? 'selected' : ''}>🔴 Rose</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="form-group" style="margin: 0;">
+              <input 
+                type="text" 
+                id="preset-description-input" 
+                class="form-control" 
+                value="${targetPreset?.description || ''}" 
+                placeholder="Description / Purpose: brief explanation of what this access profile allows..." 
+                style="font-size: 12px; height: 32px; padding: 4px 10px;"
+              />
+            </div>
+          </div>
+
+          <!-- Tab Navigation Bar -->
+          <div style="display: flex; gap: 8px; background: rgba(15, 23, 42, 0.95); padding: 6px 20px; border-bottom: 1px solid var(--border-color); flex-shrink: 0;">
+            <button 
+              type="button" 
+              id="tab-btn-perms" 
+              class="btn ${activeModalTab === 'PERMISSIONS' ? 'btn-primary' : 'btn-ghost'}" 
+              style="font-weight: 700; font-size: 12px; padding: 6px 16px; border-radius: var(--radius-md); ${activeModalTab === 'PERMISSIONS' ? 'background: linear-gradient(135deg, #0284c7, #0369a1); color: #fff;' : 'color: var(--text-secondary);'}"
+            >
+              🔐 1. Module Permissions Matrix (7 Actions)
+            </button>
+            <button 
+              type="button" 
+              id="tab-btn-scope" 
+              class="btn ${activeModalTab === 'LOCATION_SCOPE' ? 'btn-primary' : 'btn-ghost'}" 
+              style="font-weight: 700; font-size: 12px; padding: 6px 16px; border-radius: var(--radius-md); ${activeModalTab === 'LOCATION_SCOPE' ? 'background: linear-gradient(135deg, #0284c7, #0369a1); color: #fff;' : 'color: var(--text-secondary);'}"
+            >
+              📍 2. Default Factory Location Scope
+            </button>
+          </div>
+
+          ${activeModalTab === 'PERMISSIONS' ? `
+            <!-- TAB 1: 7-ACTION PERMISSION MATRIX -->
+            <div style="background: rgba(15, 23, 42, 0.85); padding: 8px 20px; border-bottom: 1px solid var(--border-color); display: flex; flex-direction: column; gap: 6px; flex-shrink: 0;">
+              
+              <!-- Quick Action Presets -->
+              <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+                <div style="font-size: 11.5px; font-weight: 800; color: #38bdf8; text-transform: uppercase; letter-spacing: 0.5px; display: flex; align-items: center; gap: 6px;">
+                  <span>⚡ Quick Presets:</span>
+                </div>
+                <div style="display: flex; gap: 5px; flex-wrap: wrap;">
+                  <button type="button" id="btn-perm-select-all" class="btn btn-secondary btn-xs" style="font-weight: 700; font-size: 11px; background: rgba(56, 189, 248, 0.15); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.35); padding: 3px 8px;">
+                    🌟 All (✓)
+                  </button>
+                  <button type="button" id="btn-perm-preset-admin" class="btn btn-ghost btn-xs" style="color: #38bdf8; font-weight: 700; font-size: 11px; border: 1px solid rgba(56, 189, 248, 0.3); background: rgba(56, 189, 248, 0.08); padding: 3px 8px;">
+                    👑 Full Master
+                  </button>
+                  <button type="button" id="btn-perm-preset-approver" class="btn btn-ghost btn-xs" style="color: #f472b6; font-weight: 700; font-size: 11px; border: 1px solid rgba(244, 114, 182, 0.3); background: rgba(244, 114, 182, 0.08); padding: 3px 8px;">
+                    🛡️ Approver
+                  </button>
+                  <button type="button" id="btn-perm-preset-operator" class="btn btn-ghost btn-xs" style="color: #a78bfa; font-weight: 700; font-size: 11px; border: 1px solid rgba(167, 139, 250, 0.3); background: rgba(167, 139, 250, 0.08); padding: 3px 8px;">
+                    📝 Add / Edit
+                  </button>
+                  <button type="button" id="btn-perm-preset-viewonly" class="btn btn-ghost btn-xs" style="color: #34d399; font-weight: 700; font-size: 11px; border: 1px solid rgba(52, 211, 153, 0.3); background: rgba(52, 211, 153, 0.08); padding: 3px 8px;">
+                    👁️ View Only
+                  </button>
+                  <button type="button" id="btn-perm-clear-all" class="btn btn-secondary btn-xs" style="font-weight: 700; font-size: 11px; color: #f87171; border: 1px solid rgba(239, 68, 68, 0.3); background: rgba(239, 68, 68, 0.08); padding: 3px 8px;">
+                    ⬜ Clear All
+                  </button>
+                </div>
+              </div>
+
+              <!-- Master 7-Action Global Toggles -->
+              <div style="background: rgba(2, 132, 199, 0.08); border: 1px solid rgba(56, 189, 248, 0.2); border-radius: var(--radius-md); padding: 4px 10px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 6px;">
+                <div style="font-size: 11px; font-weight: 700; color: #7dd3fc; display: flex; align-items: center; gap: 4px;">
+                  <span>🌐 Global Action Toggles:</span>
+                  <span style="font-size: 10px; color: var(--text-muted); font-weight: 400;">(Apply to all modules)</span>
+                </div>
+                <div style="display: flex; gap: 6px; flex-wrap: wrap; align-items: center;">
+                  <label style="cursor: pointer; display: flex; align-items: center; gap: 4px; font-size: 11px; padding: 2px 7px; border-radius: 4px; background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.35); color: #34d399; font-weight: 700;">
+                    <input type="checkbox" id="master-toggle-VIEW" style="cursor: pointer; accent-color: #10b981; width: 14px; height: 14px;" />
+                    <span>Read</span>
+                  </label>
+                  <label style="cursor: pointer; display: flex; align-items: center; gap: 4px; font-size: 11px; padding: 2px 7px; border-radius: 4px; background: rgba(14, 165, 233, 0.15); border: 1px solid rgba(14, 165, 233, 0.35); color: #38bdf8; font-weight: 700;">
+                    <input type="checkbox" id="master-toggle-ADD" style="cursor: pointer; accent-color: #0284c7; width: 14px; height: 14px;" />
+                    <span>Add</span>
+                  </label>
+                  <label style="cursor: pointer; display: flex; align-items: center; gap: 4px; font-size: 11px; padding: 2px 7px; border-radius: 4px; background: rgba(245, 158, 11, 0.15); border: 1px solid rgba(245, 158, 11, 0.35); color: #fbbf24; font-weight: 700;">
+                    <input type="checkbox" id="master-toggle-EDIT" style="cursor: pointer; accent-color: #f59e0b; width: 14px; height: 14px;" />
+                    <span>Edit</span>
+                  </label>
+                  <label style="cursor: pointer; display: flex; align-items: center; gap: 4px; font-size: 11px; padding: 2px 7px; border-radius: 4px; background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.35); color: #f87171; font-weight: 700;">
+                    <input type="checkbox" id="master-toggle-DELETE" style="cursor: pointer; accent-color: #ef4444; width: 14px; height: 14px;" />
+                    <span>Delete</span>
+                  </label>
+                  <label style="cursor: pointer; display: flex; align-items: center; gap: 4px; font-size: 11px; padding: 2px 7px; border-radius: 4px; background: rgba(168, 85, 247, 0.15); border: 1px solid rgba(168, 85, 247, 0.35); color: #c084fc; font-weight: 700;">
+                    <input type="checkbox" id="master-toggle-IMPORT" style="cursor: pointer; accent-color: #a855f7; width: 14px; height: 14px;" />
+                    <span>Import</span>
+                  </label>
+                  <label style="cursor: pointer; display: flex; align-items: center; gap: 4px; font-size: 11px; padding: 2px 7px; border-radius: 4px; background: rgba(99, 102, 241, 0.15); border: 1px solid rgba(99, 102, 241, 0.35); color: #818cf8; font-weight: 700;">
+                    <input type="checkbox" id="master-toggle-EXPORT" style="cursor: pointer; accent-color: #6366f1; width: 14px; height: 14px;" />
+                    <span>Export</span>
+                  </label>
+                  <label style="cursor: pointer; display: flex; align-items: center; gap: 4px; font-size: 11px; padding: 2px 7px; border-radius: 4px; background: rgba(236, 72, 153, 0.15); border: 1px solid rgba(236, 72, 153, 0.35); color: #f472b6; font-weight: 700;">
+                    <input type="checkbox" id="master-toggle-APPROVE" style="cursor: pointer; accent-color: #ec4899; width: 14px; height: 14px;" />
+                    <span>Approve</span>
+                  </label>
+                </div>
+              </div>
+
+            </div>
+
+            <!-- Permission Table Scroll Container (Zero top padding) -->
+            <div class="permissions-matrix-scroll-wrap" style="overflow-y: auto; flex: 1; min-height: 0; padding: 0; background: #0b1329;">
+              <table class="permissions-matrix-table" style="margin: 0; width: 100% !important; border-collapse: separate !important; border-spacing: 0 !important; table-layout: fixed !important;">
+                <thead>
+                  <tr>
+                    <th style="width: 250px; text-align: left; padding-left: 16px;">Module Name</th>
+                    <th style="width: 66px; text-align: center;">
+                      <div style="font-size: 10.5px; margin-bottom: 2px; color: #34d399; font-weight: 800; text-transform: uppercase;">Read</div>
+                      <input type="checkbox" id="col-toggle-VIEW" class="col-header-toggle" title="Toggle Read" style="cursor: pointer; accent-color: #10b981; width: 14px; height: 14px;" />
+                    </th>
+                    <th style="width: 66px; text-align: center;">
+                      <div style="font-size: 10.5px; margin-bottom: 2px; color: #38bdf8; font-weight: 800; text-transform: uppercase;">Add</div>
+                      <input type="checkbox" id="col-toggle-ADD" class="col-header-toggle" title="Toggle Add" style="cursor: pointer; accent-color: #0284c7; width: 14px; height: 14px;" />
+                    </th>
+                    <th style="width: 66px; text-align: center;">
+                      <div style="font-size: 10.5px; margin-bottom: 2px; color: #fbbf24; font-weight: 800; text-transform: uppercase;">Edit</div>
+                      <input type="checkbox" id="col-toggle-EDIT" class="col-header-toggle" title="Toggle Edit" style="cursor: pointer; accent-color: #f59e0b; width: 14px; height: 14px;" />
+                    </th>
+                    <th style="width: 66px; text-align: center;">
+                      <div style="font-size: 10.5px; margin-bottom: 2px; color: #f87171; font-weight: 800; text-transform: uppercase;">Delete</div>
+                      <input type="checkbox" id="col-toggle-DELETE" class="col-header-toggle" title="Toggle Delete" style="cursor: pointer; accent-color: #ef4444; width: 14px; height: 14px;" />
+                    </th>
+                    <th style="width: 66px; text-align: center;">
+                      <div style="font-size: 10.5px; margin-bottom: 2px; color: #c084fc; font-weight: 800; text-transform: uppercase;">Import</div>
+                      <input type="checkbox" id="col-toggle-IMPORT" class="col-header-toggle" title="Toggle Import" style="cursor: pointer; accent-color: #a855f7; width: 14px; height: 14px;" />
+                    </th>
+                    <th style="width: 66px; text-align: center;">
+                      <div style="font-size: 10.5px; margin-bottom: 2px; color: #818cf8; font-weight: 800; text-transform: uppercase;">Export</div>
+                      <input type="checkbox" id="col-toggle-EXPORT" class="col-header-toggle" title="Toggle Export" style="cursor: pointer; accent-color: #6366f1; width: 14px; height: 14px;" />
+                    </th>
+                    <th style="width: 68px; text-align: center;">
+                      <div style="font-size: 10.5px; margin-bottom: 2px; color: #f472b6; font-weight: 800; text-transform: uppercase;">Approve</div>
+                      <input type="checkbox" id="col-toggle-APPROVE" class="col-header-toggle" title="Toggle Approve" style="cursor: pointer; accent-color: #ec4899; width: 14px; height: 14px;" />
+                    </th>
+                    <th style="width: 68px; text-align: center;">Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${PERMISSION_CONFIG_MODULES.map(group => `
+                    <tr class="module-group-header">
+                      <td colspan="9" style="background: #142036 !important; color: #38bdf8 !important; font-weight: 800; font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.6px; padding: 7px 16px !important; border-top: 1px solid rgba(56, 189, 248, 0.25); border-bottom: 1px solid rgba(56, 189, 248, 0.25); border-left: 3px solid #0284c7 !important;">
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                          <span style="font-size: 13px;">📁</span>
+                          <span>${group.group}</span>
+                        </div>
+                      </td>
+                    </tr>
+                    ${group.modules.map(mod => {
+                      const modPerms = currentPerms[mod.id] || [];
+                      const hasRead = modPerms.includes('VIEW') || modPerms.includes('READ');
+                      const hasAdd = modPerms.includes('ADD');
+                      const hasEdit = modPerms.includes('EDIT');
+                      const hasDelete = modPerms.includes('DELETE');
+                      const hasImport = modPerms.includes('IMPORT');
+                      const hasExport = modPerms.includes('EXPORT');
+                      const hasApprove = modPerms.includes('APPROVE');
+
+                      const supportsAdd = mod.actions.includes('ADD');
+                      const supportsEdit = mod.actions.includes('EDIT');
+                      const supportsDelete = mod.actions.includes('DELETE');
+                      const supportsImport = mod.actions.includes('IMPORT');
+                      const supportsExport = mod.actions.includes('EXPORT');
+                      const supportsApprove = mod.actions.includes('APPROVE');
+
+                      return `
+                        <tr class="module-row" style="border-bottom: 1px solid rgba(255, 255, 255, 0.05); background: transparent;">
+                          <td style="font-weight: 600; font-size: 12px; color: #f8fafc; padding: 7px 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${mod.name}">
+                            ${mod.name}
+                          </td>
+                          <td style="text-align: center; padding: 5px 2px;">
+                            <input type="checkbox" class="chk-perm-action" data-module="${mod.id}" data-action="VIEW" ${hasRead ? 'checked' : ''} style="width: 16px; height: 16px; cursor: pointer; accent-color: #10b981;" />
+                          </td>
+                          <td style="text-align: center; padding: 5px 2px;">
+                            ${supportsAdd ? `<input type="checkbox" class="chk-perm-action" data-module="${mod.id}" data-action="ADD" ${hasAdd ? 'checked' : ''} style="width: 16px; height: 16px; cursor: pointer; accent-color: #0284c7;" />` : '<span style="color: var(--text-muted); opacity: 0.25; font-weight: 600;">—</span>'}
+                          </td>
+                          <td style="text-align: center; padding: 5px 2px;">
+                            ${supportsEdit ? `<input type="checkbox" class="chk-perm-action" data-module="${mod.id}" data-action="EDIT" ${hasEdit ? 'checked' : ''} style="width: 16px; height: 16px; cursor: pointer; accent-color: #f59e0b;" />` : '<span style="color: var(--text-muted); opacity: 0.25; font-weight: 600;">—</span>'}
+                          </td>
+                          <td style="text-align: center; padding: 5px 2px;">
+                            ${supportsDelete ? `<input type="checkbox" class="chk-perm-action" data-module="${mod.id}" data-action="DELETE" ${hasDelete ? 'checked' : ''} style="width: 16px; height: 16px; cursor: pointer; accent-color: #ef4444;" />` : '<span style="color: var(--text-muted); opacity: 0.25; font-weight: 600;">—</span>'}
+                          </td>
+                          <td style="text-align: center; padding: 5px 2px;">
+                            ${supportsImport ? `<input type="checkbox" class="chk-perm-action" data-module="${mod.id}" data-action="IMPORT" ${hasImport ? 'checked' : ''} style="width: 16px; height: 16px; cursor: pointer; accent-color: #a855f7;" />` : '<span style="color: var(--text-muted); opacity: 0.25; font-weight: 600;">—</span>'}
+                          </td>
+                          <td style="text-align: center; padding: 5px 2px;">
+                            ${supportsExport ? `<input type="checkbox" class="chk-perm-action" data-module="${mod.id}" data-action="EXPORT" ${hasExport ? 'checked' : ''} style="width: 16px; height: 16px; cursor: pointer; accent-color: #6366f1;" />` : '<span style="color: var(--text-muted); opacity: 0.25; font-weight: 600;">—</span>'}
+                          </td>
+                          <td style="text-align: center; padding: 5px 2px;">
+                            ${supportsApprove ? `<input type="checkbox" class="chk-perm-action" data-module="${mod.id}" data-action="APPROVE" ${hasApprove ? 'checked' : ''} style="width: 16px; height: 16px; cursor: pointer; accent-color: #ec4899;" />` : '<span style="color: var(--text-muted); opacity: 0.25; font-weight: 600;">—</span>'}
+                          </td>
+                          <td style="text-align: center; padding: 5px 4px;">
+                            <button type="button" class="btn btn-ghost btn-xs btn-perm-toggle-row" data-module="${mod.id}" title="Toggle all for ${mod.name}" style="font-size: 10px; padding: 2px 6px; color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.25); border-radius: 4px; background: rgba(56, 189, 248, 0.05);">
+                              Toggle
+                            </button>
+                          </td>
+                        </tr>
+                      `;
+                    }).join('')}
+                  `).join('')}
+                </tbody>
+              </table>
+            </div>
+          ` : `
+            <!-- TAB 2: LOCATION SCOPE -->
+            <div style="padding: 16px 24px; overflow-y: auto; flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 16px;">
+              <div style="background: rgba(15, 23, 42, 0.4); border: 1px solid var(--border-color); border-radius: var(--radius-lg); padding: 14px 18px;">
+                <div style="font-weight: 700; font-size: 13px; color: #fff; margin-bottom: 10px;">
+                  Default Location Scope Policy:
+                </div>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+                  <label style="display: flex; align-items: flex-start; gap: 10px; cursor: pointer; color: #fff; background: ${currentScope.allGroups ? 'rgba(56, 189, 248, 0.15)' : 'rgba(15, 23, 42, 0.4)'}; border: 1.5px solid ${currentScope.allGroups ? '#38bdf8' : 'var(--border-color)'}; padding: 12px 16px; border-radius: var(--radius-md);">
+                    <input type="radio" name="scope-mode" id="scope-mode-all" value="GLOBAL" ${currentScope.allGroups ? 'checked' : ''} style="cursor: pointer; accent-color: #0284c7; margin-top: 3px;" />
+                    <div>
+                      <div style="font-weight: 700; font-size: 13px; color: #38bdf8;">🌐 Unrestricted Global Access</div>
+                      <div style="font-size: 11.5px; color: var(--text-secondary); margin-top: 2px;">Default access across all factory units, floors, and lines.</div>
+                    </div>
+                  </label>
+
+                  <label style="display: flex; align-items: flex-start; gap: 10px; cursor: pointer; color: #fff; background: ${!currentScope.allGroups ? 'rgba(234, 179, 8, 0.15)' : 'rgba(15, 23, 42, 0.4)'}; border: 1.5px solid ${!currentScope.allGroups ? '#facc15' : 'var(--border-color)'}; padding: 12px 16px; border-radius: var(--radius-md);">
+                    <input type="radio" name="scope-mode" id="scope-mode-restricted" value="RESTRICTED" ${!currentScope.allGroups ? 'checked' : ''} style="cursor: pointer; accent-color: #facc15; margin-top: 3px;" />
+                    <div>
+                      <div style="font-weight: 700; font-size: 13px; color: #facc15;">📍 Restricted Factory Scope</div>
+                      <div style="font-size: 11.5px; color: var(--text-secondary); margin-top: 2px;">Restricted strictly to selected Units, Floors, or Lines.</div>
+                    </div>
+                  </label>
+                </div>
+              </div>
+
+              <!-- 3-Panel Granular Selection Area (Visible when restricted) -->
+              <div id="scope-granular-panels" style="display: ${currentScope.allGroups ? 'none' : 'grid'}; grid-template-columns: 1fr 1fr 1fr; gap: 14px; flex: 1; min-height: 280px;">
+                <!-- Panel 1: Units -->
+                <div style="background: var(--bg-surface); border: 1px solid var(--border-color); border-radius: var(--radius-lg); display: flex; flex-direction: column; overflow: hidden;">
+                  <div style="padding: 10px 14px; background: rgba(2, 132, 199, 0.15); border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center;">
+                    <div style="font-weight: 800; font-size: 12.5px; color: #38bdf8;">🏭 Units (${allUnits.length})</div>
+                    <div style="display: flex; gap: 6px;">
+                      <button type="button" id="btn-scope-all-units" class="btn btn-ghost btn-xs" style="font-size: 10.5px; padding: 2px 5px; color: #38bdf8;">All</button>
+                      <button type="button" id="btn-scope-clear-units" class="btn btn-ghost btn-xs" style="font-size: 10.5px; padding: 2px 5px; color: var(--text-muted);">Clear</button>
+                    </div>
+                  </div>
+                  <div style="padding: 10px; overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 6px;">
+                    ${allUnits.map(unt => {
+                      const isChecked = selectedUnitIds.includes(unt.id);
+                      return `
+                        <label style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: #fff; cursor: pointer; padding: 6px 8px; border-radius: var(--radius-sm); background: ${isChecked ? 'rgba(56, 189, 248, 0.12)' : 'transparent'}; border: 1px solid ${isChecked ? 'rgba(56, 189, 248, 0.3)' : 'transparent'};">
+                          <input type="checkbox" class="chk-scope-unit" data-id="${unt.id}" ${isChecked ? 'checked' : ''} style="width: 15px; height: 15px; cursor: pointer; accent-color: #0284c7;" />
+                          <span style="font-weight: 600;">${unt.name}</span>
+                        </label>
+                      `;
+                    }).join('')}
+                  </div>
+                </div>
+
+                <!-- Panel 2: Floors -->
+                <div style="background: var(--bg-surface); border: 1px solid var(--border-color); border-radius: var(--radius-lg); display: flex; flex-direction: column; overflow: hidden;">
+                  <div style="padding: 10px 14px; background: rgba(2, 132, 199, 0.15); border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center;">
+                    <div style="font-weight: 800; font-size: 12.5px; color: #38bdf8;">🏢 Floors (${availableFloors.length})</div>
+                    <div style="display: flex; gap: 6px;">
+                      <button type="button" id="btn-scope-all-floors" class="btn btn-ghost btn-xs" style="font-size: 10.5px; padding: 2px 5px; color: #38bdf8;">All</button>
+                      <button type="button" id="btn-scope-clear-floors" class="btn btn-ghost btn-xs" style="font-size: 10.5px; padding: 2px 5px; color: var(--text-muted);">Clear</button>
+                    </div>
+                  </div>
+                  <div style="padding: 10px; overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 6px;">
+                    ${availableFloors.map(flr => {
+                      const isChecked = selectedFloorIds.includes(flr.id);
+                      return `
+                        <label style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: #fff; cursor: pointer; padding: 6px 8px; border-radius: var(--radius-sm); background: ${isChecked ? 'rgba(56, 189, 248, 0.12)' : 'transparent'}; border: 1px solid ${isChecked ? 'rgba(56, 189, 248, 0.3)' : 'transparent'};">
+                          <input type="checkbox" class="chk-scope-floor" data-id="${flr.id}" ${isChecked ? 'checked' : ''} style="width: 15px; height: 15px; cursor: pointer; accent-color: #0284c7;" />
+                          <span style="font-weight: 600;">${flr.name}</span>
+                        </label>
+                      `;
+                    }).join('')}
+                  </div>
+                </div>
+
+                <!-- Panel 3: Lines -->
+                <div style="background: var(--bg-surface); border: 1px solid var(--border-color); border-radius: var(--radius-lg); display: flex; flex-direction: column; overflow: hidden;">
+                  <div style="padding: 10px 14px; background: rgba(2, 132, 199, 0.15); border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center;">
+                    <div style="font-weight: 800; font-size: 12.5px; color: #38bdf8;">🧵 Lines (${availableLines.length})</div>
+                    <div style="display: flex; gap: 6px;">
+                      <button type="button" id="btn-scope-all-lines" class="btn btn-ghost btn-xs" style="font-size: 10.5px; padding: 2px 5px; color: #38bdf8;">All</button>
+                      <button type="button" id="btn-scope-clear-lines" class="btn btn-ghost btn-xs" style="font-size: 10.5px; padding: 2px 5px; color: var(--text-muted);">Clear</button>
+                    </div>
+                  </div>
+                  <div style="padding: 10px; overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 6px;">
+                    ${availableLines.map(lin => {
+                      const isChecked = selectedLineIds.includes(lin.id);
+                      return `
+                        <label style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: #fff; cursor: pointer; padding: 6px 8px; border-radius: var(--radius-sm); background: ${isChecked ? 'rgba(56, 189, 248, 0.12)' : 'transparent'}; border: 1px solid ${isChecked ? 'rgba(56, 189, 248, 0.3)' : 'transparent'};">
+                          <input type="checkbox" class="chk-scope-line" data-id="${lin.id}" ${isChecked ? 'checked' : ''} style="width: 15px; height: 15px; cursor: pointer; accent-color: #0284c7;" />
+                          <span style="font-weight: 600;">${lin.name}</span>
+                        </label>
+                      `;
+                    }).join('')}
+                  </div>
+                </div>
+              </div>
+
+            </div>
+          `}
+
+          <!-- Batch Update Checkbox (If editing existing preset with users) -->
+          ${targetPreset && assignedUsers.length > 0 ? `
+            <div style="background: rgba(2, 132, 199, 0.12); border-top: 1px solid rgba(56, 189, 248, 0.3); padding: 12px 24px; display: flex; align-items: flex-start; gap: 12px; flex-shrink: 0;">
+              <input type="checkbox" id="preset-apply-to-assigned-users" checked style="width: 18px; height: 18px; accent-color: #0284c7; cursor: pointer; margin-top: 2px;" />
+              <div>
+                <label for="preset-apply-to-assigned-users" style="font-weight: 800; font-size: 12.5px; color: #38bdf8; cursor: pointer;">
+                  Apply Changes to Assigned Users (${assignedUsers.length} user account(s) currently linked)
+                </label>
+                <div style="font-size: 11px; color: #cbd5e1; margin-top: 2px;">
+                  Automatically synchronize and update permissions and location scopes for all user accounts linked to this preset profile.
+                </div>
+              </div>
+            </div>
+          ` : ''}
+
+          <!-- Footer Actions -->
+          <div style="background: var(--bg-surface); padding: 12px 24px; border-top: 1px solid var(--border-color); display: flex; justify-content: flex-end; gap: 10px; flex-shrink: 0;">
+            <button type="button" id="btn-cancel-modal" class="btn btn-secondary" style="font-weight: 600;">Cancel</button>
+            <button type="button" id="btn-save-preset-settings" class="btn btn-primary" style="font-weight: 700; background: linear-gradient(135deg, #0284c7, #0369a1); padding: 8px 24px;">
+              💾 Save Permission Preset
+            </button>
+          </div>
+
+        </div>
+      </div>
+    `;
+  }
+
+  // 5. ASSIGN USERS TO PRESET MODAL
+  if (activeModalType === 'ASSIGN_USERS_TO_PRESET' && targetPreset) {
+    const allUsers = authService.getAllUsers();
+    return `
+      <div class="modal-overlay" style="display: flex; align-items: center; justify-content: center; background: rgba(8, 13, 26, 0.85); backdrop-filter: blur(8px); z-index: 9999;">
+        <div class="modal-card" style="width: 620px; max-width: 95vw; max-height: 88vh; display: flex; flex-direction: column; min-height: 0; background: linear-gradient(145deg, #0f172a, #1e293b); border: 1.5px solid rgba(56, 189, 248, 0.4); border-radius: var(--radius-xl); box-shadow: 0 20px 60px rgba(0, 0, 0, 0.7); overflow: hidden;">
+          
+          <div style="background: linear-gradient(135deg, #0284c7, #0369a1); padding: 16px 22px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(255, 255, 255, 0.15); flex-shrink: 0;">
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <span style="font-size: 22px;">👥</span>
+              <div>
+                <h2 style="font-size: 16px; font-weight: 800; color: #fff; margin: 0;">
+                  Assign Users to Preset: ${targetPreset.name}
+                </h2>
+                <div style="font-size: 11.5px; color: #e0f2fe;">
+                  Select users who should receive this permission profile
+                </div>
+              </div>
+            </div>
+            <button type="button" id="btn-close-modal" class="btn btn-ghost btn-sm" style="color: #fff; font-size: 18px; padding: 2px 6px;">✕</button>
+          </div>
+
+          <!-- Quick Actions & Options -->
+          <div style="padding: 12px 20px; background: rgba(15, 23, 42, 0.7); border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; flex-shrink: 0;">
+            <div style="display: flex; gap: 8px;">
+              <button type="button" id="btn-assign-modal-select-all" class="btn btn-secondary btn-xs" style="font-weight: 700; color: #38bdf8;">Select All</button>
+              <button type="button" id="btn-assign-modal-deselect-all" class="btn btn-secondary btn-xs" style="font-weight: 700; color: var(--text-muted);">Deselect All</button>
+            </div>
+
+            <label style="display: flex; align-items: center; gap: 6px; font-size: 12px; color: #fff; cursor: pointer;">
+              <input type="checkbox" id="chk-sync-scope-to-users" checked style="accent-color: #0284c7; width: 15px; height: 15px;" />
+              <span>Apply default factory location scope</span>
+            </label>
+          </div>
+
+          <!-- User Checkbox List -->
+          <div style="padding: 14px 20px; overflow-y: auto; flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 8px;">
+            ${allUsers.map(u => {
+              const isCurrentlyAssigned = (u.presetId === targetPreset.id || u.presetId === targetPreset.code);
+              const isChecked = selectedUserIdsForPreset.includes(u.id);
+              const isSuper = (u.role || '').toUpperCase() === 'SUPER_ADMIN' || u.username === 'superadmin';
+
+              return `
+                <label style="display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px; background: ${isChecked ? 'rgba(56, 189, 248, 0.1)' : 'rgba(15, 23, 42, 0.4)'}; border: 1px solid ${isChecked ? 'rgba(56, 189, 248, 0.35)' : 'var(--border-color)'}; border-radius: var(--radius-md); cursor: pointer; transition: all 0.15s ease;">
+                  <div style="display: flex; align-items: center; gap: 10px;">
+                    <input 
+                      type="checkbox" 
+                      class="chk-assign-user-item" 
+                      data-id="${u.id}" 
+                      ${isChecked ? 'checked' : ''} 
+                      style="width: 17px; height: 17px; accent-color: #0284c7; cursor: pointer;" 
+                    />
+                    <div class="user-avatar-circle" style="width: 32px; height: 32px; font-size: 12px; font-weight: 800; background: linear-gradient(135deg, #0284c7, #0369a1); color: #fff; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
+                      ${u.name?.charAt(0) || 'U'}
+                    </div>
+                    <div>
+                      <div style="font-weight: 700; color: #fff; font-size: 13px;">${u.name}</div>
+                      <div style="font-size: 11px; color: var(--text-muted); display: flex; gap: 6px;">
+                        <span style="color: #38bdf8;">@${u.username}</span>
+                        <span>&bull;</span>
+                        <span>${u.email}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div style="display: flex; align-items: center; gap: 8px;">
+                    <span class="badge" style="font-size: 10px; padding: 2px 7px; background: rgba(148, 163, 184, 0.15); color: #cbd5e1;">
+                      Current: ${u.presetName || (isSuper ? 'Super Admin' : 'Custom')}
+                    </span>
+                    ${isCurrentlyAssigned ? '<span class="badge" style="background: rgba(16, 185, 129, 0.2); color: #34d399; font-size: 9.5px; font-weight: 700;">ASSIGNED</span>' : ''}
+                  </div>
+                </label>
+              `;
+            }).join('')}
+          </div>
+
+          <!-- Footer -->
+          <div style="background: var(--bg-surface); padding: 12px 22px; border-top: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; flex-shrink: 0;">
+            <div style="font-size: 12px; color: var(--text-secondary);">
+              <strong style="color: #38bdf8;" id="assign-selected-count">${selectedUserIdsForPreset.length}</strong> user(s) selected
+            </div>
+            <div style="display: flex; gap: 10px;">
+              <button type="button" id="btn-cancel-modal" class="btn btn-secondary btn-sm" style="font-weight: 600;">Cancel</button>
+              <button type="button" id="btn-confirm-assign-users" class="btn btn-primary btn-sm" style="font-weight: 700; background: linear-gradient(135deg, #0284c7, #0369a1); padding: 8px 20px;">
+                👥 Apply &amp; Assign Users
+              </button>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    `;
+  }
+
+  // 6. 1-CLICK ASSIGN PRESET TO INDIVIDUAL USER MODAL
+  if (activeModalType === 'USER_QUICK_PRESET' && targetUser) {
+    const allPresets = authService.getAllPresets();
+    const currentPresetId = targetUser.presetId || (
+      ((targetUser.role || '').toUpperCase() === 'SUPER_ADMIN' || targetUser.username === 'superadmin') ? 'preset_super_admin' :
+      ((targetUser.role || '').toUpperCase() === 'ADMIN' ? 'preset_admin' : 'preset_maintenance_user')
+    );
+
+    return `
+      <div class="modal-overlay" style="display: flex; align-items: center; justify-content: center; background: rgba(8, 13, 26, 0.85); backdrop-filter: blur(8px); z-index: 9999;">
+        <div class="modal-card" style="width: 540px; max-width: 95vw; max-height: 90vh; display: flex; flex-direction: column; min-height: 0; background: linear-gradient(145deg, #0f172a, #1e293b); border: 1.5px solid rgba(56, 189, 248, 0.4); border-radius: var(--radius-xl); box-shadow: 0 20px 60px rgba(0, 0, 0, 0.7); overflow: hidden;">
+          
+          <div style="background: linear-gradient(135deg, #0284c7, #0369a1); padding: 16px 22px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(255, 255, 255, 0.15); flex-shrink: 0;">
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <span style="font-size: 22px;">🛡️</span>
+              <div>
+                <h2 style="font-size: 16px; font-weight: 800; color: #fff; margin: 0;">
+                  Assign Preset: ${targetUser.name}
+                </h2>
+                <div style="font-size: 11.5px; color: #e0f2fe;">
+                  @${targetUser.username} &bull; Current Profile: <strong>${targetUser.presetName || 'Custom'}</strong>
+                </div>
+              </div>
+            </div>
+            <button type="button" id="btn-close-modal" class="btn btn-ghost btn-sm" style="color: #fff; font-size: 18px; padding: 2px 6px;">✕</button>
+          </div>
+
+          <div style="padding: 16px 22px; overflow-y: auto; flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 10px;">
+            <div style="font-size: 12px; color: var(--text-secondary); margin-bottom: 2px;">
+              Select a standardized permission preset to immediately apply all permissions and access levels to this account:
+            </div>
+
+            ${allPresets.map(p => {
+              const isSelected = p.id === currentPresetId || p.code === currentPresetId;
+              const isGlobal = !p.scope || p.scope.allGroups;
+
+              return `
+                <label style="display: flex; align-items: flex-start; gap: 12px; padding: 12px 14px; background: ${isSelected ? 'rgba(56, 189, 248, 0.12)' : 'rgba(15, 23, 42, 0.4)'}; border: 1.5px solid ${isSelected ? 'rgba(56, 189, 248, 0.5)' : 'var(--border-color)'}; border-radius: var(--radius-md); cursor: pointer; transition: all 0.15s ease;">
+                  <input 
+                    type="radio" 
+                    name="quick-preset-choice" 
+                    value="${p.id}" 
+                    ${isSelected ? 'checked' : ''} 
+                    style="accent-color: #0284c7; width: 17px; height: 17px; margin-top: 3px; cursor: pointer;" 
+                  />
+                  <div style="flex: 1;">
+                    <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">
+                      <div style="display: flex; align-items: center; gap: 6px; font-weight: 800; color: #fff; font-size: 13.5px;">
+                        <span>${p.icon || '🛡️'}</span>
+                        <span>${p.name}</span>
+                      </div>
+                      <span class="badge" style="font-size: 10px; padding: 2px 7px; background: ${p.badgeColor ? p.badgeColor + '20' : 'rgba(56, 189, 248, 0.15)'}; color: ${p.badgeColor || '#38bdf8'}; border: 1px solid ${p.badgeColor ? p.badgeColor + '40' : 'rgba(56, 189, 248, 0.3)'};">
+                        ${p.accessLevel || 'Access Level'}
+                      </span>
+                    </div>
+                    <div style="font-size: 11.5px; color: var(--text-secondary); margin-top: 3px;">
+                      ${p.description || ''}
+                    </div>
+                    <div style="font-size: 11px; color: #38bdf8; margin-top: 4px; display: flex; align-items: center; gap: 4px;">
+                      <span>Scope:</span>
+                      <span>${isGlobal ? '🌐 All Factory Locations' : '📍 Selected Plant Units / Lines'}</span>
+                    </div>
+                  </div>
+                </label>
+              `;
+            }).join('')}
+
+            <label style="display: flex; align-items: flex-start; gap: 12px; padding: 12px 14px; background: ${targetUser.presetId === 'CUSTOM' ? 'rgba(56, 189, 248, 0.12)' : 'rgba(15, 23, 42, 0.4)'}; border: 1.5px solid ${targetUser.presetId === 'CUSTOM' ? 'rgba(56, 189, 248, 0.5)' : 'var(--border-color)'}; border-radius: var(--radius-md); cursor: pointer;">
+              <input 
+                type="radio" 
+                name="quick-preset-choice" 
+                value="CUSTOM" 
+                ${targetUser.presetId === 'CUSTOM' ? 'checked' : ''} 
+                style="accent-color: #0284c7; width: 17px; height: 17px; margin-top: 3px; cursor: pointer;" 
+              />
+              <div style="flex: 1;">
+                <div style="font-weight: 800; color: #fff; font-size: 13.5px;">👤 Custom User</div>
+                <div style="font-size: 11.5px; color: var(--text-secondary); margin-top: 2px;">
+                  Individual permission matrix without linking to a preset profile.
+                </div>
+              </div>
+            </label>
+
+            <div style="padding-top: 6px;">
+              <label style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: #fff; cursor: pointer;">
+                <input type="checkbox" id="chk-quick-preset-sync-scope" checked style="accent-color: #0284c7; width: 16px; height: 16px;" />
+                <span>Also synchronize and apply preset default factory location scope</span>
+              </label>
+            </div>
+          </div>
+
+          <div style="background: var(--bg-surface); padding: 12px 22px; border-top: 1px solid var(--border-color); display: flex; justify-content: flex-end; gap: 10px; flex-shrink: 0;">
+            <button type="button" id="btn-cancel-modal" class="btn btn-secondary btn-sm" style="font-weight: 600;">Cancel</button>
+            <button type="button" id="btn-confirm-quick-preset" class="btn btn-primary btn-sm" style="font-weight: 700; background: linear-gradient(135deg, #0284c7, #0369a1); padding: 8px 20px;">
+              ⚡ Assign Preset Now
+            </button>
+          </div>
+
+        </div>
+      </div>
+    `;
+  }
+
+  return '';
+}
+
+export function initUserManagementEvents() {
+  const refreshView = () => {
+    const view = document.getElementById('main-view-container');
+    if (view) {
+      view.innerHTML = renderUserManagement();
+      initUserManagementEvents();
+    }
+  };
+
+  const closeModal = () => {
+    activeModalType = null;
+    targetUser = null;
+    targetPreset = null;
+    editingPermissions = {};
+    selectedUserIdsForPreset = [];
+    refreshView();
+  };
+
+  // 1. Search filter
+  const searchInp = document.getElementById('user-search-input');
+  if (searchInp) {
+    searchInp.addEventListener('input', (e) => {
+      searchQuery = e.target.value;
+      refreshView();
+    });
+  }
+
+  // 1b. Preset profile filter
+  const presetSelect = document.getElementById('user-preset-filter');
+  if (presetSelect) {
+    presetSelect.addEventListener('change', (e) => {
+      presetFilter = e.target.value;
+      refreshView();
+    });
+  }
+
+  // 2. Role filter
+  const roleSelect = document.getElementById('user-role-filter');
+  if (roleSelect) {
+    roleSelect.addEventListener('change', (e) => {
+      roleFilter = e.target.value;
+      refreshView();
+    });
+  }
+
+  // 3. Status filter
+  const statusSelect = document.getElementById('user-status-filter');
+  if (statusSelect) {
+    statusSelect.addEventListener('change', (e) => {
+      statusFilter = e.target.value;
+      refreshView();
+    });
+  }
+
+  // 4. Open Add User Modal
+  const btnOpenAdd = document.getElementById('btn-open-add-user-modal');
+  if (btnOpenAdd) {
+    btnOpenAdd.addEventListener('click', (e) => {
+      e.stopPropagation();
+      activeModalType = 'ADD_USER';
+      targetUser = null;
+      refreshView();
+    });
+  }
+
+  // 4b. Open Create Preset Modal
+  const handleOpenCreatePreset = (e) => {
+    e.stopPropagation();
+    activeModalType = 'CREATE_EDIT_PRESET';
+    targetPreset = null;
+    activeModalTab = 'PERMISSIONS';
+    editingPermissions = {};
+    PERMISSION_CONFIG_MODULES.forEach(grp => {
+      grp.modules.forEach(m => {
+        editingPermissions[m.id] = ['VIEW'];
+      });
+    });
+    editingScope = { allGroups: true, groupIds: [], unitIds: [], floorIds: [], lineIds: [] };
+    applyToAssignedUsers = true;
+    refreshView();
+  };
+
+  const btnCreatePreset = document.getElementById('btn-open-create-preset-modal');
+  if (btnCreatePreset) btnCreatePreset.addEventListener('click', handleOpenCreatePreset);
+
+  const btnCreatePresetTop = document.getElementById('btn-open-create-preset-modal-top');
+  if (btnCreatePresetTop) btnCreatePresetTop.addEventListener('click', handleOpenCreatePreset);
+
+  // Navigation Tabs: User Accounts vs Permission Presets & Profiles
+  const tabBtnUsers = document.getElementById('tab-btn-users');
+  if (tabBtnUsers) {
+    tabBtnUsers.addEventListener('click', () => {
+      activeUserSection = 'USERS';
+      if (typeof localStorage !== 'undefined') localStorage.setItem('al_muslim_user_mgmt_section', 'USERS');
+      refreshView();
+    });
+  }
+
+  const tabBtnPresets = document.getElementById('tab-btn-presets');
+  if (tabBtnPresets) {
+    tabBtnPresets.addEventListener('click', () => {
+      activeUserSection = 'PRESETS';
+      if (typeof localStorage !== 'undefined') localStorage.setItem('al_muslim_user_mgmt_section', 'PRESETS');
+      refreshView();
+    });
+  }
+
+  const linkJumpPresets = document.getElementById('link-jump-to-presets');
+  if (linkJumpPresets) {
+    linkJumpPresets.addEventListener('click', () => {
+      activeUserSection = 'PRESETS';
+      if (typeof localStorage !== 'undefined') localStorage.setItem('al_muslim_user_mgmt_section', 'PRESETS');
+      refreshView();
+    });
+  }
+
+  const btnGotoPresets = document.getElementById('btn-goto-presets-mgmt');
+  if (btnGotoPresets) {
+    btnGotoPresets.addEventListener('click', () => {
+      activeUserSection = 'PRESETS';
+      if (typeof localStorage !== 'undefined') localStorage.setItem('al_muslim_user_mgmt_section', 'PRESETS');
+      refreshView();
+    });
+  }
+
+  const linkJumpUsers = document.getElementById('link-jump-to-users');
+  if (linkJumpUsers) {
+    linkJumpUsers.addEventListener('click', () => {
+      activeUserSection = 'USERS';
+      if (typeof localStorage !== 'undefined') localStorage.setItem('al_muslim_user_mgmt_section', 'USERS');
+      refreshView();
+    });
+  }
+
+  // Quick Preset Filter Pills
+  document.querySelectorAll('.btn-pill-filter-preset').forEach(pill => {
+    pill.addEventListener('click', () => {
+      const pid = pill.getAttribute('data-id');
+      if (pid === 'ALL' || presetFilter === pid) {
+        presetFilter = 'ALL';
+      } else {
+        presetFilter = pid;
+      }
+      refreshView();
+    });
+  });
+
+  // Reset Filters Button
+  const btnClearFilters = document.getElementById('btn-clear-user-filters');
+  if (btnClearFilters) {
+    btnClearFilters.addEventListener('click', () => {
+      searchQuery = '';
+      roleFilter = 'ALL';
+      statusFilter = 'ALL';
+      presetFilter = 'ALL';
+      refreshView();
+    });
+  }
+
+  // Preset View Mode Switchers (Cards vs Table)
+  const btnViewCards = document.getElementById('btn-preset-view-cards');
+  if (btnViewCards) {
+    btnViewCards.addEventListener('click', () => {
+      presetViewMode = 'CARDS';
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem('al_muslim_preset_view_mode', 'CARDS');
+      }
+      refreshView();
+    });
+  }
+
+  const btnViewTable = document.getElementById('btn-preset-view-table');
+  if (btnViewTable) {
+    btnViewTable.addEventListener('click', () => {
+      presetViewMode = 'TABLE';
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem('al_muslim_preset_view_mode', 'TABLE');
+      }
+      refreshView();
+    });
+  }
+
+  // Reset to Factory Default Presets Handlers
+  const handleResetDefaultPresets = () => {
+    if (confirm('Are you sure you want to restore factory default permission presets?')) {
+      authService.resetToDefaultPresets();
+      notificationService.success('Factory default permission presets restored successfully!');
+      refreshView();
+    }
+  };
+
+  const btnResetPresets = document.getElementById('btn-reset-default-presets');
+  if (btnResetPresets) btnResetPresets.addEventListener('click', handleResetDefaultPresets);
+
+  const btnResetPresetsTop = document.getElementById('btn-reset-default-presets-top');
+  if (btnResetPresetsTop) btnResetPresetsTop.addEventListener('click', handleResetDefaultPresets);
+
+  // Card filter chip click to filter user table and switch to User Accounts
+  document.querySelectorAll('.btn-card-filter-preset').forEach(chip => {
+    chip.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const id = chip.getAttribute('data-id');
+      presetFilter = id;
+      activeUserSection = 'USERS';
+      if (typeof localStorage !== 'undefined') localStorage.setItem('al_muslim_user_mgmt_section', 'USERS');
+      refreshView();
+    });
+  });
+
+  // 5. Open Edit User Modal
+  document.querySelectorAll('.btn-action-edit-user').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const id = btn.getAttribute('data-id');
+      const user = authService.getUserById(id);
+      if (user) {
+        activeModalType = 'EDIT_USER';
+        targetUser = user;
+        refreshView();
+      }
+    });
+  });
+
+  // 6. Open Individual Permissions Modal
+  document.querySelectorAll('.btn-action-user-perms').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const id = btn.getAttribute('data-id');
+      const user = authService.getUserById(id);
+      if (user) {
+        activeModalType = 'USER_PERMISSIONS';
+        activeModalTab = 'PERMISSIONS';
+        targetUser = user;
+        editingPermissions = JSON.parse(JSON.stringify(user.permissions || {}));
+        editingScope = JSON.parse(JSON.stringify(user.assignedScope || { allGroups: true, groupIds: [], unitIds: [], floorIds: [], lineIds: [] }));
+        refreshView();
+      }
+    });
+  });
+
+  // 6b. Open Location Scope Modal
+  document.querySelectorAll('.btn-action-user-scope').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const id = btn.getAttribute('data-id');
+      const user = authService.getUserById(id);
+      if (user) {
+        activeModalType = 'USER_PERMISSIONS';
+        activeModalTab = 'LOCATION_SCOPE';
+        targetUser = user;
+        editingPermissions = JSON.parse(JSON.stringify(user.permissions || {}));
+        editingScope = JSON.parse(JSON.stringify(user.assignedScope || { allGroups: true, groupIds: [], unitIds: [], floorIds: [], lineIds: [] }));
+        refreshView();
+      }
+    });
+  });
+
+  // 6c. Open 1-Click Quick Preset Assignment Modal for User
+  document.querySelectorAll('.btn-action-user-preset').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const id = btn.getAttribute('data-id');
+      const user = authService.getUserById(id);
+      if (user) {
+        activeModalType = 'USER_QUICK_PRESET';
+        targetUser = user;
+        syncScopeOnPresetAssign = true;
+        refreshView();
+      }
+    });
+  });
+
+  // 6d. Edit Preset Profile
+  document.querySelectorAll('.btn-preset-edit').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const id = btn.getAttribute('data-id');
+      const preset = authService.getPresetById(id);
+      if (preset) {
+        activeModalType = 'CREATE_EDIT_PRESET';
+        targetPreset = preset;
+        activeModalTab = 'PERMISSIONS';
+        editingPermissions = JSON.parse(JSON.stringify(preset.permissions || {}));
+        editingScope = JSON.parse(JSON.stringify(preset.scope || { allGroups: true, groupIds: [], unitIds: [], floorIds: [], lineIds: [] }));
+        applyToAssignedUsers = true;
+        refreshView();
+      }
+    });
+  });
+
+  // 6e. Quick Assign Users to Preset
+  document.querySelectorAll('.btn-preset-quick-assign').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const id = btn.getAttribute('data-id');
+      const preset = authService.getPresetById(id);
+      if (preset) {
+        activeModalType = 'ASSIGN_USERS_TO_PRESET';
+        targetPreset = preset;
+        const allUsers = authService.getAllUsers();
+        selectedUserIdsForPreset = allUsers
+          .filter(u => u.presetId === preset.id || u.presetId === preset.code ||
+            (!u.presetId && preset.code === 'SUPER_ADMIN' && ((u.role || '').toUpperCase() === 'SUPER_ADMIN' || u.username === 'superadmin')) ||
+            (!u.presetId && preset.code === 'ADMIN' && (u.role || '').toUpperCase() === 'ADMIN' && u.username !== 'superadmin') ||
+            (!u.presetId && preset.code === 'MAINTENANCE_USER' && (u.role || '').toUpperCase() === 'USER'))
+          .map(u => u.id);
+        syncScopeOnPresetAssign = true;
+        refreshView();
+      }
+    });
+  });
+
+  // 6f. Duplicate Preset Profile
+  document.querySelectorAll('.btn-preset-duplicate').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const id = btn.getAttribute('data-id');
+      try {
+        const cloned = authService.duplicatePreset(id);
+        notificationService.success(`Created duplicate preset profile "${cloned.name}".`);
+        refreshView();
+      } catch (err) {
+        notificationService.error(err.message);
+      }
+    });
+  });
+
+  // 6g. Delete Custom Preset Profile
+  document.querySelectorAll('.btn-preset-delete').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const id = btn.getAttribute('data-id');
+      const preset = authService.getPresetById(id);
+      if (!preset) return;
+      if (preset.isSystem) {
+        notificationService.warning(`Cannot delete built-in system preset "${preset.name}".`);
+        return;
+      }
+      const confirmed = await notificationService.confirm({
+        title: 'Delete Permission Preset',
+        message: `Permanently delete preset profile <strong>${preset.name}</strong>? Any currently assigned users will be converted to Custom Users.`,
+        icon: '🗑️',
+        confirmText: 'Delete Preset',
+        isDestructive: true
+      });
+      if (confirmed) {
+        try {
+          authService.deletePreset(id);
+          notificationService.success(`Preset "${preset.name}" has been deleted.`);
+          refreshView();
+        } catch (err) {
+          notificationService.error(err.message);
+        }
+      }
+    });
+  });
+
+  // 7. Open Reset Password Modal
+  document.querySelectorAll('.btn-action-reset-pwd').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const id = btn.getAttribute('data-id');
+      const user = authService.getUserById(id);
+      if (user) {
+        activeModalType = 'RESET_PASSWORD';
+        targetUser = user;
+        refreshView();
+      }
+    });
+  });
+
+  // 8. Toggle User Active/Inactive
+  document.querySelectorAll('.btn-action-toggle-status').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const id = btn.getAttribute('data-id');
+      try {
+        const newStatus = authService.toggleUserStatus(id);
+        notificationService.success(`User status changed to ${newStatus}`);
+        refreshView();
+      } catch (err) {
+        notificationService.error('Failed to change status: ' + err.message);
+      }
+    });
+  });
+
+  // 9. Delete User
+  document.querySelectorAll('.btn-action-delete-user').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const id = btn.getAttribute('data-id');
+      const user = authService.getUserById(id);
+      if (!user) return;
+
+      const confirmed = await notificationService.confirm({
+        title: 'Delete User Account',
+        message: `Permanently delete account for <strong>${user.name}</strong> (@${user.username})? This action cannot be undone.`,
+        icon: '🗑️',
+        confirmText: 'Delete User',
+        isDestructive: true
+      });
+
+      if (confirmed) {
+        try {
+          authService.deleteUser(id);
+          notificationService.success(`User '${user.name}' has been deleted.`);
+          refreshView();
+        } catch (err) {
+          notificationService.error(err.message);
+        }
+      }
+    });
+  });
+
+  // 10. Close Modal Buttons
+  const btnClose = document.getElementById('btn-close-modal');
+  const btnCancel = document.getElementById('btn-cancel-modal');
+  if (btnClose) btnClose.addEventListener('click', closeModal);
+  if (btnCancel) btnCancel.addEventListener('click', closeModal);
+
+  // 10b. Modal Tab Switching
+  const tabPerms = document.getElementById('tab-btn-perms');
+  if (tabPerms) {
+    tabPerms.addEventListener('click', () => {
+      activeModalTab = 'PERMISSIONS';
+      refreshView();
+    });
+  }
+
+  const tabScope = document.getElementById('tab-btn-scope');
+  if (tabScope) {
+    tabScope.addEventListener('click', () => {
+      activeModalTab = 'LOCATION_SCOPE';
+      refreshView();
+    });
+  }
+
+  // 11. Toggle Password Visibility
+  const btnToggleAdd = document.getElementById('btn-toggle-add-pwd');
+  if (btnToggleAdd) {
+    btnToggleAdd.addEventListener('click', () => {
+      const inp = document.getElementById('add-user-password');
+      if (inp) {
+        inp.type = inp.type === 'password' ? 'text' : 'password';
+      }
+    });
+  }
+
+  const btnToggleReset = document.getElementById('btn-toggle-reset-pwd');
+  if (btnToggleReset) {
+    btnToggleReset.addEventListener('click', () => {
+      const inp = document.getElementById('reset-new-password');
+      if (inp) {
+        inp.type = inp.type === 'password' ? 'text' : 'password';
+      }
+    });
+  }
+
+  // 12. Submit Add User Form
+  const formAdd = document.getElementById('form-add-new-user');
+  if (formAdd) {
+    formAdd.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const name = document.getElementById('add-user-fullname')?.value?.trim();
+      const email = document.getElementById('add-user-email')?.value?.trim();
+      const username = document.getElementById('add-user-username')?.value?.trim();
+      const password = document.getElementById('add-user-password')?.value;
+      const role = document.getElementById('add-user-role')?.value || 'USER';
+      const status = document.getElementById('add-user-status')?.value || 'ACTIVE';
+      const presetId = document.getElementById('add-user-preset')?.value;
+
+      try {
+        const newUser = authService.createUser({
+          name,
+          email,
+          username,
+          password,
+          role,
+          status,
+          presetId
+        });
+        notificationService.success(`User '${newUser.name}' created successfully with profile [${newUser.presetName}]!`);
+        closeModal();
+      } catch (err) {
+        notificationService.error(err.message);
+      }
+    });
+  }
+
+  // 13. Submit Edit User Form
+  const formEdit = document.getElementById('form-edit-user');
+  if (formEdit && targetUser) {
+    formEdit.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const name = document.getElementById('edit-user-fullname')?.value?.trim();
+      const email = document.getElementById('edit-user-email')?.value?.trim();
+      const username = document.getElementById('edit-user-username')?.value?.trim();
+      const role = document.getElementById('edit-user-role')?.value || targetUser.role;
+      const status = document.getElementById('edit-user-status')?.value || targetUser.status;
+      const presetId = document.getElementById('edit-user-preset')?.value;
+
+      try {
+        authService.updateUser(targetUser.id, {
+          name,
+          email,
+          username,
+          role,
+          status,
+          presetId: presetId || targetUser.presetId
+        });
+        notificationService.success(`Updated profile for '${name}'.`);
+        closeModal();
+      } catch (err) {
+        notificationService.error(err.message);
+      }
+    });
+  }
+
+  // 14. Submit Reset Password Form
+  const formReset = document.getElementById('form-reset-password');
+  if (formReset && targetUser) {
+    formReset.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const newPwd = document.getElementById('reset-new-password')?.value;
+      const confirmPwd = document.getElementById('reset-confirm-password')?.value;
+      const sendEmail = document.getElementById('chk-send-reset-email')?.checked;
+
+      if (newPwd !== confirmPwd) {
+        notificationService.error('Passwords do not match. Please re-enter.');
+        return;
+      }
+
+      try {
+        authService.updateUser(targetUser.id, { password: newPwd });
+
+        if (sendEmail && targetUser.email && emailService.isEmailConfigured()) {
+          try {
+            await emailService.sendMail({
+              to: targetUser.email,
+              subject: 'Al-Muslim ERP: Password Reset Notification',
+              html: `<p>Dear ${targetUser.name},</p><p>Your password for Al-Muslim ERP has been reset by the administrator. You can now log in with your updated credentials.</p>`
+            });
+            notificationService.success('Password reset and confirmation email sent!');
+          } catch (mailErr) {
+            notificationService.warning('Password reset successfully, but email notification could not be delivered: ' + mailErr.message);
+          }
+        } else {
+          notificationService.success(`Password for '${targetUser.name}' updated successfully!`);
+        }
+
+        closeModal();
+      } catch (err) {
+        notificationService.error(err.message);
+      }
+    });
+  }
+
+  // 15. Permission Matrix Checkbox Handlers (7 Actions)
+  document.querySelectorAll('.chk-perm-action').forEach(chk => {
+    chk.addEventListener('change', () => {
+      const mod = chk.getAttribute('data-module');
+      const action = chk.getAttribute('data-action');
+      if (!editingPermissions[mod]) editingPermissions[mod] = [];
+
+      if (chk.checked) {
+        if (!editingPermissions[mod].includes(action)) {
+          editingPermissions[mod].push(action);
+        }
+        // If enabling any action, also ensure VIEW is enabled
+        if (action !== 'VIEW' && !editingPermissions[mod].includes('VIEW')) {
+          editingPermissions[mod].push('VIEW');
+          const viewChk = document.querySelector(`.chk-perm-action[data-module="${mod}"][data-action="VIEW"]`);
+          if (viewChk) viewChk.checked = true;
+        }
+      } else {
+        editingPermissions[mod] = editingPermissions[mod].filter(a => a !== action);
+        // If disabling VIEW, disable all actions for this module
+        if (action === 'VIEW') {
+          editingPermissions[mod] = [];
+          document.querySelectorAll(`.chk-perm-action[data-module="${mod}"]`).forEach(c => { c.checked = false; });
+        }
+      }
+    });
+  });
+
+  // 15b. Column-Header & Master Action Toggle Checkboxes (Toggle an action across all modules)
+  ['VIEW', 'ADD', 'EDIT', 'DELETE', 'IMPORT', 'EXPORT', 'APPROVE'].forEach(act => {
+    const colToggle = document.getElementById(`col-toggle-${act}`);
+    const masterToggle = document.getElementById(`master-toggle-${act}`);
+
+    const handleActionToggle = (isChecked) => {
+      document.querySelectorAll(`.chk-perm-action[data-action="${act}"]`).forEach(c => {
+        c.checked = isChecked;
+        const mod = c.getAttribute('data-module');
+        if (!editingPermissions[mod]) editingPermissions[mod] = [];
+        if (isChecked) {
+          if (!editingPermissions[mod].includes(act)) editingPermissions[mod].push(act);
+          if (act !== 'VIEW' && !editingPermissions[mod].includes('VIEW')) {
+            editingPermissions[mod].push('VIEW');
+            const viewChk = document.querySelector(`.chk-perm-action[data-module="${mod}"][data-action="VIEW"]`);
+            if (viewChk) viewChk.checked = true;
+          }
+        } else {
+          editingPermissions[mod] = editingPermissions[mod].filter(a => a !== act);
+          if (act === 'VIEW') {
+            editingPermissions[mod] = [];
+            document.querySelectorAll(`.chk-perm-action[data-module="${mod}"]`).forEach(sub => { sub.checked = false; });
+          }
+        }
+      });
+      if (colToggle) colToggle.checked = isChecked;
+      if (masterToggle) masterToggle.checked = isChecked;
+    };
+
+    if (colToggle) {
+      colToggle.addEventListener('change', (e) => handleActionToggle(e.target.checked));
+    }
+    if (masterToggle) {
+      masterToggle.addEventListener('change', (e) => handleActionToggle(e.target.checked));
+    }
+  });
+
+  // 16. Row Quick Toggle
+  document.querySelectorAll('.btn-perm-toggle-row').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const mod = btn.getAttribute('data-module');
+      const checkboxes = document.querySelectorAll(`.chk-perm-action[data-module="${mod}"]`);
+      const anyUnchecked = Array.from(checkboxes).some(c => !c.checked);
+
+      checkboxes.forEach(c => {
+        c.checked = anyUnchecked;
+        const act = c.getAttribute('data-action');
+        if (!editingPermissions[mod]) editingPermissions[mod] = [];
+        if (anyUnchecked) {
+          if (!editingPermissions[mod].includes(act)) editingPermissions[mod].push(act);
+        } else {
+          editingPermissions[mod] = editingPermissions[mod].filter(a => a !== act);
+        }
+      });
+    });
+  });
+
+  // 17. Select All Permissions (All 7 Actions)
+  const btnSelectAll = document.getElementById('btn-perm-select-all');
+  if (btnSelectAll) {
+    btnSelectAll.addEventListener('click', () => {
+      document.querySelectorAll('.chk-perm-action').forEach(c => {
+        c.checked = true;
+        const mod = c.getAttribute('data-module');
+        const act = c.getAttribute('data-action');
+        if (!editingPermissions[mod]) editingPermissions[mod] = [];
+        if (!editingPermissions[mod].includes(act)) editingPermissions[mod].push(act);
+      });
+    });
+  }
+
+  // 18. Clear All Permissions
+  const btnClearAll = document.getElementById('btn-perm-clear-all');
+  if (btnClearAll) {
+    btnClearAll.addEventListener('click', () => {
+      document.querySelectorAll('.chk-perm-action').forEach(c => {
+        c.checked = false;
+      });
+      editingPermissions = {};
+    });
+  }
+
+  // 19. Admin Preset Button (Full 7 Actions)
+  const btnAdminPreset = document.getElementById('btn-perm-preset-admin');
+  if (btnAdminPreset) {
+    btnAdminPreset.addEventListener('click', () => {
+      editingPermissions = {};
+      PERMISSION_CONFIG_MODULES.forEach(grp => {
+        grp.modules.forEach(m => {
+          editingPermissions[m.id] = [...m.actions];
+        });
+      });
+      refreshView();
+    });
+  }
+
+  // 19b. Approver Preset Button (Read, Export, Approve)
+  const btnApproverPreset = document.getElementById('btn-perm-preset-approver');
+  if (btnApproverPreset) {
+    btnApproverPreset.addEventListener('click', () => {
+      editingPermissions = {};
+      PERMISSION_CONFIG_MODULES.forEach(grp => {
+        grp.modules.forEach(m => {
+          editingPermissions[m.id] = m.actions.filter(a => ['VIEW', 'READ', 'EXPORT', 'APPROVE'].includes(a));
+        });
+      });
+      refreshView();
+    });
+  }
+
+  // 19c. Data Operator Preset Button (Read, Add, Edit, Import, Export - No Delete or Approve)
+  const btnOperatorPreset = document.getElementById('btn-perm-preset-operator');
+  if (btnOperatorPreset) {
+    btnOperatorPreset.addEventListener('click', () => {
+      editingPermissions = {};
+      PERMISSION_CONFIG_MODULES.forEach(grp => {
+        grp.modules.forEach(m => {
+          editingPermissions[m.id] = m.actions.filter(a => ['VIEW', 'READ', 'ADD', 'EDIT', 'IMPORT', 'EXPORT'].includes(a));
+        });
+      });
+      refreshView();
+    });
+  }
+
+  // 20. View Only Preset Button (Read Only)
+  const btnViewOnlyPreset = document.getElementById('btn-perm-preset-viewonly');
+  if (btnViewOnlyPreset) {
+    btnViewOnlyPreset.addEventListener('click', () => {
+      editingPermissions = {};
+      PERMISSION_CONFIG_MODULES.forEach(grp => {
+        grp.modules.forEach(m => {
+          editingPermissions[m.id] = ['VIEW'];
+        });
+      });
+      refreshView();
+    });
+  }
+
+  // 21. Save Permissions Button
+  const btnSavePerms = document.getElementById('btn-save-user-perms');
+  if (btnSavePerms && targetUser) {
+    btnSavePerms.addEventListener('click', () => {
+      try {
+        const finalPerms = {};
+        document.querySelectorAll('.chk-perm-action').forEach(c => {
+          if (c.checked) {
+            const mod = c.getAttribute('data-module');
+            const act = c.getAttribute('data-action');
+            if (!finalPerms[mod]) finalPerms[mod] = [];
+            if (!finalPerms[mod].includes(act)) finalPerms[mod].push(act);
+          }
+        });
+
+        authService.updateUserPermissions(targetUser.id, finalPerms);
+        notificationService.success(`Action permissions for '${targetUser.name}' saved successfully!`);
+        closeModal();
+      } catch (err) {
+        notificationService.error('Failed to save permissions: ' + err.message);
+      }
+    });
+  }
+
+  // ==========================================
+  // 22. LOCATION DATA ACCESS SCOPING HANDLERS
+  // ==========================================
+
+  // 22a. Scope Mode Switch (All Locations vs Granular)
+  const modeAll = document.getElementById('scope-mode-all');
+  const modeRestricted = document.getElementById('scope-mode-restricted');
+
+  if (modeAll) {
+    modeAll.addEventListener('change', () => {
+      editingScope.allGroups = true;
+      refreshView();
+    });
+  }
+
+  if (modeRestricted) {
+    modeRestricted.addEventListener('change', () => {
+      editingScope.allGroups = false;
+      refreshView();
+    });
+  }
+
+  // 22b. Unit Checkboxes
+  document.querySelectorAll('.chk-scope-unit').forEach(chk => {
+    chk.addEventListener('change', () => {
+      const id = chk.getAttribute('data-id');
+      if (!Array.isArray(editingScope.unitIds)) editingScope.unitIds = [];
+      if (chk.checked) {
+        if (!editingScope.unitIds.includes(id)) editingScope.unitIds.push(id);
+      } else {
+        editingScope.unitIds = editingScope.unitIds.filter(x => x !== id);
+        // Also remove floors/lines belonging to this deselected unit
+        const unitFloors = masterDataService.getAllFloors().filter(f => f.unitId === id).map(f => f.id);
+        if (Array.isArray(editingScope.floorIds)) {
+          editingScope.floorIds = editingScope.floorIds.filter(fId => !unitFloors.includes(fId));
+        }
+        const unitLines = masterDataService.getAllLines().filter(l => unitFloors.includes(l.floorId)).map(l => l.id);
+        if (Array.isArray(editingScope.lineIds)) {
+          editingScope.lineIds = editingScope.lineIds.filter(lId => !unitLines.includes(lId));
+        }
+      }
+      refreshView();
+    });
+  });
+
+  // Unit All / Clear
+  const btnAllUnits = document.getElementById('btn-scope-all-units');
+  if (btnAllUnits) {
+    btnAllUnits.addEventListener('click', () => {
+      editingScope.unitIds = masterDataService.getAllUnits().map(u => u.id);
+      refreshView();
+    });
+  }
+
+  const btnClearUnits = document.getElementById('btn-scope-clear-units');
+  if (btnClearUnits) {
+    btnClearUnits.addEventListener('click', () => {
+      editingScope.unitIds = [];
+      editingScope.floorIds = [];
+      editingScope.lineIds = [];
+      refreshView();
+    });
+  }
+
+  // 22c. Floor Checkboxes
+  document.querySelectorAll('.chk-scope-floor').forEach(chk => {
+    chk.addEventListener('change', () => {
+      const id = chk.getAttribute('data-id');
+      if (!Array.isArray(editingScope.floorIds)) editingScope.floorIds = [];
+      if (chk.checked) {
+        if (!editingScope.floorIds.includes(id)) editingScope.floorIds.push(id);
+      } else {
+        editingScope.floorIds = editingScope.floorIds.filter(x => x !== id);
+        // Also remove lines belonging to this floor
+        const floorLines = masterDataService.getAllLines().filter(l => l.floorId === id).map(l => l.id);
+        if (Array.isArray(editingScope.lineIds)) {
+          editingScope.lineIds = editingScope.lineIds.filter(lId => !floorLines.includes(lId));
+        }
+      }
+      refreshView();
+    });
+  });
+
+  // Floor All / Clear
+  const btnAllFloors = document.getElementById('btn-scope-all-floors');
+  if (btnAllFloors) {
+    btnAllFloors.addEventListener('click', () => {
+      const selectedUnitIds = editingScope.unitIds || [];
+      const floors = selectedUnitIds.length > 0
+        ? masterDataService.getAllFloors().filter(f => selectedUnitIds.includes(f.unitId))
+        : masterDataService.getAllFloors();
+      editingScope.floorIds = floors.map(f => f.id);
+      refreshView();
+    });
+  }
+
+  const btnClearFloors = document.getElementById('btn-scope-clear-floors');
+  if (btnClearFloors) {
+    btnClearFloors.addEventListener('click', () => {
+      editingScope.floorIds = [];
+      editingScope.lineIds = [];
+      refreshView();
+    });
+  }
+
+  // 22d. Line Checkboxes
+  document.querySelectorAll('.chk-scope-line').forEach(chk => {
+    chk.addEventListener('change', () => {
+      const id = chk.getAttribute('data-id');
+      if (!Array.isArray(editingScope.lineIds)) editingScope.lineIds = [];
+      if (chk.checked) {
+        if (!editingScope.lineIds.includes(id)) editingScope.lineIds.push(id);
+      } else {
+        editingScope.lineIds = editingScope.lineIds.filter(x => x !== id);
+      }
+      refreshView();
+    });
+  });
+
+  // Line All / Clear
+  const btnAllLines = document.getElementById('btn-scope-all-lines');
+  if (btnAllLines) {
+    btnAllLines.addEventListener('click', () => {
+      const selectedFloorIds = editingScope.floorIds || [];
+      const lines = selectedFloorIds.length > 0
+        ? masterDataService.getAllLines().filter(l => selectedFloorIds.includes(l.floorId))
+        : masterDataService.getAllLines();
+      editingScope.lineIds = lines.map(l => l.id);
+      refreshView();
+    });
+  }
+
+  const btnClearLines = document.getElementById('btn-scope-clear-lines');
+  if (btnClearLines) {
+    btnClearLines.addEventListener('click', () => {
+      editingScope.lineIds = [];
+      refreshView();
+    });
+  }
+
+  // 22e. Save Location Scope Button
+  const btnSaveScope = document.getElementById('btn-save-user-scope');
+  if (btnSaveScope && targetUser) {
+    btnSaveScope.addEventListener('click', () => {
+      try {
+        authService.updateUserScope(targetUser.id, editingScope);
+        notificationService.success(`Location access scope for '${targetUser.name}' saved successfully!`);
+        closeModal();
+      } catch (err) {
+        notificationService.error('Failed to save location scope: ' + err.message);
+      }
+    });
+  }
+
+  // ==========================================
+  // 23. PRESET MODAL ACTION HANDLERS
+  // ==========================================
+
+  // 23a. Save Preset Settings (Create or Update)
+  const btnSavePreset = document.getElementById('btn-save-preset-settings');
+  if (btnSavePreset) {
+    btnSavePreset.addEventListener('click', () => {
+      const name = document.getElementById('preset-name-input')?.value?.trim();
+      const accessLevel = document.getElementById('preset-access-level-input')?.value?.trim() || 'Module Access';
+      const description = document.getElementById('preset-description-input')?.value?.trim() || '';
+      const icon = document.getElementById('preset-icon-input')?.value || '🛡️';
+      const badgeColor = document.getElementById('preset-badge-color-input')?.value || '#0ea5e9';
+      const applyToAssigned = document.getElementById('preset-apply-to-assigned-users')?.checked ?? false;
+
+      if (!name) {
+        notificationService.error('Preset Name is required.');
+        return;
+      }
+
+      // Collect active permissions from checkboxes
+      const finalPerms = {};
+      document.querySelectorAll('.chk-perm-action').forEach(c => {
+        if (c.checked) {
+          const mod = c.getAttribute('data-module');
+          const act = c.getAttribute('data-action');
+          if (!finalPerms[mod]) finalPerms[mod] = [];
+          if (!finalPerms[mod].includes(act)) finalPerms[mod].push(act);
+        }
+      });
+
+      try {
+        if (targetPreset) {
+          const result = authService.updatePreset(targetPreset.id, {
+            name,
+            accessLevel,
+            description,
+            icon,
+            badgeColor,
+            permissions: finalPerms,
+            scope: editingScope,
+            syncScopeWithUsers: applyToAssigned
+          }, applyToAssigned);
+
+          let msg = `Preset "${name}" updated successfully!`;
+          if (applyToAssigned && result.affectedUsersCount > 0) {
+            msg += ` Applied to ${result.affectedUsersCount} assigned user(s).`;
+          }
+          notificationService.success(msg);
+        } else {
+          authService.createPreset({
+            name,
+            accessLevel,
+            description,
+            icon,
+            badgeColor,
+            permissions: finalPerms,
+            scope: editingScope
+          });
+          notificationService.success(`New Preset Profile "${name}" created successfully!`);
+        }
+        closeModal();
+      } catch (err) {
+        notificationService.error(err.message);
+      }
+    });
+  }
+
+  // 23b. Assign Users Modal Checkbox Handlers
+  const btnSelectAllAssign = document.getElementById('btn-assign-modal-select-all');
+  if (btnSelectAllAssign) {
+    btnSelectAllAssign.addEventListener('click', () => {
+      document.querySelectorAll('.chk-assign-user-item').forEach(c => {
+        c.checked = true;
+        const uid = c.getAttribute('data-id');
+        if (!selectedUserIdsForPreset.includes(uid)) selectedUserIdsForPreset.push(uid);
+      });
+      const countEl = document.getElementById('assign-selected-count');
+      if (countEl) countEl.innerText = selectedUserIdsForPreset.length;
+    });
+  }
+
+  const btnDeselectAllAssign = document.getElementById('btn-assign-modal-deselect-all');
+  if (btnDeselectAllAssign) {
+    btnDeselectAllAssign.addEventListener('click', () => {
+      document.querySelectorAll('.chk-assign-user-item').forEach(c => {
+        c.checked = false;
+      });
+      selectedUserIdsForPreset = [];
+      const countEl = document.getElementById('assign-selected-count');
+      if (countEl) countEl.innerText = '0';
+    });
+  }
+
+  document.querySelectorAll('.chk-assign-user-item').forEach(c => {
+    c.addEventListener('change', () => {
+      const uid = c.getAttribute('data-id');
+      if (c.checked) {
+        if (!selectedUserIdsForPreset.includes(uid)) selectedUserIdsForPreset.push(uid);
+      } else {
+        selectedUserIdsForPreset = selectedUserIdsForPreset.filter(x => x !== uid);
+      }
+      const countEl = document.getElementById('assign-selected-count');
+      if (countEl) countEl.innerText = selectedUserIdsForPreset.length;
+    });
+  });
+
+  // 23c. Confirm Batch Assign Users to Preset
+  const btnConfirmAssign = document.getElementById('btn-confirm-assign-users');
+  if (btnConfirmAssign && targetPreset) {
+    btnConfirmAssign.addEventListener('click', () => {
+      const syncScope = document.getElementById('chk-sync-scope-to-users')?.checked ?? true;
+      try {
+        const count = authService.assignPresetToUsers(selectedUserIdsForPreset, targetPreset.id, syncScope);
+        notificationService.success(`Assigned profile "${targetPreset.name}" to ${count} user account(s).`);
+        closeModal();
+      } catch (err) {
+        notificationService.error(err.message);
+      }
+    });
+  }
+
+  // 23d. Confirm 1-Click Quick Preset Assignment to User
+  const btnConfirmQuickPreset = document.getElementById('btn-confirm-quick-preset');
+  if (btnConfirmQuickPreset && targetUser) {
+    btnConfirmQuickPreset.addEventListener('click', () => {
+      const choice = document.querySelector('input[name="quick-preset-choice"]:checked')?.value;
+      const syncScope = document.getElementById('chk-quick-preset-sync-scope')?.checked ?? true;
+      if (!choice) {
+        notificationService.error('Please select a permission preset profile.');
+        return;
+      }
+      try {
+        authService.assignPresetToUser(targetUser.id, choice, syncScope);
+        const p = authService.getPresetById(choice);
+        notificationService.success(`Assigned profile "${p ? p.name : 'Custom User'}" to ${targetUser.name}!`);
+        closeModal();
+      } catch (err) {
+        notificationService.error(err.message);
+      }
+    });
+  }
+}

@@ -1,0 +1,181 @@
+/**
+ * Al-Muslim Group Garments Factory Maintenance Machine ERP
+ * Print & Report Generation Stylesheet
+ */
+
+@media print {
+  @page {
+    margin: 8mm 6mm 8mm 6mm;
+    size: auto;
+  }
+
+  body, html {
+    background: #ffffff !important;
+    color: #000000 !important;
+    height: auto !important;
+    min-height: 100% !important;
+    overflow: visible !important;
+  }
+
+  body * {
+    visibility: visible !important;
+  }
+
+  .app-sidebar,
+  .app-header,
+  .filter-toolbar-card,
+  .grid-actions-bar,
+  .pagination-bar,
+  .bulk-toolbar,
+  .no-print,
+  .toast-container,
+  .modal-overlay,
+  .drawer-panel,
+  .drawer-backdrop,
+  .tools-tab-navbar,
+  #tools-tab-navbar-container,
+  .screen-print-page > div:not(#printable-sheet-wrapper) {
+    display: none !important;
+    visibility: hidden !important;
+  }
+
+  .app-layout,
+  .app-content,
+  .app-main,
+  .page-view,
+  .tools-management-view,
+  .screen-print-page,
+  .excel-table-container {
+    display: block !important;
+    position: static !important;
+    overflow: visible !important;
+    max-height: none !important;
+    height: auto !important;
+    width: 100% !important;
+    border: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    background: #ffffff !important;
+  }
+
+  #printable-sheet-wrapper {
+    background: #ffffff !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    display: block !important;
+    box-shadow: none !important;
+    overflow: visible !important;
+    visibility: visible !important;
+  }
+
+  .printable-doc,
+  #printable-a4-document {
+    box-shadow: none !important;
+    border-radius: 0 !important;
+    margin: 0 auto !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    display: block !important;
+    visibility: visible !important;
+  }
+
+  #printable-a4-document {
+    width: 100% !important;
+    max-width: 210mm !important;
+    min-height: auto !important;
+    padding: 2mm 0 !important;
+  }
+
+  #printable-pocket-document {
+    box-shadow: none !important;
+    margin: 0 auto !important;
+    padding: 0 !important;
+    border: none !important;
+    background: transparent !important;
+    display: flex !important;
+    flex-direction: row !important;
+    justify-content: center !important;
+    align-items: stretch !important;
+    gap: 14px !important;
+    visibility: visible !important;
+    page-break-inside: avoid !important;
+  }
+
+  .pocket-card {
+    page-break-inside: avoid !important;
+  }
+
+  .pocket-card-divider {
+    display: flex !important;
+    visibility: visible !important;
+  }
+
+  .excel-grid-table {
+    border-collapse: collapse !important;
+  }
+
+  .excel-grid-table th,
+  .excel-grid-table td {
+    border: 1px solid #94a3b8 !important;
+    color: #000000 !important;
+    background: #ffffff !important;
+    position: static !important;
+  }
+
+  .excel-grid-table thead th {
+    background-color: #f1f5f9 !important;
+    color: #0f172a !important;
+  }
+
+  .serial-number-badge {
+    color: #000000 !important;
+    font-weight: bold !important;
+  }
+
+  .mach-summary-table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+    table-layout: fixed !important;
+  }
+
+  .mach-summary-table th,
+  .mach-summary-table td {
+    border: 1px solid #94a3b8 !important;
+    color: #000000 !important;
+  }
+
+  .mach-summary-table thead th {
+    background-color: #0f172a !important;
+    color: #ffffff !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* Enterprise QR Sticker & Placard Sheet Print Styles */
+  .qr-sticker-sheet-print {
+    display: grid !important;
+    grid-template-columns: repeat(var(--qr-cols, 3), 1fr) !important;
+    gap: 5mm !important;
+    width: 100% !important;
+    page-break-inside: auto !important;
+  }
+
+  .qr-sticker-sheet-print .qr-sticker-card {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+    border: 1px dashed #64748b !important;
+    box-shadow: none !important;
+    transform: none !important;
+    color: #000000 !important;
+    background: #ffffff !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  .qr-sticker-sheet-print .qr-sticker-card .qr-sticker-footer-actions,
+  .qr-sticker-sheet-print .qr-sticker-card input[type="checkbox"] {
+    display: none !important;
+  }
+}
+
+
