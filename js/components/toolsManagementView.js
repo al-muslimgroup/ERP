@@ -6835,7 +6835,7 @@ function matchItemToCatalog(rawName, catalogList) {
  */
 export function cleanAndValidateReqNo(val) {
   if (!val || typeof val !== 'string') return '';
-  let clean = val.replace(/[\*\s\-_]/g, '').toUpperCase();
+  let clean = val.replace(/[\*\s\-_"']/g, '').toUpperCase();
   if (/^[1|l]R/i.test(clean)) clean = 'IR' + clean.slice(2);
 
   // Length sanity check
@@ -6888,8 +6888,8 @@ export function parseRealErpPdfData(rawInput) {
   text = text.replace(/\bNa1mul\b/gi, 'Najmul');
 
   // 2. Auto-Detect ERP Internal Requisition Number (e.g. "Requisition No : IR2512385720" or "Req No : * I R2512385720 *")
-  // Priority 1: Barcode star/tilde pattern e.g. "*IR2512385720*" or "* IR2512385720 *" or "~IR2512385720~"
-  const starMatches = text.matchAll(/[\*~`]\s*([A-Za-z0-9\s\-]{5,25})\s*[\*~`]/g);
+  // Priority 1: Barcode star/quote/tilde pattern e.g. "*IR2512385720*" or "* IR2512385720 *" or "*IR25 12385720\""
+  const starMatches = text.matchAll(/[\*~`"']\s*([A-Za-z0-9\s\-]{5,25})\s*[\*~`"']/g);
   for (const sm of starMatches) {
     const candidate = cleanAndValidateReqNo(sm[1]);
     if (candidate) {
@@ -7131,8 +7131,8 @@ async function runOcrOnImage(imageSource, onProgress) {
   // Scale with high-quality bicubic smoothing and generous clean white margins (padding)
   // Tesseract LSTM requires white space around text boundaries to properly detect
   // top/bottom text baselines and avoid dropping header lines touching image edges.
-  const scale = Math.max(2.5, 1800 / Math.max(img.naturalWidth, 1));
-  const pad = 60;
+  const scale = 3.0;
+  const pad = 80;
   const scaledW = Math.round(img.naturalWidth * scale);
   const scaledH = Math.round(img.naturalHeight * scale);
 
@@ -7155,14 +7155,14 @@ async function runOcrOnImage(imageSource, onProgress) {
   const w = canvas.width;
   const h = canvas.height;
 
-  // Erase any solid border line in top 1-10 pixels of original image
-  for (let y = pad; y < pad + Math.round(10 * scale); y++) {
+  // Erase any solid horizontal line in top 15 pixels of original image (e.g. cut boundary line above requisition line)
+  for (let y = pad; y < pad + Math.round(15 * scale); y++) {
     let darkCount = 0;
     for (let x = pad; x < pad + scaledW; x++) {
       const idx = (y * w + x) * 4;
-      if (d[idx] < 100 && d[idx + 1] < 100 && d[idx + 2] < 100) darkCount++;
+      if (d[idx] < 120 && d[idx + 1] < 120 && d[idx + 2] < 120) darkCount++;
     }
-    if (darkCount > scaledW * 0.60) {
+    if (darkCount > scaledW * 0.30) {
       for (let x = pad; x < pad + scaledW; x++) {
         const idx = (y * w + x) * 4;
         d[idx] = 255; d[idx + 1] = 255; d[idx + 2] = 255;
@@ -7175,9 +7175,9 @@ async function runOcrOnImage(imageSource, onProgress) {
     let darkCount = 0;
     for (let y = pad; y < pad + scaledH; y++) {
       const idx = (y * w + x) * 4;
-      if (d[idx] < 100 && d[idx + 1] < 100 && d[idx + 2] < 100) darkCount++;
+      if (d[idx] < 120 && d[idx + 1] < 120 && d[idx + 2] < 120) darkCount++;
     }
-    if (darkCount > scaledH * 0.60) {
+    if (darkCount > scaledH * 0.50) {
       for (let y = pad; y < pad + scaledH; y++) {
         const idx = (y * w + x) * 4;
         d[idx] = 255; d[idx + 1] = 255; d[idx + 2] = 255;
@@ -7188,37 +7188,16 @@ async function runOcrOnImage(imageSource, onProgress) {
   // Crisp text contrast
   for (let i = 0; i < d.length; i += 4) {
     const lum = d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114;
-    if (lum > 215) {
+    if (lum > 200) {
       d[i] = 255; d[i + 1] = 255; d[i + 2] = 255;
-    } else if (lum < 85) {
+    } else if (lum < 90) {
       d[i] = 0; d[i + 1] = 0; d[i + 2] = 0;
     } else {
-      const adjusted = Math.min(255, Math.max(0, (lum - 128) * 1.5 + 128));
+      const adjusted = Math.min(255, Math.max(0, (lum - 128) * 1.6 + 128));
       d[i] = adjusted; d[i + 1] = adjusted; d[i + 2] = adjusted;
     }
   }
   ctx.putImageData(imgData, 0, 0);
-
-  // Dedicated Header slice recognition to guarantee 100% Requisition No extraction
-  let headerText = '';
-  try {
-    const headerH = Math.round(canvas.height * 0.35);
-    const headerCanvas = document.createElement('canvas');
-    headerCanvas.width = canvas.width;
-    headerCanvas.height = headerH + 60;
-    const hCtx = headerCanvas.getContext('2d');
-    hCtx.fillStyle = '#FFFFFF';
-    hCtx.fillRect(0, 0, headerCanvas.width, headerCanvas.height);
-    hCtx.drawImage(canvas, 0, 0, canvas.width, headerH, 0, 30, canvas.width, headerH);
-
-    const hRes = await Tesseract.recognize(headerCanvas, 'eng', {
-      workerPath: 'lib/tesseract-worker.min.js',
-      corePath: 'lib/tesseract-core-simd-lstm.wasm.js',
-      langPath: 'lib',
-      gzip: true
-    });
-    headerText = hRes.data.text || '';
-  } catch (_) {}
 
   const res = await Tesseract.recognize(canvas, 'eng', {
     workerPath: 'lib/tesseract-worker.min.js',
@@ -7230,8 +7209,7 @@ async function runOcrOnImage(imageSource, onProgress) {
     }
   });
 
-  const fullText = res.data.text || '';
-  return (headerText ? (headerText + '\n\n') : '') + fullText;
+  return res.data.text || '';
 }
 
 /**

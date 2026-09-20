@@ -34,7 +34,7 @@ import { renderResourceLibraryView, initResourceLibraryEvents } from './componen
 import { renderColumnVisibilityModal, initColumnVisibilityEvents } from './components/columnVisibilityModal.js';
 import { renderMachineHistoryView, initMachineHistoryEvents } from './components/machineHistoryView.js';
 import { renderSparePartsManagementView, initSparePartsManagementEvents } from './components/sparePartsManagementView.js';
-import { renderToolsManagementView, initToolsManagementEvents } from './components/toolsManagementView.js?v=3.2.0';
+import { renderToolsManagementView, initToolsManagementEvents } from './components/toolsManagementView.js?v=4.4.5';
 import { renderManpowerView, initManpowerEvents } from './components/manpowerView.js';
 import { renderEtLabManagementView, initEtLabEvents, setEntActiveTab } from './components/etLabManagementView.js';
 import { renderChangePasswordModal, initChangePasswordModalEvents } from './components/changePasswordModal.js?v=3.8.0';
