@@ -728,6 +728,16 @@ class StorageEngine {
         }
       }
     } catch (e) {
+      // 3. Static database fallback for GitHub Pages & static web hosts
+      try {
+        const staticRes = await fetch('data/erp_database.json?v=' + Date.now(), { cache: 'no-store' });
+        if (staticRes.ok) {
+          const staticData = await staticRes.json();
+          if (staticData && Array.isArray(staticData.machines) && staticData.machines.length > 0) {
+            this.applyIncomingDatabaseRecords(staticData, 'Static Factory Database (data/erp_database.json)');
+          }
+        }
+      } catch (_) {}
       console.info('[Database Store] Local node server offline or on static host.');
     }
   }
