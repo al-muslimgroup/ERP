@@ -6887,9 +6887,9 @@ export function parseRealErpPdfData(rawInput) {
   text = text.replace(/\bPog\b/gi, 'Madhob');
   text = text.replace(/\bNa1mul\b/gi, 'Najmul');
 
-  // 2. Auto-Detect ERP Internal Requisition Number (e.g. "Requisition No : IR260227649" or "Req No : * I R260227649 *")
-  // Priority 1: Barcode star pattern e.g. "* I R260227649*" or "*IR2507318801*" or "*142472*"
-  const starMatches = text.matchAll(/\*\s*([A-Za-z0-9\s\-]{5,25})\s*\*/g);
+  // 2. Auto-Detect ERP Internal Requisition Number (e.g. "Requisition No : IR2512385720" or "Req No : * I R2512385720 *")
+  // Priority 1: Barcode star/tilde pattern e.g. "*IR2512385720*" or "* IR2512385720 *" or "~IR2512385720~"
+  const starMatches = text.matchAll(/[\*~`]\s*([A-Za-z0-9\s\-]{5,25})\s*[\*~`]/g);
   for (const sm of starMatches) {
     const candidate = cleanAndValidateReqNo(sm[1]);
     if (candidate) {
@@ -6898,9 +6898,9 @@ export function parseRealErpPdfData(rawInput) {
     }
   }
 
-  // Priority 2: Direct Requisition No label on SAME LINE (strict horizontal spacing, prevents crossing newlines)
+  // Priority 2: Direct Requisition No label on SAME LINE (flexible punctuation : . = ; - or whitespace)
   if (!detectedRequisitionNo) {
-    const sameLineMatch = text.match(/(?:requisition\s*(?:no\.?|num(?:ber)?|#)|req\.?\s*(?:no\.?|#))[^\S\r\n]*[:\-–—=\t ]+[^\S\r\n]*\*?\s*([A-Za-z0-9\-_]{4,25})/i);
+    const sameLineMatch = text.match(/(?:requisition\s*(?:no\.?|num(?:ber)?|#)|req\.?\s*(?:no\.?|#))[^\S\r\n]*[:\-–—=\.\t ;]*[^\S\r\n]*\*?\s*([A-Za-z0-9\-_]{4,25})/i);
     if (sameLineMatch) {
       const candidate = cleanAndValidateReqNo(sameLineMatch[1]);
       if (candidate) {
@@ -6909,9 +6909,9 @@ export function parseRealErpPdfData(rawInput) {
     }
   }
 
-  // Priority 3: Direct Requisition No label followed by newline and number on next line (must satisfy validation)
+  // Priority 3: Direct Requisition No label followed by newline and number on next line
   if (!detectedRequisitionNo) {
-    const nextLineMatch = text.match(/(?:requisition\s*(?:no\.?|num(?:ber)?|#)|req\.?\s*(?:no\.?|#))[^\S\r\n]*[:\-–—=\t ]*\r?\n\s*\*?\s*([A-Za-z0-9\-_]{4,25})/i);
+    const nextLineMatch = text.match(/(?:requisition\s*(?:no\.?|num(?:ber)?|#)|req\.?\s*(?:no\.?|#))[^\S\r\n]*[:\-–—=\.\t ;]*\r?\n\s*\*?\s*([A-Za-z0-9\-_]{4,25})/i);
     if (nextLineMatch) {
       const candidate = cleanAndValidateReqNo(nextLineMatch[1]);
       if (candidate) {
@@ -6920,9 +6920,9 @@ export function parseRealErpPdfData(rawInput) {
     }
   }
 
-  // Priority 4: Standalone IR / PR / MR / REQ code anywhere in document e.g. IR260227649 or IR2507318801
+  // Priority 4: Standalone IR / PR / MR / REQ code anywhere in document e.g. IR2512385720 or IR260227649
   if (!detectedRequisitionNo) {
-    const standaloneMatch = text.match(/\b([1I|l]R[\-\s]?[0-9]{6,14}|(?:PR|MR|SR|REQ)[\-\s]?[0-9]{4,14})\b/i);
+    const standaloneMatch = text.match(/\b([1I|l]R[\-\s]?[0-9]{6,14}|(?:PR|MR|SR|REQ|TR|WO)[\-\s]?[0-9]{4,14})\b/i);
     if (standaloneMatch) {
       const candidate = cleanAndValidateReqNo(standaloneMatch[1]);
       if (candidate) {
@@ -7128,27 +7128,97 @@ async function runOcrOnImage(imageSource, onProgress) {
     }
   });
 
-  // Scale with high-quality bicubic smoothing
+  // Scale with high-quality bicubic smoothing and generous clean white margins (padding)
+  // Tesseract LSTM requires white space around text boundaries to properly detect
+  // top/bottom text baselines and avoid dropping header lines touching image edges.
   const scale = Math.max(2.5, 1800 / Math.max(img.naturalWidth, 1));
+  const pad = 60;
+  const scaledW = Math.round(img.naturalWidth * scale);
+  const scaledH = Math.round(img.naturalHeight * scale);
+
   const canvas = document.createElement('canvas');
-  canvas.width = Math.round(img.naturalWidth * scale);
-  canvas.height = Math.round(img.naturalHeight * scale);
+  canvas.width = scaledW + pad * 2;
+  canvas.height = scaledH + pad * 2;
   const ctx = canvas.getContext('2d');
+
+  // Fill entire canvas with pure white background
+  ctx.fillStyle = '#FFFFFF';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
-  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  ctx.drawImage(img, pad, pad, scaledW, scaledH);
 
-  // Gentle contrast stretch (keeps smooth anti-aliased font edges without destructive binary cutout)
+  // Gentle contrast stretch & border neutralization
   const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
   const d = imgData.data;
+  const w = canvas.width;
+  const h = canvas.height;
+
+  // Erase any solid border line in top 1-10 pixels of original image
+  for (let y = pad; y < pad + Math.round(10 * scale); y++) {
+    let darkCount = 0;
+    for (let x = pad; x < pad + scaledW; x++) {
+      const idx = (y * w + x) * 4;
+      if (d[idx] < 100 && d[idx + 1] < 100 && d[idx + 2] < 100) darkCount++;
+    }
+    if (darkCount > scaledW * 0.60) {
+      for (let x = pad; x < pad + scaledW; x++) {
+        const idx = (y * w + x) * 4;
+        d[idx] = 255; d[idx + 1] = 255; d[idx + 2] = 255;
+      }
+    }
+  }
+
+  // Also erase any solid vertical line on left 1-8 pixels of original image
+  for (let x = pad; x < pad + Math.round(8 * scale); x++) {
+    let darkCount = 0;
+    for (let y = pad; y < pad + scaledH; y++) {
+      const idx = (y * w + x) * 4;
+      if (d[idx] < 100 && d[idx + 1] < 100 && d[idx + 2] < 100) darkCount++;
+    }
+    if (darkCount > scaledH * 0.60) {
+      for (let y = pad; y < pad + scaledH; y++) {
+        const idx = (y * w + x) * 4;
+        d[idx] = 255; d[idx + 1] = 255; d[idx + 2] = 255;
+      }
+    }
+  }
+
+  // Crisp text contrast
   for (let i = 0; i < d.length; i += 4) {
     const lum = d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114;
-    const adjusted = Math.min(255, Math.max(0, (lum - 128) * 1.5 + 128));
-    d[i] = adjusted;
-    d[i + 1] = adjusted;
-    d[i + 2] = adjusted;
+    if (lum > 215) {
+      d[i] = 255; d[i + 1] = 255; d[i + 2] = 255;
+    } else if (lum < 85) {
+      d[i] = 0; d[i + 1] = 0; d[i + 2] = 0;
+    } else {
+      const adjusted = Math.min(255, Math.max(0, (lum - 128) * 1.5 + 128));
+      d[i] = adjusted; d[i + 1] = adjusted; d[i + 2] = adjusted;
+    }
   }
   ctx.putImageData(imgData, 0, 0);
+
+  // Dedicated Header slice recognition to guarantee 100% Requisition No extraction
+  let headerText = '';
+  try {
+    const headerH = Math.round(canvas.height * 0.35);
+    const headerCanvas = document.createElement('canvas');
+    headerCanvas.width = canvas.width;
+    headerCanvas.height = headerH + 60;
+    const hCtx = headerCanvas.getContext('2d');
+    hCtx.fillStyle = '#FFFFFF';
+    hCtx.fillRect(0, 0, headerCanvas.width, headerCanvas.height);
+    hCtx.drawImage(canvas, 0, 0, canvas.width, headerH, 0, 30, canvas.width, headerH);
+
+    const hRes = await Tesseract.recognize(headerCanvas, 'eng', {
+      workerPath: 'lib/tesseract-worker.min.js',
+      corePath: 'lib/tesseract-core-simd-lstm.wasm.js',
+      langPath: 'lib',
+      gzip: true
+    });
+    headerText = hRes.data.text || '';
+  } catch (_) {}
 
   const res = await Tesseract.recognize(canvas, 'eng', {
     workerPath: 'lib/tesseract-worker.min.js',
@@ -7160,7 +7230,8 @@ async function runOcrOnImage(imageSource, onProgress) {
     }
   });
 
-  return res.data.text;
+  const fullText = res.data.text || '';
+  return (headerText ? (headerText + '\n\n') : '') + fullText;
 }
 
 /**
