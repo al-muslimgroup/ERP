@@ -5,14 +5,14 @@
  */
 
 import { state } from './state.js';
-import { storage } from './db/storage.js?v=4.3.0';
-import { authService } from './services/authService.js?v=4.3.0';
-import { renderNavbar, initNavbarEvents } from './components/navbar.js?v=4.3.0';
-import { renderSidebar, initSidebarEvents, updateSidebarActiveState } from './components/sidebar.js?v=4.3.0';
-import { renderHomepageView, initHomepageEvents } from './components/homepageView.js?v=4.3.0';
-import { renderLoginView, initLoginViewEvents } from './components/loginView.js?v=4.3.0';
-import { renderDashboard, initDashboardEvents } from './components/dashboard.js?v=4.3.0';
-import { renderInventoryTable, initInventoryTableEvents, syncInventorySelectionDOM } from './components/inventoryTable.js?v=4.3.0';
+import { storage } from './db/storage.js?v=4.3.1';
+import { authService } from './services/authService.js?v=4.3.1';
+import { renderNavbar, initNavbarEvents } from './components/navbar.js?v=4.3.1';
+import { renderSidebar, initSidebarEvents, updateSidebarActiveState } from './components/sidebar.js?v=4.3.1';
+import { renderHomepageView, initHomepageEvents } from './components/homepageView.js?v=4.3.1';
+import { renderLoginView, initLoginViewEvents } from './components/loginView.js?v=4.3.1';
+import { renderDashboard, initDashboardEvents } from './components/dashboard.js?v=4.3.1';
+import { renderInventoryTable, initInventoryTableEvents, syncInventorySelectionDOM } from './components/inventoryTable.js?v=4.3.1';
 import { renderMachineModal, initMachineModalEvents } from './components/machineModal.js';
 import { renderMachineDetails, initMachineDetailsEvents } from './components/machineDetails.js';
 import { renderTransferModal, initTransferModalEvents } from './components/transferModal.js?v=3.8.9';

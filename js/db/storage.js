@@ -602,8 +602,6 @@ class StorageEngine {
             localList.forEach(item => { if (item && item.id) mergedMap.set(item.id, item); });
             serverRecs[tbl].forEach(sItem => { if (sItem && sItem.id) mergedMap.set(sItem.id, sItem); });
             let merged = Array.from(mergedMap.values());
-            this.data[tbl] = merged;
-          }
 
             // If storage_master, auto-migrate alias machine names
             if (tbl === TABLE_NAMES.STORAGE_MASTER) {
