@@ -45,7 +45,7 @@
   --font-mono: 'JetBrains Mono', 'SF Mono', Consolas, Menlo, monospace;
 
   --header-height: 64px;
-  --sidebar-width: 272px;
+  --sidebar-width: 280px;
 }
 
 /* Light Theme (For well-lit plant offices & print viewing) */
@@ -186,12 +186,36 @@ body {
   flex-shrink: 0;
 }
 
+.sidebar-brand-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex: 1;
+}
+
+.brand-text-container {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.brand-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  min-width: 0;
+}
+
 .brand-text-title {
   font-weight: 800;
   font-size: 13.5px;
-  letter-spacing: 0.6px;
+  letter-spacing: 0.5px;
   color: #ffffff;
-  line-height: 1.15;
+  line-height: 1.2;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
   white-space: nowrap;
 }
@@ -201,26 +225,25 @@ body {
   color: #38bdf8;
   font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.5px;
-  margin-top: 2px;
-  display: flex;
-  align-items: center;
-  gap: 5px;
+  letter-spacing: 0.6px;
+  margin-top: 3px;
+  line-height: 1.2;
   white-space: nowrap;
 }
 
 .brand-status-pill {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 4.5px;
   background: rgba(16, 185, 129, 0.12);
-  border: 1px solid rgba(16, 185, 129, 0.3);
+  border: 1px solid rgba(16, 185, 129, 0.35);
   border-radius: 9999px;
-  padding: 1px 6px;
-  font-size: 9px;
+  padding: 1.5px 6.5px;
+  font-size: 8.5px;
   font-weight: 700;
   color: #34d399;
   letter-spacing: 0.5px;
+  flex-shrink: 0;
 }
 
 .brand-status-dot {

@@ -205,14 +205,14 @@ export function renderSidebar() {
     <aside class="app-sidebar" id="app-sidebar-root">
       <!-- Fixed Sidebar Brand Header -->
       <div class="sidebar-header">
-        <div style="display: flex; align-items: center; gap: 10px; min-width: 0;">
-          <div class="brand-logo-badge">🔧</div>
-          <div style="overflow: hidden;">
-            <div class="brand-text-title">AL-MUSLIM GROUP</div>
-            <div class="brand-text-sub">
-              <span>Maintenance Department ERP</span>
-              <span class="brand-status-pill"><span class="brand-status-dot"></span>PROD</span>
+        <div class="sidebar-brand-wrapper">
+          <div class="brand-logo-badge" title="Al-Muslim Group Maintenance Department ERP">🔧</div>
+          <div class="brand-text-container">
+            <div class="brand-title-row">
+              <span class="brand-text-title">AL-MUSLIM GROUP</span>
+              <span class="brand-status-pill" title="Production System Active"><span class="brand-status-dot"></span>PROD</span>
             </div>
+            <div class="brand-text-sub">Maintenance Department ERP</div>
           </div>
         </div>
         <button id="btn-sidebar-mobile-close" class="btn-sidebar-mobile-close" aria-label="Close navigation" title="Close navigation menu">✕</button>
