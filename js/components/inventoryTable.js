@@ -1176,8 +1176,11 @@ export function initInventoryTableEvents() {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       closeAllActionMenus();
-      state.set('activeMachineId', null);
-      state.set('activeModal', 'transfer-machine');
+      const id = btn.getAttribute('data-id');
+      if (id) {
+        state.set('activeMachineId', id);
+        state.set('activeModal', 'transfer-machine');
+      }
     });
   });
 

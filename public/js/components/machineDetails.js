@@ -401,7 +401,6 @@ export function initMachineDetailsEvents() {
   const btnTransfer = document.getElementById('btn-drawer-transfer');
   if (btnTransfer) {
     btnTransfer.addEventListener('click', () => {
-      state.set('activeMachineId', null);
       state.set('activeModal', 'transfer-machine');
     });
   }
@@ -409,7 +408,6 @@ export function initMachineDetailsEvents() {
   const btnDetailsNewTransfer = document.getElementById('btn-details-new-transfer');
   if (btnDetailsNewTransfer) {
     btnDetailsNewTransfer.addEventListener('click', () => {
-      state.set('activeMachineId', null);
       state.set('activeModal', 'transfer-machine');
     });
   }
