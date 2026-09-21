@@ -567,4 +567,71 @@ export function initSettingsEvents() {
       }
     });
   }
+
+  // Live in-memory sync for all settings inputs to guarantee user edits are NEVER lost before clicking Save
+  const syncSettingsInputsToMemory = () => {
+    try {
+      const container = document.getElementById('signatures-list-container');
+      const cards = container ? container.querySelectorAll('.signature-slot-card') : [];
+      const signaturesList = [];
+      cards.forEach((card, idx) => {
+        const id = card.getAttribute('data-sig-id') || `sig-${idx + 1}`;
+        const name = card.querySelector('.sig-slot-name')?.value || '';
+        const title = card.querySelector('.sig-slot-title')?.value || '';
+        const enabled = card.querySelector('.sig-slot-enabled')?.checked !== false;
+        signaturesList.push({ id, name, title, enabled });
+      });
+
+      const companyName = document.getElementById('setting-company-name')?.value;
+      const deptName = document.getElementById('setting-dept-name')?.value;
+      const pageSize = Number(document.getElementById('setting-page-size')?.value);
+      const reqAppr = document.getElementById('setting-require-approval')?.checked;
+      const reqDel = document.getElementById('setting-require-del-approval')?.checked;
+      const serialTpl = document.getElementById('setting-serial-template')?.value;
+      const serialPad = Number(document.getElementById('setting-serial-padding')?.value);
+      const enforcePrefix = document.getElementById('setting-enforce-prefix')?.checked;
+
+      const current = storage.getTable(TABLE_NAMES.SETTINGS) || {};
+      const sig1 = signaturesList[0] || {};
+      const sig2 = signaturesList[1] || {};
+      const sig3 = signaturesList[2] || {};
+
+      storage.data[TABLE_NAMES.SETTINGS] = {
+        ...current,
+        signatures: signaturesList,
+        sig1Name: sig1.name || '',
+        sig1Title: sig1.title || '',
+        showSig1: sig1.enabled !== false,
+        sig2Name: sig2.name || '',
+        sig2Title: sig2.title || '',
+        showSig2: sig2.enabled !== false,
+        sig3Name: sig3.name || '',
+        sig3Title: sig3.title || '',
+        showSig3: sig3.enabled !== false,
+        signatory1Name: sig1.name || '',
+        signatory1Title: sig1.title || '',
+        signatory2Name: sig2.name || '',
+        signatory2Title: sig2.title || '',
+        signatory3Name: sig3.name || '',
+        signatory3Title: sig3.title || '',
+        showSignaturesOnPdf: signaturesList.some(s => s.enabled),
+        ...(companyName !== undefined ? { companyName } : {}),
+        ...(deptName !== undefined ? { departmentName: deptName } : {}),
+        ...(pageSize ? { defaultRowsPerPage: pageSize } : {}),
+        ...(reqAppr !== undefined ? { requireApprovalForMaintenanceUsers: reqAppr } : {}),
+        ...(reqDel !== undefined ? { requireDeleteApproval: reqDel } : {}),
+        ...(serialTpl !== undefined ? { serialFormatTemplate: serialTpl } : {}),
+        ...(serialPad ? { serialNumberPadding: serialPad } : {}),
+        ...(enforcePrefix !== undefined ? { enforceFloorPrefix: enforcePrefix } : {})
+      };
+    } catch (e) {
+      console.warn('[Settings] in-memory sync note:', e.message);
+    }
+  };
+
+  const pageContainer = document.querySelector('.page-view');
+  if (pageContainer) {
+    pageContainer.addEventListener('input', syncSettingsInputsToMemory);
+    pageContainer.addEventListener('change', syncSettingsInputsToMemory);
+  }
 }

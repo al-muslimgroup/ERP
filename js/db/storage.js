@@ -98,17 +98,23 @@ class StorageEngine {
           if (document.visibilityState === 'hidden') {
             this.flushImmediate();
           } else if (document.visibilityState === 'visible') {
-            this.checkAndSyncRemoteChanges();
+            if (!this.isUserTyping()) {
+              this.checkAndSyncRemoteChanges();
+            }
           }
         });
         window.addEventListener('focus', () => {
-          this.checkAndSyncRemoteChanges();
+          if (!this.isUserTyping()) {
+            this.checkAndSyncRemoteChanges();
+          }
         });
         if (!this._remoteSyncTimer) {
-          // Poll every 15s for faster multi-device synchronization
+          // Poll every 30s for background synchronization (safe when not typing)
           this._remoteSyncTimer = setInterval(() => {
-            this.checkAndSyncRemoteChanges();
-          }, 15000);
+            if (!this.isUserTyping()) {
+              this.checkAndSyncRemoteChanges();
+            }
+          }, 30000);
         }
       }
 
@@ -641,20 +647,40 @@ class StorageEngine {
     });
   }
 
+  isUserTyping() {
+    try {
+      const active = typeof document !== 'undefined' ? document.activeElement : null;
+      if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.tagName === 'SELECT')) {
+        return true;
+      }
+      if (active && active.isContentEditable) return true;
+      if (typeof window !== 'undefined' && window.state && window.state.get('activeModal')) {
+        return true;
+      }
+    } catch (_) {}
+    return false;
+  }
+
   async checkAndSyncRemoteChanges() {
-    if (this._isCheckingRemote) return;
+    if (this._isCheckingRemote || this.isUserTyping()) return;
     this._isCheckingRemote = true;
     try {
       const timestamps = await firebaseSync.fetchTableTimestamps();
       if (!timestamps || typeof timestamps !== 'object') return;
 
+      const isViewingSettings = typeof window !== 'undefined' && window.state && window.state.get('currentView') === 'settings';
+
       const tablesToUpdate = [];
       for (const [tbl, remoteTs] of Object.entries(timestamps)) {
         if (!remoteTs) continue;
+        // Never pull settings in background while user is viewing settings
+        if (tbl === TABLE_NAMES.SETTINGS && isViewingSettings) {
+          continue;
+        }
         const remoteTime = new Date(remoteTs).getTime();
         const localTime = this.lastTableUpdates[tbl] || 0;
-        // If remote Firestore was updated more than 1s after local update
-        if (remoteTime > (localTime + 1000)) {
+        // If remote Firestore was updated more than 2s after local update
+        if (remoteTime > (localTime + 2000)) {
           tablesToUpdate.push(tbl);
         }
       }
@@ -699,6 +725,9 @@ class StorageEngine {
     let updated = false;
 
     Object.keys(serverRecs).forEach(tbl => {
+      if (!this.lastTableUpdates) this.lastTableUpdates = {};
+      this.lastTableUpdates[tbl] = Date.now();
+
       if (Array.isArray(serverRecs[tbl])) {
         if (serverRecs[tbl].length > 0) {
           if (tbl === TABLE_NAMES.MACHINE_NAMES) {
@@ -753,16 +782,19 @@ class StorageEngine {
       } else if (serverRecs[tbl] && typeof serverRecs[tbl] === 'object' && !Array.isArray(serverRecs[tbl])) {
         // Handle object tables such as settings and homepage_config
         if (tbl === TABLE_NAMES.SETTINGS) {
-          const incomingSettings = serverRecs[tbl];
-          if (incomingSettings && typeof incomingSettings === 'object' && Object.keys(incomingSettings).length > 0) {
-            this.data[tbl] = {
-              ...(this.data[tbl] || {}),
-              ...incomingSettings
-            };
-            try {
-              localStorage.setItem(STORAGE_KEY_PREFIX + tbl, JSON.stringify(this.data[tbl]));
-            } catch (_) {}
-            updated = true;
+          const isViewingSettings = typeof window !== 'undefined' && window.state && window.state.get('currentView') === 'settings';
+          if (!isViewingSettings) {
+            const incomingSettings = serverRecs[tbl];
+            if (incomingSettings && typeof incomingSettings === 'object' && Object.keys(incomingSettings).length > 0) {
+              this.data[tbl] = {
+                ...(this.data[tbl] || {}),
+                ...incomingSettings
+              };
+              try {
+                localStorage.setItem(STORAGE_KEY_PREFIX + tbl, JSON.stringify(this.data[tbl]));
+              } catch (_) {}
+              updated = true;
+            }
           }
         } else if (tbl === TABLE_NAMES.HOMEPAGE_CONFIG) {
           this.data[tbl] = serverRecs[tbl];

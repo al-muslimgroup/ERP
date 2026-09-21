@@ -142,12 +142,12 @@ class ERPApplication {
     state.on('change:masterDataActiveTab', () => this.renderMainContent());
     state.on('filters:changed', () => this.renderMainContent());
     state.on('columns:changed', () => this.renderMainContent());
-    state.on('inventory:updated', () => this.renderMainContent());
+    state.on('inventory:updated', () => this.renderMainContent(true, true));
     state.on('change:agentPanelOpen', () => this.renderAgentPanel());
 
     window.addEventListener('erp:relocate-updated', () => {
       if (state.get('currentView') === 'relocate') {
-        this.renderMainContent();
+        this.renderMainContent(true, true);
       }
     });
 
@@ -162,43 +162,43 @@ class ERPApplication {
 
     window.addEventListener('erp:notification', (e) => {
       this.showToast('🔔 ' + e.detail.title, e.detail.message, 'info');
-      this.renderMainContent();
+      this.renderMainContent(true, true);
     });
 
     window.addEventListener('erp:fields-updated', () => {
-      this.renderMainContent();
+      this.renderMainContent(true, true);
     });
 
     window.addEventListener('erp:excel-structure-updated', () => {
-      this.renderMainContent();
+      this.renderMainContent(true, true);
     });
 
     window.addEventListener('erp:master-data-updated', () => {
-      this.renderMainContent();
+      this.renderMainContent(true, true);
     });
 
     window.addEventListener('erp:et-lab-updated', () => {
-      this.renderMainContent();
+      this.renderMainContent(true, true);
     });
 
     window.addEventListener('erp:storage-updated', () => {
-      this.renderMainContent();
+      this.renderMainContent(true, true);
     });
 
     // Re-render when homepage config changes from another device (via Firebase polling)
     window.addEventListener('erp:homepage-updated', () => {
       const cv = state.get('currentView');
-      if (cv === 'home' || cv === 'homepage-manager') {
-        this.renderMainContent();
+      if (cv === 'home') {
+        this.renderMainContent(true, true);
       }
     });
 
     window.addEventListener('erp:preventive-maintenance-updated', () => {
-      this.renderMainContent();
+      this.renderMainContent(true, true);
     });
 
     window.addEventListener('erp:audit-logs-updated', () => {
-      this.renderMainContent();
+      this.renderMainContent(true, true);
     });
 
     window.__appLoaded = true;
@@ -382,8 +382,31 @@ class ERPApplication {
     }
   }
 
-  renderMainContent(preserveScroll = true) {
+  isUserEditing() {
     try {
+      const el = typeof document !== 'undefined' ? document.activeElement : null;
+      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT')) {
+        return true;
+      }
+      if (el && el.isContentEditable) return true;
+      if (typeof state !== 'undefined' && state.get('activeModal')) return true;
+    } catch (_) {}
+    return false;
+  }
+
+  renderMainContent(preserveScroll = true, isBackgroundSync = false) {
+    try {
+      if (isBackgroundSync) {
+        if (this.isUserEditing()) {
+          console.log('[ERP] Background re-render skipped: user is actively editing');
+          return;
+        }
+        const cv = state.get('currentView');
+        if (['settings', 'homepage-manager', 'email-config', 'login'].includes(cv)) {
+          return;
+        }
+      }
+
       const container = document.getElementById('main-view-container');
       if (container) {
         const savedState = preserveScroll ? captureAppState() : null;
