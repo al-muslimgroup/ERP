@@ -271,7 +271,6 @@ export function initNavbarEvents() {
   if (btnHome) {
     btnHome.addEventListener('click', () => {
       closeDropdown();
-      window.location.hash = '#home';
       state.set('currentView', 'home');
     });
   }

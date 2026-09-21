@@ -22,12 +22,12 @@ class GlobalState {
     } catch (e) {}
 
     const activeUserId = typeof localStorage !== 'undefined' ? localStorage.getItem('al_muslim_active_user_id') : null;
-    let initialView = activeUserId ? 'dashboard' : 'login';
+    let initialView = 'home';
     try {
       if (typeof window !== 'undefined' && window.location && window.location.hash) {
         const h = window.location.hash.replace(/^#/, '').trim();
-        if (h) {
-          if (!activeUserId && h !== 'home' && h !== 'login') {
+        if (h && h !== 'home') {
+          if (!activeUserId && h !== 'login') {
             initialView = 'login';
           } else {
             initialView = h;

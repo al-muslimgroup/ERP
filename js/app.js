@@ -206,13 +206,13 @@ class ERPApplication {
     // Initialize Agent Chat Service (loads from localStorage + server)
     chatService.init().catch(e => console.warn('ChatService init notice:', e.message));
 
-    // Ensure base URL reflects #dashboard or #login depending on active session
+    // Ensure base URL reflects clean landing Home URL (/ERP/) without #home
     if (typeof window !== 'undefined' && window.location) {
       const hash = window.location.hash ? window.location.hash.replace(/^#/, '').trim() : '';
-      if (!hash) {
+      if (!hash || hash === 'home') {
         try {
-          const defaultHash = authService.isAuthenticated() ? 'dashboard' : 'login';
-          window.history.replaceState({ view: defaultHash }, '', `#${defaultHash}`);
+          const cleanUrl = (window.location.pathname || '/') + (window.location.search || '');
+          window.history.replaceState({ view: 'home' }, '', cleanUrl);
         } catch (_) { }
       }
     }
@@ -226,7 +226,7 @@ class ERPApplication {
       if (!root) return;
 
       const currentUser = authService.getCurrentUser();
-      let currentView = state.get('currentView') || (currentUser ? 'dashboard' : 'login');
+      let currentView = state.get('currentView') || 'home';
 
       // Security Gate: Protect internal ERP shell from unauthenticated access
       if (!currentUser && currentView !== 'home' && currentView !== 'login') {
@@ -331,12 +331,25 @@ class ERPApplication {
       const isStandaloneTarget = newView === 'home' || newView === 'login';
       const isCurrentlyStandalone = !document.getElementById('sidebar-container');
 
-      if (isStandaloneTarget || isCurrentlyStandalone) {
+      const updateHistoryState = (view) => {
         try {
           if (window.history && window.history.pushState) {
-            window.history.pushState({ view: newView }, '', `#${newView}`);
+            if (view === 'home') {
+              const cleanUrl = (window.location.pathname || '/') + (window.location.search || '');
+              if (window.location.hash) {
+                window.history.pushState({ view: 'home' }, '', cleanUrl);
+              } else {
+                window.history.replaceState({ view: 'home' }, '', cleanUrl);
+              }
+            } else {
+              window.history.pushState({ view }, '', `#${view}`);
+            }
           }
         } catch (e) { }
+      };
+
+      if (isStandaloneTarget || isCurrentlyStandalone) {
+        updateHistoryState(newView);
         this.render();
         return;
       }
@@ -349,11 +362,7 @@ class ERPApplication {
       this.renderMainContent(false);
 
       // Sync browser history state smoothly
-      try {
-        if (window.history && window.history.pushState) {
-          window.history.pushState({ view: newView }, '', `#${newView}`);
-        }
-      } catch (e) { }
+      updateHistoryState(newView);
 
     } catch (err) {
       console.error('Error during smooth view transition:', err);
@@ -742,15 +751,18 @@ class ERPApplication {
 
     // 3. Browser Back / Forward & Hash Navigation Support
     window.addEventListener('popstate', (e) => {
-      const targetView = (e.state && e.state.view) ? e.state.view : (window.location.hash ? window.location.hash.replace(/^#/, '').trim() : '');
-      const viewToLoad = targetView || 'dashboard';
-      state.set('currentView', viewToLoad);
-      this.switchView(viewToLoad);
+      const hash = window.location.hash ? window.location.hash.replace(/^#/, '').trim() : '';
+      let targetView = (e.state && e.state.view) ? e.state.view : hash;
+      if (!targetView || targetView === 'home') {
+        targetView = 'home';
+      }
+      state.set('currentView', targetView);
+      this.switchView(targetView);
     });
 
     window.addEventListener('hashchange', () => {
       const h = window.location.hash ? window.location.hash.replace(/^#/, '').trim() : '';
-      const viewToLoad = h || 'dashboard';
+      const viewToLoad = (!h || h === 'home') ? 'home' : h;
       state.set('currentView', viewToLoad);
       this.switchView(viewToLoad);
     });
