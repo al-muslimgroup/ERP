@@ -21,6 +21,10 @@ let editingScanItem = null; // Item being edited in modal
 let scannedListSearch = ''; // Search query on scanned machines
 let scannedListFilter = 'ALL'; // 'ALL' | 'CORRECT' | 'LINE_MISMATCH' | 'FLOOR_MISMATCH'
 let kpisCollapsedOnMobile = (typeof window !== 'undefined' && window.innerWidth <= 768); // Default to compact on mobile to maximize card feed area
+let historySubTab = 'movements'; // 'movements' | 'sessions'
+let historySearch = '';
+let historyFilter = 'ALL'; // 'ALL' | 'APPROVED' | 'REJECTED' | 'INTER_FLOOR' | 'SAME_FLOOR' (movements) or 'ALL' | 'COMPLETED' | 'IN_PROGRESS' | 'CANCELLED' (sessions)
+let viewingSessionModal = null; // Session object or null
 
 export function renderRelocateView() {
   const activeSession = relocateService.getActiveSession();
@@ -96,6 +100,7 @@ export function renderRelocateView() {
         ${renderManualSearchModal()}
         ${renderReconciliationModal(activeSession)}
         ${renderEditScanModal(activeSession)}
+        ${renderSessionDetailsModal()}
       </div>
 
       <!-- Dedicated Scanner Modal Container (Prevents overwriting session modals) -->
@@ -238,6 +243,312 @@ export function renderRelocateView() {
 
       /* Mobile Sticky Dock - Hidden on Desktop */
       .relocate-mobile-action-dock {
+        display: none;
+      }
+
+      /* ─────────────────────────────────────────────────────────────
+         HISTORY TAB REDESIGN STYLES
+         ───────────────────────────────────────────────────────────── */
+      .relocate-history-container {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        flex: 1;
+        min-height: 0;
+      }
+
+      .relocate-history-kpis-grid {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 10px;
+        margin-top: 4px;
+      }
+
+      .relocate-history-kpi-card {
+        background: rgba(15, 23, 42, 0.65);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 10px;
+        padding: 12px 14px;
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+        box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+        transition: transform 0.15s ease, border-color 0.15s ease;
+      }
+
+      .relocate-history-kpi-card:hover {
+        transform: translateY(-2px);
+        border-color: rgba(255, 255, 255, 0.16);
+      }
+
+      .relocate-history-kpi-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+
+      .relocate-history-kpi-title {
+        font-size: 10.5px;
+        font-weight: 800;
+        letter-spacing: 0.5px;
+        color: var(--text-secondary);
+        text-transform: uppercase;
+      }
+
+      .relocate-history-kpi-icon {
+        font-size: 16px;
+      }
+
+      .relocate-history-kpi-val {
+        font-size: 26px;
+        font-weight: 900;
+        line-height: 1.1;
+        font-family: var(--font-mono);
+      }
+
+      .relocate-history-kpi-sub {
+        font-size: 10.5px;
+        color: var(--text-muted);
+      }
+
+      .relocate-history-subtabs-bar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        padding-bottom: 10px;
+      }
+
+      .relocate-history-subtabs-btns {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+
+      .btn-history-subtab {
+        background: rgba(255, 255, 255, 0.04);
+        border: 1.5px solid rgba(255, 255, 255, 0.1);
+        border-radius: 8px;
+        color: var(--text-secondary);
+        font-size: 12.5px;
+        font-weight: 700;
+        padding: 7px 15px;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        transition: all 0.2s ease;
+      }
+
+      .btn-history-subtab:hover {
+        background: rgba(255, 255, 255, 0.08);
+        color: #fff;
+      }
+
+      .btn-history-subtab.active {
+        background: rgba(56, 189, 248, 0.15);
+        border-color: #38bdf8;
+        color: #38bdf8;
+        box-shadow: 0 0 14px rgba(56, 189, 248, 0.2);
+      }
+
+      .history-subtab-count {
+        font-size: 10.5px;
+        font-weight: 800;
+        padding: 1px 7px;
+        border-radius: 12px;
+        background: rgba(255, 255, 255, 0.12);
+        color: #fff;
+      }
+
+      .btn-history-subtab.active .history-subtab-count {
+        background: #38bdf8;
+        color: #0b1329;
+      }
+
+      .btn-history-export {
+        background: rgba(16, 185, 129, 0.12);
+        border: 1.5px solid #10b981;
+        border-radius: 8px;
+        color: #34d399;
+        font-size: 12px;
+        font-weight: 800;
+        padding: 7px 15px;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        transition: all 0.2s ease;
+      }
+
+      .btn-history-export:hover {
+        background: #10b981;
+        color: #fff;
+        box-shadow: 0 0 12px rgba(16, 185, 129, 0.4);
+      }
+
+      .relocate-history-controls-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+
+      .relocate-history-search-wrap {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        background: rgba(0, 0, 0, 0.35);
+        border: 1.5px solid rgba(255, 255, 255, 0.12);
+        border-radius: 8px;
+        padding: 6px 12px;
+        flex: 1;
+        min-width: 240px;
+        max-width: 440px;
+      }
+
+      .relocate-history-search-wrap:focus-within {
+        border-color: #38bdf8;
+        box-shadow: 0 0 10px rgba(56, 189, 248, 0.25);
+      }
+
+      .relocate-history-search-icon {
+        font-size: 14px;
+        color: var(--text-muted);
+      }
+
+      .relocate-history-search-input {
+        background: transparent;
+        border: none;
+        outline: none;
+        color: #fff;
+        font-size: 12.5px;
+        width: 100%;
+      }
+
+      .relocate-history-search-input::placeholder {
+        color: var(--text-muted);
+      }
+
+      .relocate-history-clear-btn {
+        background: none;
+        border: none;
+        color: var(--text-muted);
+        font-size: 13px;
+        cursor: pointer;
+        padding: 2px 5px;
+        border-radius: 4px;
+      }
+
+      .relocate-history-clear-btn:hover {
+        color: #fff;
+        background: rgba(255, 255, 255, 0.1);
+      }
+
+      .relocate-history-pills-wrap {
+        display: flex;
+        gap: 6px;
+        overflow-x: auto;
+        white-space: nowrap;
+        -webkit-overflow-scrolling: touch;
+      }
+
+      .btn-history-filter-pill {
+        background: rgba(255, 255, 255, 0.04);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 20px;
+        color: var(--text-secondary);
+        font-size: 11.5px;
+        font-weight: 600;
+        padding: 4px 12px;
+        cursor: pointer;
+        transition: all 0.15s ease;
+      }
+
+      .btn-history-filter-pill:hover {
+        background: rgba(255, 255, 255, 0.1);
+        color: #fff;
+      }
+
+      .btn-history-filter-pill.active {
+        background: #38bdf8;
+        color: #0b1329;
+        border-color: #38bdf8;
+        font-weight: 800;
+      }
+
+      .history-session-card {
+        background: rgba(15, 23, 42, 0.65);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 12px;
+        padding: 14px 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+        transition: transform 0.15s ease, border-color 0.15s ease;
+      }
+
+      .history-session-card:hover {
+        border-color: rgba(56, 189, 248, 0.35);
+        transform: translateY(-1px);
+      }
+
+      .history-session-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      .history-session-body {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 8px;
+      }
+
+      .history-session-meta-pill {
+        background: rgba(255, 255, 255, 0.03);
+        border: 1px solid rgba(255, 255, 255, 0.06);
+        border-radius: 8px;
+        padding: 6px 10px;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        font-size: 11px;
+      }
+
+      .meta-pill-label {
+        color: var(--text-muted);
+        font-size: 9.5px;
+        text-transform: uppercase;
+        letter-spacing: 0.3px;
+      }
+
+      .meta-pill-value {
+        color: #e2e8f0;
+        font-size: 11.5px;
+      }
+
+      .history-session-actions {
+        display: flex;
+        justify-content: flex-end;
+        align-items: center;
+        gap: 8px;
+        border-top: 1px solid rgba(255, 255, 255, 0.06);
+        padding-top: 8px;
+        margin-top: 2px;
+      }
+
+      .relocate-history-table-desktop {
+        display: block;
+      }
+
+      .relocate-history-feed-mobile {
         display: none;
       }
 
@@ -421,6 +732,65 @@ export function renderRelocateView() {
         .form-control {
           font-size: 16px !important;
           min-height: 44px;
+        }
+
+        /* History Tab Mobile Overrides */
+        .relocate-history-kpis-grid {
+          grid-template-columns: repeat(2, 1fr) !important;
+          gap: 8px !important;
+        }
+
+        .relocate-history-subtabs-bar {
+          flex-direction: column !important;
+          align-items: stretch !important;
+          gap: 8px !important;
+        }
+
+        .relocate-history-subtabs-btns {
+          width: 100% !important;
+          display: flex !important;
+        }
+
+        .btn-history-subtab {
+          flex: 1 !important;
+          justify-content: center !important;
+          font-size: 11px !important;
+          padding: 8px 6px !important;
+        }
+
+        .btn-history-export {
+          width: 100% !important;
+          justify-content: center !important;
+        }
+
+        .relocate-history-controls-row {
+          flex-direction: column !important;
+          align-items: stretch !important;
+          gap: 8px !important;
+        }
+
+        .relocate-history-search-wrap {
+          max-width: 100% !important;
+          width: 100% !important;
+          min-width: 0 !important;
+        }
+
+        .relocate-history-pills-wrap {
+          width: 100% !important;
+        }
+
+        .relocate-history-table-desktop {
+          display: none !important;
+        }
+
+        .relocate-history-feed-mobile {
+          display: flex !important;
+          flex-direction: column !important;
+          gap: 10px !important;
+        }
+
+        .history-session-body {
+          grid-template-columns: 1fr !important;
         }
       }
     </style>
@@ -1243,89 +1613,856 @@ function renderApprovalsTab(pendingApprovals) {
 }
 
 // ─────────────────────────────────────────────────────────────
-// 8. RELOCATION HISTORY TAB
+// 8. RELOCATION HISTORY TAB & EXPORT HELPERS
 // ─────────────────────────────────────────────────────────────
+
+function escapeHtml(str) {
+  if (str === null || str === undefined) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function getEnrichedRelocationHistory() {
+  const rawList = relocateService.getRelocationHistory() || [];
+  const allMachines = storage.getTable(TABLE_NAMES.MACHINES) || [];
+  const machineMap = new Map();
+  allMachines.forEach(m => {
+    if (!m) return;
+    if (m.id) machineMap.set(String(m.id).toLowerCase(), m);
+    if (m.serialNumber) machineMap.set(String(m.serialNumber).trim().toLowerCase(), m);
+  });
+
+  return rawList.map(h => {
+    const machKey = String(h.machineId || '').toLowerCase();
+    const snKey = String(h.serialNumber || '').trim().toLowerCase();
+    const m = machineMap.get(machKey) || (snKey ? machineMap.get(snKey) : null);
+    
+    const mName = m?.machineNameStr || (m?.machineNameId ? masterDataService.getMachineNameById(m.machineNameId)?.name : null) || m?.machineName || 'Machine';
+    const mBrand = m?.brandStr || (m?.brandId ? masterDataService.getBrandById(m.brandId)?.name : null) || m?.brand || '';
+    const mModel = m?.modelStr || (m?.modelId ? masterDataService.getModelById(m.modelId)?.name : null) || m?.model || '';
+
+    const prevFlr = masterDataService.getFloorById(h.previousFloorId)?.name || h.previousFloorId || '—';
+    const prevLin = masterDataService.getLineById(h.previousLineId)?.name || h.previousLineId || '—';
+    const newFlr = masterDataService.getFloorById(h.newFloorId)?.name || h.newFloorId || '—';
+    const newLin = masterDataService.getLineById(h.newLineId)?.name || h.newLineId || '—';
+
+    return {
+      ...h,
+      machineName: mName,
+      machineBrand: mBrand,
+      machineModel: mModel,
+      prevFloorName: prevFlr,
+      prevLineName: prevLin,
+      newFloorName: newFlr,
+      newLineName: newLin
+    };
+  });
+}
+
+function exportMovementsToExcel(movements) {
+  if (typeof XLSX === 'undefined') {
+    notificationService.notifyError('Export Failed', 'Excel export library (XLSX) is not loaded.');
+    return;
+  }
+
+  const rows = [
+    ['#', 'Date', 'Time', 'Serial Number', 'Machine Name', 'Brand', 'Model', 'From Floor', 'From Line', 'To Floor', 'To Line', 'Move Type', 'Approval Status', 'Approved / Action By', 'Session Ref', 'Notes']
+  ];
+
+  movements.forEach((h, idx) => {
+    const dt = new Date(h.date || Date.now());
+    const dateStr = dt.toLocaleDateString('en-GB');
+    const timeStr = dt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+    rows.push([
+      idx + 1,
+      dateStr,
+      timeStr,
+      h.serialNumber || '',
+      h.machineName || '',
+      h.machineBrand || '',
+      h.machineModel || '',
+      h.prevFloorName || '',
+      h.prevLineName || '',
+      h.newFloorName || '',
+      h.newLineName || '',
+      h.approvalType || '',
+      h.status || '',
+      h.approvedBy || '',
+      h.sessionId || '',
+      h.notes || ''
+    ]);
+  });
+
+  const wb = XLSX.utils.book_new();
+  const ws = XLSX.utils.aoa_to_sheet(rows);
+  ws['!cols'] = [
+    { wch: 5 }, { wch: 13 }, { wch: 10 }, { wch: 14 }, { wch: 25 },
+    { wch: 16 }, { wch: 18 }, { wch: 18 }, { wch: 14 }, { wch: 18 },
+    { wch: 14 }, { wch: 22 }, { wch: 15 }, { wch: 24 }, { wch: 20 },
+    { wch: 35 }
+  ];
+  XLSX.utils.book_append_sheet(wb, ws, 'Relocation Movements');
+  const fileName = `Machine_Relocation_History_${new Date().toISOString().split('T')[0]}.xlsx`;
+  XLSX.writeFile(wb, fileName);
+  notificationService.notifySuccess('Excel Exported', `Downloaded ${fileName} (${movements.length} records)`);
+}
+
+function exportSessionsToExcel(sessions) {
+  if (typeof XLSX === 'undefined') {
+    notificationService.notifyError('Export Failed', 'Excel export library (XLSX) is not loaded.');
+    return;
+  }
+
+  const sessionRows = [
+    ['Session ID', 'Floor', 'Lines Covered', 'Started At', 'Completed At', 'Auditor / Conducted By', 'Status', 'Snapshot Expected', 'Machines Scanned', 'Notes']
+  ];
+
+  const scannedRows = [
+    ['Session ID', 'Floor', 'Scan Time', 'Serial Number', 'Machine Name', 'Brand', 'Model', 'Original Floor', 'Original Line', 'Scanned Line', 'Result Status', 'Remarks']
+  ];
+
+  sessions.forEach(s => {
+    const flr = masterDataService.getFloorById(s.floorId);
+    const floorName = flr?.name || s.floorId || '';
+    const linesStr = s.isFullFloor || s.lineIds === 'ALL' ? 'Entire Floor' : (Array.isArray(s.lineIds) ? s.lineIds.join(', ') : s.lineIds);
+
+    sessionRows.push([
+      s.id,
+      floorName,
+      linesStr,
+      s.startedAt ? new Date(s.startedAt).toLocaleString() : '',
+      s.completedAt ? new Date(s.completedAt).toLocaleString() : '',
+      s.startedBy || '',
+      s.status || '',
+      s.snapshotTotal ?? (s.snapshot?.length || 0),
+      (s.scanned || []).length,
+      s.notes || ''
+    ]);
+
+    (s.scanned || []).forEach(item => {
+      scannedRows.push([
+        s.id,
+        floorName,
+        item.scannedAt ? new Date(item.scannedAt).toLocaleString() : '',
+        item.serialNumber || '',
+        item.machineNameStr || '',
+        item.brandStr || '',
+        item.modelStr || '',
+        item.previousFloorStr || '',
+        item.previousLineStr || '',
+        masterDataService.getLineById(item.scannedLineId)?.name || item.scannedLineId || '',
+        item.matchType || '',
+        item.remarks || ''
+      ]);
+    });
+  });
+
+  const wb = XLSX.utils.book_new();
+  const ws1 = XLSX.utils.aoa_to_sheet(sessionRows);
+  ws1['!cols'] = [
+    { wch: 18 }, { wch: 18 }, { wch: 22 }, { wch: 22 }, { wch: 22 },
+    { wch: 24 }, { wch: 14 }, { wch: 18 }, { wch: 16 }, { wch: 30 }
+  ];
+  XLSX.utils.book_append_sheet(wb, ws1, 'Sessions Summary');
+
+  const ws2 = XLSX.utils.aoa_to_sheet(scannedRows);
+  ws2['!cols'] = [
+    { wch: 18 }, { wch: 16 }, { wch: 20 }, { wch: 14 }, { wch: 24 },
+    { wch: 16 }, { wch: 18 }, { wch: 18 }, { wch: 14 }, { wch: 16 },
+    { wch: 18 }, { wch: 25 }
+  ];
+  XLSX.utils.book_append_sheet(wb, ws2, 'All Scanned Machines');
+
+  const fileName = `Verification_Sessions_Report_${new Date().toISOString().split('T')[0]}.xlsx`;
+  XLSX.writeFile(wb, fileName);
+  notificationService.notifySuccess('Excel Exported', `Downloaded ${fileName} (${sessions.length} sessions)`);
+}
+
+function exportSingleSessionToExcel(session) {
+  if (typeof XLSX === 'undefined') {
+    notificationService.notifyError('Export Failed', 'Excel export library (XLSX) is not loaded.');
+    return;
+  }
+  const flr = masterDataService.getFloorById(session.floorId);
+  const rows = [
+    ['#', 'Serial Number', 'Machine Name', 'Brand', 'Model', 'Original Floor', 'Original Line', 'Scanned Floor', 'Scanned Line', 'Verification Status', 'Needle Qty', 'Remarks', 'Scan Timestamp']
+  ];
+
+  (session.scanned || []).forEach((item, idx) => {
+    rows.push([
+      idx + 1,
+      item.serialNumber || '',
+      item.machineNameStr || '',
+      item.brandStr || '',
+      item.modelStr || '',
+      item.previousFloorStr || item.previousFloorId || '',
+      item.previousLineStr || item.previousLineId || '',
+      flr?.name || session.floorId || '',
+      masterDataService.getLineById(item.scannedLineId)?.name || item.scannedLineId || '',
+      item.matchType || '',
+      item.needleQuantity || '',
+      item.remarks || '',
+      item.scannedAt ? new Date(item.scannedAt).toLocaleString() : ''
+    ]);
+  });
+
+  const wb = XLSX.utils.book_new();
+  const ws = XLSX.utils.aoa_to_sheet(rows);
+  ws['!cols'] = [
+    { wch: 5 }, { wch: 14 }, { wch: 24 }, { wch: 16 }, { wch: 18 },
+    { wch: 18 }, { wch: 14 }, { wch: 18 }, { wch: 14 }, { wch: 18 },
+    { wch: 12 }, { wch: 25 }, { wch: 22 }
+  ];
+  XLSX.utils.book_append_sheet(wb, ws, 'Scanned Machines');
+  const fileName = `Session_${session.id}_Scanned_Machines.xlsx`;
+  XLSX.writeFile(wb, fileName);
+  notificationService.notifySuccess('Session Exported', `Downloaded ${fileName}`);
+}
+
 function renderHistoryTab(allSessions) {
-  const historyList = relocateService.getRelocationHistory();
+  const enrichedHistory = getEnrichedRelocationHistory();
+  const sessions = allSessions || [];
+
+  // Metrics
+  const totalMoves = enrichedHistory.length;
+  const approvedMoves = enrichedHistory.filter(h => h.status === 'APPROVED').length;
+  const rejectedMoves = enrichedHistory.filter(h => h.status === 'REJECTED').length;
+  const interFloorMoves = enrichedHistory.filter(h => String(h.approvalType || '').toUpperCase().includes('INTER_FLOOR')).length;
+  const sameFloorMoves = enrichedHistory.filter(h => String(h.approvalType || '').toUpperCase().includes('SAME_FLOOR')).length;
+
+  const totalSessions = sessions.length;
+  const completedSessions = sessions.filter(s => s.status === 'COMPLETED').length;
+  const inProgressSessions = sessions.filter(s => s.status === 'IN_PROGRESS').length;
+  const cancelledSessions = sessions.filter(s => s.status === 'CANCELLED').length;
+
+  // Filtered movements
+  let filteredMovements = enrichedHistory;
+  if (historyFilter === 'APPROVED') {
+    filteredMovements = filteredMovements.filter(h => h.status === 'APPROVED');
+  } else if (historyFilter === 'REJECTED') {
+    filteredMovements = filteredMovements.filter(h => h.status === 'REJECTED');
+  } else if (historyFilter === 'INTER_FLOOR') {
+    filteredMovements = filteredMovements.filter(h => String(h.approvalType || '').toUpperCase().includes('INTER_FLOOR'));
+  } else if (historyFilter === 'SAME_FLOOR') {
+    filteredMovements = filteredMovements.filter(h => String(h.approvalType || '').toUpperCase().includes('SAME_FLOOR'));
+  }
+
+  if (historySearch) {
+    const q = historySearch.toLowerCase().trim();
+    filteredMovements = filteredMovements.filter(h =>
+      String(h.serialNumber || '').toLowerCase().includes(q) ||
+      String(h.machineName || '').toLowerCase().includes(q) ||
+      String(h.machineBrand || '').toLowerCase().includes(q) ||
+      String(h.machineModel || '').toLowerCase().includes(q) ||
+      String(h.prevFloorName || '').toLowerCase().includes(q) ||
+      String(h.prevLineName || '').toLowerCase().includes(q) ||
+      String(h.newFloorName || '').toLowerCase().includes(q) ||
+      String(h.newLineName || '').toLowerCase().includes(q) ||
+      String(h.approvedBy || '').toLowerCase().includes(q) ||
+      String(h.sessionId || '').toLowerCase().includes(q) ||
+      String(h.notes || '').toLowerCase().includes(q)
+    );
+  }
+
+  // Filtered sessions
+  let filteredSessions = sessions;
+  if (historyFilter === 'COMPLETED') {
+    filteredSessions = filteredSessions.filter(s => s.status === 'COMPLETED');
+  } else if (historyFilter === 'IN_PROGRESS') {
+    filteredSessions = filteredSessions.filter(s => s.status === 'IN_PROGRESS');
+  } else if (historyFilter === 'CANCELLED') {
+    filteredSessions = filteredSessions.filter(s => s.status === 'CANCELLED');
+  }
+
+  if (historySearch) {
+    const q = historySearch.toLowerCase().trim();
+    filteredSessions = filteredSessions.filter(s => {
+      const flr = masterDataService.getFloorById(s.floorId);
+      return (
+        String(s.id || '').toLowerCase().includes(q) ||
+        String(flr?.name || s.floorId || '').toLowerCase().includes(q) ||
+        String(s.startedBy || '').toLowerCase().includes(q) ||
+        String(s.notes || '').toLowerCase().includes(q)
+      );
+    });
+  }
 
   return `
-    <div style="background: var(--bg-card); border: 1px solid var(--border-color); border-radius: var(--radius-md); padding: 12px 16px; display: flex; flex-direction: column; gap: 10px; flex: 1; min-height: 0;">
+    <div class="relocate-history-container">
       
-      <div>
-        <h2 style="font-size: 15px; font-weight: 800; color: #fff; margin: 0;">
-          📜 Physical Verification &amp; Relocation Audit History
-        </h2>
-        <div style="font-size: 11px; color: var(--text-secondary); margin-top: 2px;">
-          Chronological record of physical verification sessions and machine movements
+      <!-- Top Title Bar -->
+      <div style="background: var(--bg-card); border: 1px solid var(--border-color); border-radius: var(--radius-md); padding: 14px 16px; display: flex; flex-direction: column; gap: 12px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+          <div>
+            <h2 style="font-size: 16px; font-weight: 800; color: #fff; margin: 0; display: flex; align-items: center; gap: 8px;">
+              <span>📜</span> Physical Verification &amp; Relocation Audit History
+            </h2>
+            <div style="font-size: 11.5px; color: var(--text-secondary); margin-top: 3px;">
+              Enterprise audit ledger for physical verification scans, line relocations, and inter-floor transfer approvals
+            </div>
+          </div>
+          <div style="display: flex; gap: 8px;">
+            <button type="button" id="btn-export-history-excel" class="btn-history-export" title="Download Excel audit report for current view">
+              <span>📊</span> Export to Excel
+            </button>
+          </div>
+        </div>
+
+        <!-- 4 Top KPI Stat Metric Cards -->
+        <div class="relocate-history-kpis-grid">
+          
+          <div class="relocate-history-kpi-card" style="border-left: 3.5px solid #38bdf8;">
+            <div class="relocate-history-kpi-header">
+              <span class="relocate-history-kpi-title">TOTAL RELOCATIONS</span>
+              <span class="relocate-history-kpi-icon" style="color: #38bdf8;">🚚</span>
+            </div>
+            <div class="relocate-history-kpi-val" style="color: #38bdf8;">${totalMoves}</div>
+            <div class="relocate-history-kpi-sub">Across all factory lines &amp; floors</div>
+          </div>
+
+          <div class="relocate-history-kpi-card" style="border-left: 3.5px solid #10b981;">
+            <div class="relocate-history-kpi-header">
+              <span class="relocate-history-kpi-title">APPROVED MOVES</span>
+              <span class="relocate-history-kpi-icon" style="color: #10b981;">✓</span>
+            </div>
+            <div class="relocate-history-kpi-val" style="color: #34d399;">${approvedMoves}</div>
+            <div class="relocate-history-kpi-sub">${totalMoves > 0 ? Math.round((approvedMoves / totalMoves) * 100) : 0}% successful approval rate</div>
+          </div>
+
+          <div class="relocate-history-kpi-card" style="border-left: 3.5px solid #f43f5e;">
+            <div class="relocate-history-kpi-header">
+              <span class="relocate-history-kpi-title">REJECTED MOVES</span>
+              <span class="relocate-history-kpi-icon" style="color: #f43f5e;">✕</span>
+            </div>
+            <div class="relocate-history-kpi-val" style="color: #fb7185;">${rejectedMoves}</div>
+            <div class="relocate-history-kpi-sub">Location preserved at origin</div>
+          </div>
+
+          <div class="relocate-history-kpi-card" style="border-left: 3.5px solid #a855f7;">
+            <div class="relocate-history-kpi-header">
+              <span class="relocate-history-kpi-title">AUDIT SESSIONS</span>
+              <span class="relocate-history-kpi-icon" style="color: #a855f7;">📋</span>
+            </div>
+            <div class="relocate-history-kpi-val" style="color: #c084fc;">${totalSessions}</div>
+            <div class="relocate-history-kpi-sub">${completedSessions} completed physical audits</div>
+          </div>
+
         </div>
       </div>
 
-      <!-- Past Sessions Summary -->
-      <div style="display: flex; flex-direction: column; gap: 6px; max-height: 180px; overflow-y: auto;">
-        <div style="font-size: 11.5px; font-weight: 700; color: #38bdf8;">Past Scan Sessions (${allSessions.length}):</div>
-        ${allSessions.length === 0 ? `
-          <div style="color: var(--text-muted); font-size: 11.5px;">No verification sessions completed yet.</div>
-        ` : allSessions.map(s => {
-    const flr = masterDataService.getFloorById(s.floorId);
-    return `
-            <div style="background: rgba(0,0,0,0.25); border: 1px solid rgba(255,255,255,0.06); border-radius: 6px; padding: 8px 10px; font-size: 11.5px; display: flex; justify-content: space-between; align-items: center;">
-              <div>
-                <strong style="color: #38bdf8; font-family: var(--font-mono);">${s.id}</strong> &bull; Floor: <strong>${flr?.name || s.floorId}</strong> &bull; ${new Date(s.startedAt).toLocaleDateString()}
-              </div>
-              <div>
-                <span class="badge ${s.status === 'COMPLETED' ? 'badge-active' : (s.status === 'IN_PROGRESS' ? 'badge-idle' : 'badge-danger')}" style="font-size: 10px;">
-                  ${s.status}
-                </span>
+      <!-- Main Ledger Card with Sub-Tabs -->
+      <div style="background: var(--bg-card); border: 1px solid var(--border-color); border-radius: var(--radius-md); padding: 14px 16px; display: flex; flex-direction: column; gap: 12px; flex: 1; min-height: 0;">
+        
+        <!-- Sub-Tabs Switcher & Export -->
+        <div class="relocate-history-subtabs-bar">
+          <div class="relocate-history-subtabs-btns">
+            <button type="button" class="btn-history-subtab ${historySubTab === 'movements' ? 'active' : ''}" data-subtab="movements">
+              <span>🚚</span> Machine Movement Logs
+              <span class="history-subtab-count">${totalMoves}</span>
+            </button>
+            <button type="button" class="btn-history-subtab ${historySubTab === 'sessions' ? 'active' : ''}" data-subtab="sessions">
+              <span>📋</span> Verification Sessions
+              <span class="history-subtab-count">${totalSessions}</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Search & Filter Pills Row -->
+        <div class="relocate-history-controls-row">
+          
+          <!-- Live Search Box -->
+          <div class="relocate-history-search-wrap">
+            <span class="relocate-history-search-icon">🔍</span>
+            <input type="text" id="inp-history-search" class="relocate-history-search-input"
+              placeholder="${historySubTab === 'movements' ? 'Search by serial, machine, floor, line, approver...' : 'Search by session code, floor name, auditor, notes...'}"
+              value="${escapeHtml(historySearch)}" />
+            ${historySearch ? `
+              <button type="button" id="btn-clear-history-search" class="relocate-history-clear-btn" title="Clear search">✕</button>
+            ` : ''}
+          </div>
+
+          <!-- Dynamic Filter Pills -->
+          <div class="relocate-history-pills-wrap">
+            ${historySubTab === 'movements' ? `
+              <button type="button" class="btn-history-filter-pill ${historyFilter === 'ALL' ? 'active' : ''}" data-filter="ALL">
+                All (${totalMoves})
+              </button>
+              <button type="button" class="btn-history-filter-pill ${historyFilter === 'APPROVED' ? 'active' : ''}" data-filter="APPROVED">
+                ✓ Approved (${approvedMoves})
+              </button>
+              <button type="button" class="btn-history-filter-pill ${historyFilter === 'REJECTED' ? 'active' : ''}" data-filter="REJECTED">
+                ✕ Rejected (${rejectedMoves})
+              </button>
+              <button type="button" class="btn-history-filter-pill ${historyFilter === 'INTER_FLOOR' ? 'active' : ''}" data-filter="INTER_FLOOR">
+                🏢 Inter-Floor (${interFloorMoves})
+              </button>
+              <button type="button" class="btn-history-filter-pill ${historyFilter === 'SAME_FLOOR' ? 'active' : ''}" data-filter="SAME_FLOOR">
+                🔄 Same-Floor (${sameFloorMoves})
+              </button>
+            ` : `
+              <button type="button" class="btn-history-filter-pill ${historyFilter === 'ALL' ? 'active' : ''}" data-filter="ALL">
+                All (${totalSessions})
+              </button>
+              <button type="button" class="btn-history-filter-pill ${historyFilter === 'COMPLETED' ? 'active' : ''}" data-filter="COMPLETED">
+                ✓ Completed (${completedSessions})
+              </button>
+              <button type="button" class="btn-history-filter-pill ${historyFilter === 'IN_PROGRESS' ? 'active' : ''}" data-filter="IN_PROGRESS">
+                ⏳ In Progress (${inProgressSessions})
+              </button>
+              <button type="button" class="btn-history-filter-pill ${historyFilter === 'CANCELLED' ? 'active' : ''}" data-filter="CANCELLED">
+                ✕ Cancelled (${cancelledSessions})
+              </button>
+            `}
+          </div>
+
+        </div>
+
+        <!-- ─────────────────────────────────────────────── -->
+        <!-- SUB-TAB 1: MACHINE MOVEMENT LOGS -->
+        <!-- ─────────────────────────────────────────────── -->
+        ${historySubTab === 'movements' ? `
+          
+          ${filteredMovements.length === 0 ? `
+            <div style="padding: 40px 20px; text-align: center; color: var(--text-muted); background: rgba(0,0,0,0.15); border: 1px dashed rgba(255,255,255,0.1); border-radius: 12px; margin-top: 10px;">
+              <div style="font-size: 36px; margin-bottom: 8px;">🔍</div>
+              <div style="font-size: 14px; font-weight: 700; color: #fff;">No machine relocation records found</div>
+              <div style="font-size: 11.5px; color: var(--text-secondary); margin-top: 4px;">
+                ${historySearch ? `No records matched "${escapeHtml(historySearch)}". Click ✕ to clear search.` : 'No relocation records match the active filter criteria.'}
               </div>
             </div>
-          `;
-  }).join('')}
-      </div>
+          ` : `
 
-      <!-- Machine Movement Audit Table (Responsive Scroll) -->
-      <div style="flex: 1; overflow-y: auto; margin-top: 6px; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 8px;">
-        <div style="font-size: 11.5px; font-weight: 700; color: #fff; margin-bottom: 6px;">Machine Movement Log (${historyList.length}):</div>
-        ${historyList.length === 0 ? `
-          <div style="color: var(--text-muted); font-size: 11.5px; padding: 20px; text-align: center;">No individual machine relocation events logged yet.</div>
+            <!-- Desktop Modern Table View -->
+            <div class="relocate-history-table-desktop" style="overflow-x: auto; border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; background: rgba(0,0,0,0.2);">
+              <table class="table" style="width: 100%; margin: 0; font-size: 12px; border-collapse: collapse;">
+                <thead>
+                  <tr style="background: rgba(255,255,255,0.03); border-bottom: 1.5px solid rgba(255,255,255,0.1);">
+                    <th style="padding: 10px 12px; text-align: left; width: 12%;">Date &amp; Time</th>
+                    <th style="padding: 10px 12px; text-align: left; width: 16%;">Machine</th>
+                    <th style="padding: 10px 12px; text-align: left; width: 28%;">Relocation Route</th>
+                    <th style="padding: 10px 12px; text-align: left; width: 14%;">Move Type</th>
+                    <th style="padding: 10px 12px; text-align: center; width: 10%;">Status</th>
+                    <th style="padding: 10px 12px; text-align: left; width: 12%;">Authorized By</th>
+                    <th style="padding: 10px 12px; text-align: left; width: 8%;">Session</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${filteredMovements.map(h => {
+                    const dt = new Date(h.date || Date.now());
+                    const dateStr = dt.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+                    const timeStr = dt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+                    const isInterFloor = String(h.approvalType || '').toUpperCase().includes('INTER_FLOOR');
+                    const isApproved = h.status === 'APPROVED';
+
+                    const typeBadge = isInterFloor
+                      ? `<span class="badge" style="background: rgba(56, 189, 248, 0.12); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3); font-size: 10.5px; font-weight: 700;">🏢 Inter-Floor</span>`
+                      : `<span class="badge" style="background: rgba(168, 85, 247, 0.12); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.3); font-size: 10.5px; font-weight: 700;">🔄 Same-Floor</span>`;
+
+                    const statusBadge = isApproved
+                      ? `<span class="badge badge-active" style="font-size: 10px; font-weight: 800; padding: 3px 8px; display: inline-flex; align-items: center; gap: 4px;">✓ APPROVED</span>`
+                      : `<span class="badge badge-danger" style="font-size: 10px; font-weight: 800; padding: 3px 8px; display: inline-flex; align-items: center; gap: 4px;">✕ REJECTED</span>`;
+
+                    return `
+                      <tr style="border-bottom: 1px solid rgba(255,255,255,0.05); transition: background 0.15s ease;">
+                        
+                        <!-- Date & Time -->
+                        <td style="padding: 10px 12px; white-space: nowrap;">
+                          <div style="font-weight: 600; color: #fff;">${dateStr}</div>
+                          <div style="font-size: 10.5px; color: var(--text-muted); font-family: var(--font-mono);">${timeStr}</div>
+                        </td>
+
+                        <!-- Machine Details -->
+                        <td style="padding: 10px 12px;">
+                          <div style="margin-bottom: 2px;">
+                            <span style="font-family: var(--font-mono); font-weight: 800; color: #38bdf8; font-size: 11.5px; background: rgba(56, 189, 248, 0.1); border: 1px solid rgba(56, 189, 248, 0.25); padding: 2px 6px; border-radius: 4px; display: inline-block;">
+                              ${h.serialNumber}
+                            </span>
+                          </div>
+                          <div style="font-weight: 600; color: #e2e8f0; font-size: 11.5px; line-height: 1.2;">
+                            ${h.machineName}
+                          </div>
+                          ${h.machineBrand || h.machineModel ? `
+                            <div style="font-size: 10.5px; color: var(--text-secondary); margin-top: 1px;">
+                              ${h.machineBrand} ${h.machineModel ? `&bull; ${h.machineModel}` : ''}
+                            </div>
+                          ` : ''}
+                        </td>
+
+                        <!-- Relocation Route -->
+                        <td style="padding: 10px 12px;">
+                          <div style="display: flex; align-items: center; gap: 8px; flex-wrap: nowrap;">
+                            <!-- Origin -->
+                            <div style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 6px; padding: 4px 8px; font-size: 11px; white-space: nowrap; flex: 1;">
+                              <div style="font-size: 9px; color: var(--text-muted); text-transform: uppercase;">Origin</div>
+                              <div style="font-weight: 600; color: #cbd5e1;">${h.prevFloorName}</div>
+                              <div style="font-size: 10px; color: #94a3b8;">Line: <strong>${h.prevLineName}</strong></div>
+                            </div>
+                            <!-- Transfer Arrow -->
+                            <div style="color: ${isApproved ? '#34d399' : '#f43f5e'}; font-size: 14px; font-weight: 900; padding: 0 2px;">
+                              ${isApproved ? '➔' : '✕'}
+                            </div>
+                            <!-- Destination -->
+                            <div style="background: rgba(56, 189, 248, 0.08); border: 1px solid rgba(56, 189, 248, 0.25); border-radius: 6px; padding: 4px 8px; font-size: 11px; white-space: nowrap; flex: 1;">
+                              <div style="font-size: 9px; color: #38bdf8; text-transform: uppercase;">Destination</div>
+                              <div style="font-weight: 700; color: #38bdf8;">${h.newFloorName}</div>
+                              <div style="font-size: 10px; color: #7dd3fc;">Line: <strong>${h.newLineName}</strong></div>
+                            </div>
+                          </div>
+                          ${h.notes ? `
+                            <div style="font-size: 10px; color: var(--text-muted); margin-top: 4px; font-style: italic;">
+                              Note: ${escapeHtml(h.notes)}
+                            </div>
+                          ` : ''}
+                        </td>
+
+                        <!-- Move Type -->
+                        <td style="padding: 10px 12px;">
+                          ${typeBadge}
+                        </td>
+
+                        <!-- Status Badge -->
+                        <td style="padding: 10px 12px; text-align: center;">
+                          ${statusBadge}
+                        </td>
+
+                        <!-- Authorized By -->
+                        <td style="padding: 10px 12px;">
+                          <div style="font-weight: 600; color: #e2e8f0; font-size: 11.5px;">${h.approvedBy || 'Admin'}</div>
+                        </td>
+
+                        <!-- Session Code -->
+                        <td style="padding: 10px 12px; font-family: var(--font-mono); font-size: 10.5px; color: var(--text-muted);">
+                          ${h.sessionId ? `#${h.sessionId}` : 'Manual'}
+                        </td>
+
+                      </tr>
+                    `;
+                  }).join('')}
+                </tbody>
+              </table>
+            </div>
+
+            <!-- Mobile Responsive Card Feed -->
+            <div class="relocate-history-feed-mobile">
+              ${filteredMovements.map(h => {
+                const dt = new Date(h.date || Date.now());
+                const dateStr = dt.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+                const timeStr = dt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+                const isInterFloor = String(h.approvalType || '').toUpperCase().includes('INTER_FLOOR');
+                const isApproved = h.status === 'APPROVED';
+
+                const typeBadge = isInterFloor
+                  ? `<span class="badge" style="background: rgba(56, 189, 248, 0.12); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3); font-size: 10px; font-weight: 700;">🏢 Inter-Floor</span>`
+                  : `<span class="badge" style="background: rgba(168, 85, 247, 0.12); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.3); font-size: 10px; font-weight: 700;">🔄 Same-Floor</span>`;
+
+                return `
+                  <div class="relocate-history-card-item" style="background: rgba(15, 23, 42, 0.6); border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                      <span style="font-family: var(--font-mono); font-weight: 800; color: #38bdf8; font-size: 13px; background: rgba(56, 189, 248, 0.1); border: 1px solid rgba(56, 189, 248, 0.25); padding: 2px 8px; border-radius: 4px;">
+                        SN: ${h.serialNumber}
+                      </span>
+                      <span class="badge ${isApproved ? 'badge-active' : 'badge-danger'}" style="font-size: 10px; font-weight: 800;">
+                        ${isApproved ? '✓ APPROVED' : '✕ REJECTED'}
+                      </span>
+                    </div>
+
+                    <div>
+                      <div style="font-weight: 700; color: #fff; font-size: 12.5px;">${h.machineName}</div>
+                      ${h.machineBrand || h.machineModel ? `
+                        <div style="font-size: 11px; color: var(--text-secondary);">${h.machineBrand} &bull; ${h.machineModel}</div>
+                      ` : ''}
+                    </div>
+
+                    <!-- Route Box -->
+                    <div style="background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.06); border-radius: 8px; padding: 8px 10px; display: flex; justify-content: space-between; align-items: center; gap: 6px;">
+                      <div style="flex: 1;">
+                        <div style="font-size: 9px; color: var(--text-muted); text-transform: uppercase;">Origin</div>
+                        <div style="font-size: 11px; font-weight: 600; color: #cbd5e1;">${h.prevFloorName}</div>
+                        <div style="font-size: 10px; color: #94a3b8;">Line: ${h.prevLineName}</div>
+                      </div>
+                      <div style="font-size: 16px; font-weight: 900; color: ${isApproved ? '#34d399' : '#f43f5e'};">
+                        ${isApproved ? '➔' : '✕'}
+                      </div>
+                      <div style="flex: 1; text-align: right;">
+                        <div style="font-size: 9px; color: #38bdf8; text-transform: uppercase;">Destination</div>
+                        <div style="font-size: 11px; font-weight: 700; color: #38bdf8;">${h.newFloorName}</div>
+                        <div style="font-size: 10px; color: #7dd3fc;">Line: ${h.newLineName}</div>
+                      </div>
+                    </div>
+
+                    ${h.notes ? `
+                      <div style="font-size: 10.5px; color: var(--text-muted); font-style: italic; background: rgba(0,0,0,0.2); padding: 4px 8px; border-radius: 4px;">
+                        Note: ${escapeHtml(h.notes)}
+                      </div>
+                    ` : ''}
+
+                    <div style="display: flex; justify-content: space-between; align-items: center; font-size: 11px; color: var(--text-secondary); border-top: 1px solid rgba(255,255,255,0.06); padding-top: 6px; margin-top: 2px;">
+                      <div>${typeBadge}</div>
+                      <div style="font-family: var(--font-mono); font-size: 10.5px;">${dateStr} &bull; ${timeStr}</div>
+                    </div>
+
+                    <div style="font-size: 10.5px; color: var(--text-muted); display: flex; justify-content: space-between;">
+                      <span>By: <strong>${h.approvedBy || 'Admin'}</strong></span>
+                      ${h.sessionId ? `<span style="font-family: var(--font-mono); color: #64748b;">Ref #${h.sessionId}</span>` : ''}
+                    </div>
+                  </div>
+                `;
+              }).join('')}
+            </div>
+
+          `}
+
         ` : `
-          <div style="overflow-x: auto; -webkit-overflow-scrolling: touch;">
-            <table class="table" style="width: 100%; min-width: 540px; font-size: 11.5px;">
-              <thead>
-                <tr>
-                  <th>Date</th>
-                  <th>Serial</th>
-                  <th>From Location</th>
-                  <th>To Location</th>
-                  <th>Type</th>
-                  <th>Status</th>
-                  <th>Approved By</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${historyList.map(h => {
-    const prevFlr = masterDataService.getFloorById(h.previousFloorId);
-    const prevLin = masterDataService.getLineById(h.previousLineId);
-    const newFlr = masterDataService.getFloorById(h.newFloorId);
-    const newLin = masterDataService.getLineById(h.newLineId);
 
-    return `
-                    <tr>
-                      <td>${new Date(h.date).toLocaleDateString()}</td>
-                      <td style="font-family: var(--font-mono); font-weight: 700; color: #38bdf8;">${h.serialNumber}</td>
-                      <td>${prevFlr?.name || h.previousFloorId} / ${prevLin?.name || h.previousLineId}</td>
-                      <td>${newFlr?.name || h.newFloorId} / ${newLin?.name || h.newLineId}</td>
-                      <td>${h.approvalType}</td>
-                      <td><span class="badge ${h.status === 'APPROVED' ? 'badge-active' : 'badge-danger'}" style="font-size: 10px;">${h.status}</span></td>
-                      <td>${h.approvedBy}</td>
-                    </tr>
-                  `;
-  }).join('')}
-              </tbody>
-            </table>
-          </div>
+          <!-- ─────────────────────────────────────────────── -->
+          <!-- SUB-TAB 2: VERIFICATION SESSIONS -->
+          <!-- ─────────────────────────────────────────────── -->
+          ${filteredSessions.length === 0 ? `
+            <div style="padding: 40px 20px; text-align: center; color: var(--text-muted); background: rgba(0,0,0,0.15); border: 1px dashed rgba(255,255,255,0.1); border-radius: 12px; margin-top: 10px;">
+              <div style="font-size: 36px; margin-bottom: 8px;">📋</div>
+              <div style="font-size: 14px; font-weight: 700; color: #fff;">No verification audit sessions found</div>
+              <div style="font-size: 11.5px; color: var(--text-secondary); margin-top: 4px;">
+                ${historySearch ? `No sessions matched "${escapeHtml(historySearch)}". Click ✕ to clear search.` : 'No sessions match the active filter criteria.'}
+              </div>
+            </div>
+          ` : `
+            
+            <div style="display: flex; flex-direction: column; gap: 10px;">
+              ${filteredSessions.map(s => {
+                const flr = masterDataService.getFloorById(s.floorId);
+                const isCompleted = s.status === 'COMPLETED';
+                const isInProgress = s.status === 'IN_PROGRESS';
+                const statusBadge = isCompleted ? 'badge-active' : (isInProgress ? 'badge-idle' : 'badge-danger');
+                const scannedCount = (s.scanned || []).length;
+                const expectedCount = s.snapshotTotal ?? (s.snapshot?.length || 0);
+
+                const linesLabel = s.isFullFloor || s.lineIds === 'ALL'
+                  ? 'Entire Floor Scan'
+                  : (Array.isArray(s.lineIds)
+                      ? s.lineIds.map(lid => masterDataService.getLineById(lid)?.name || lid).join(', ')
+                      : (s.lineIds || 'All Lines'));
+
+                const startDt = s.startedAt ? new Date(s.startedAt) : null;
+                const formattedStartDate = startDt ? startDt.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
+                const formattedStartTime = startDt ? startDt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+
+                return `
+                  <div class="history-session-card">
+                    
+                    <!-- Session Header -->
+                    <div class="history-session-header">
+                      <div style="display: flex; align-items: center; gap: 10px;">
+                        <span style="font-size: 20px;">📋</span>
+                        <div>
+                          <div style="font-family: var(--font-mono); font-size: 14px; font-weight: 800; color: #38bdf8;">
+                            ${s.id}
+                          </div>
+                          <div style="font-size: 11px; color: var(--text-secondary); margin-top: 1px;">
+                            Auditor: <strong>${s.startedBy || 'Authorized Staff'}</strong> &bull; ${formattedStartDate} at ${formattedStartTime}
+                          </div>
+                        </div>
+                      </div>
+                      
+                      <div style="display: flex; align-items: center; gap: 8px;">
+                        <span class="badge ${statusBadge}" style="font-size: 10.5px; font-weight: 800; padding: 4px 10px;">
+                          ${isCompleted ? '✓ COMPLETED' : (isInProgress ? '⏳ IN PROGRESS' : '✕ CANCELLED')}
+                        </span>
+                      </div>
+                    </div>
+
+                    <!-- Session Metadata Grid -->
+                    <div class="history-session-body">
+                      
+                      <div class="history-session-meta-pill">
+                        <span class="meta-pill-label">Floor</span>
+                        <span class="meta-pill-value" style="color: #fff; font-weight: 700;">🏢 ${flr?.name || s.floorId}</span>
+                      </div>
+
+                      <div class="history-session-meta-pill">
+                        <span class="meta-pill-label">Target Lines</span>
+                        <span class="meta-pill-value" style="color: #e2e8f0;">${linesLabel}</span>
+                      </div>
+
+                      <div class="history-session-meta-pill">
+                        <span class="meta-pill-label">Snapshot Expected</span>
+                        <span class="meta-pill-value" style="color: #cbd5e1; font-weight: 700;">${expectedCount} Machines</span>
+                      </div>
+
+                      <div class="history-session-meta-pill" style="border-color: rgba(56, 189, 248, 0.3); background: rgba(56, 189, 248, 0.08);">
+                        <span class="meta-pill-label" style="color: #38bdf8;">Scanned Assets</span>
+                        <span class="meta-pill-value" style="color: #38bdf8; font-weight: 800;">⚡ ${scannedCount} Machines</span>
+                      </div>
+
+                    </div>
+
+                    ${s.notes ? `
+                      <div style="font-size: 11px; color: var(--text-secondary); background: rgba(0,0,0,0.25); padding: 8px 12px; border-radius: 6px; border: 1px dashed rgba(255,255,255,0.08);">
+                        <strong style="color: #cbd5e1;">Audit Notes:</strong> ${escapeHtml(s.notes)}
+                      </div>
+                    ` : ''}
+
+                    <!-- Actions -->
+                    <div class="history-session-actions">
+                      <button type="button" class="btn btn-outline btn-view-session-details" data-session-id="${s.id}" style="border-color: #38bdf8; color: #38bdf8; font-size: 12px; padding: 6px 14px; font-weight: 700; border-radius: 8px; display: inline-flex; align-items: center; gap: 6px; background: rgba(56,189,248,0.08);">
+                        <span>👁️</span> View Scanned Machines (${scannedCount})
+                      </button>
+                    </div>
+
+                  </div>
+                `;
+              }).join('')}
+            </div>
+
+          `}
+
         `}
+
       </div>
 
+    </div>
+  `;
+}
+
+// ─────────────────────────────────────────────────────────────
+// 8.1. SESSION DETAILS AUDIT MODAL
+// ─────────────────────────────────────────────────────────────
+function renderSessionDetailsModal() {
+  if (!viewingSessionModal) return '';
+  const s = viewingSessionModal;
+  const flr = masterDataService.getFloorById(s.floorId);
+  const scanned = s.scanned || [];
+
+  const correctCount = scanned.filter(item => item.matchType === 'CORRECT').length;
+  const lineMismatchCount = scanned.filter(item => item.matchType === 'LINE_MISMATCH').length;
+  const floorMismatchCount = scanned.filter(item => item.matchType === 'FLOOR_MISMATCH').length;
+
+  return `
+    <div class="modal-overlay" id="modal-session-details-overlay" style="z-index: 10040;">
+      <div class="modal-dialog" style="max-width: 860px; width: 95%; max-height: 90vh; display: flex; flex-direction: column; background: #0f172a; border: 1px solid rgba(56, 189, 248, 0.4); border-radius: 16px; overflow: hidden; box-shadow: 0 20px 40px rgba(0,0,0,0.8);">
+        
+        <!-- Modal Header -->
+        <div class="modal-header" style="padding: 14px 18px; background: rgba(255,255,255,0.03); border-bottom: 1px solid rgba(255,255,255,0.08); display: flex; justify-content: space-between; align-items: center;">
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <div style="width: 38px; height: 38px; border-radius: 8px; background: rgba(56, 189, 248, 0.15); border: 1px solid rgba(56, 189, 248, 0.3); display: flex; align-items: center; justify-content: center; font-size: 20px;">
+              📋
+            </div>
+            <div>
+              <div style="font-size: 15px; font-weight: 800; color: #fff; display: flex; align-items: center; gap: 8px;">
+                Session: <span style="color: #38bdf8; font-family: var(--font-mono);">${s.id}</span>
+                <span class="badge ${s.status === 'COMPLETED' ? 'badge-active' : (s.status === 'IN_PROGRESS' ? 'badge-idle' : 'badge-danger')}" style="font-size: 10px; font-weight: 800;">
+                  ${s.status === 'COMPLETED' ? '✓ COMPLETED' : (s.status === 'IN_PROGRESS' ? '⏳ IN PROGRESS' : '✕ CANCELLED')}
+                </span>
+              </div>
+              <div style="font-size: 11px; color: var(--text-secondary); margin-top: 2px;">
+                Floor: <strong>${flr?.name || s.floorId}</strong> &bull; Auditor: <strong>${s.startedBy || 'Authorized Staff'}</strong> &bull; ${new Date(s.startedAt).toLocaleString()}
+              </div>
+            </div>
+          </div>
+          <button type="button" id="btn-close-session-details-modal" class="modal-close" style="background: none; border: none; font-size: 24px; color: var(--text-muted); cursor: pointer; padding: 4px 8px; line-height: 1;">&times;</button>
+        </div>
+
+        <!-- Modal KPI Metrics Bar -->
+        <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; padding: 12px 18px; background: rgba(0,0,0,0.3); border-bottom: 1px solid rgba(255,255,255,0.06);">
+          <div style="text-align: center; background: rgba(255,255,255,0.02); padding: 8px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.04);">
+            <div style="font-size: 18px; font-weight: 900; color: #38bdf8; font-family: var(--font-mono);">${scanned.length}</div>
+            <div style="font-size: 9.5px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.3px; margin-top: 2px;">Total Scanned</div>
+          </div>
+          <div style="text-align: center; background: rgba(16, 185, 129, 0.05); padding: 8px; border-radius: 8px; border: 1px solid rgba(16, 185, 129, 0.15);">
+            <div style="font-size: 18px; font-weight: 900; color: #34d399; font-family: var(--font-mono);">${correctCount}</div>
+            <div style="font-size: 9.5px; color: #34d399; text-transform: uppercase; letter-spacing: 0.3px; margin-top: 2px;">Correct Line</div>
+          </div>
+          <div style="text-align: center; background: rgba(245, 158, 11, 0.05); padding: 8px; border-radius: 8px; border: 1px solid rgba(245, 158, 11, 0.15);">
+            <div style="font-size: 18px; font-weight: 900; color: #fbbf24; font-family: var(--font-mono);">${lineMismatchCount}</div>
+            <div style="font-size: 9.5px; color: #fbbf24; text-transform: uppercase; letter-spacing: 0.3px; margin-top: 2px;">Line Relocated</div>
+          </div>
+          <div style="text-align: center; background: rgba(244, 63, 94, 0.05); padding: 8px; border-radius: 8px; border: 1px solid rgba(244, 63, 94, 0.15);">
+            <div style="font-size: 18px; font-weight: 900; color: #f43f5e; font-family: var(--font-mono);">${floorMismatchCount}</div>
+            <div style="font-size: 9.5px; color: #fb7185; text-transform: uppercase; letter-spacing: 0.3px; margin-top: 2px;">Floor Mismatch</div>
+          </div>
+        </div>
+
+        <!-- Modal Body (Scanned Machines Table) -->
+        <div class="modal-body" style="flex: 1; overflow-y: auto; padding: 14px 18px;">
+          ${scanned.length === 0 ? `
+            <div style="padding: 40px 20px; text-align: center; color: var(--text-muted);">
+              <div style="font-size: 32px; margin-bottom: 8px;">📷</div>
+              <div style="font-size: 14px; font-weight: 700; color: #fff;">No machines scanned in this session</div>
+              <div style="font-size: 11.5px; color: var(--text-secondary); margin-top: 4px;">This session was closed without scanning any physical assets.</div>
+            </div>
+          ` : `
+            <div style="overflow-x: auto;">
+              <table class="table" style="width: 100%; font-size: 11.5px; border-collapse: collapse;">
+                <thead>
+                  <tr style="background: rgba(255,255,255,0.03); border-bottom: 1.5px solid rgba(255,255,255,0.1);">
+                    <th style="padding: 8px 10px; width: 5%;">#</th>
+                    <th style="padding: 8px 10px; width: 15%;">Serial #</th>
+                    <th style="padding: 8px 10px; width: 22%;">Machine</th>
+                    <th style="padding: 8px 10px; width: 20%;">Origin (Snapshot)</th>
+                    <th style="padding: 8px 10px; width: 14%;">Scanned Line</th>
+                    <th style="padding: 8px 10px; text-align: center; width: 14%;">Result</th>
+                    <th style="padding: 8px 10px; width: 10%;">Time</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${scanned.map((item, idx) => {
+                    const scanDt = item.scannedAt ? new Date(item.scannedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—';
+                    let resBadge = '';
+                    if (item.matchType === 'CORRECT') {
+                      resBadge = '<span class="badge badge-active" style="font-size: 10px; font-weight: 700;">✓ Correct</span>';
+                    } else if (item.matchType === 'LINE_MISMATCH') {
+                      resBadge = '<span class="badge badge-maint" style="font-size: 10px; font-weight: 700;">🔄 Line Relocate</span>';
+                    } else {
+                      resBadge = '<span class="badge badge-danger" style="font-size: 10px; font-weight: 700;">🏢 Floor Mismatch</span>';
+                    }
+
+                    return `
+                      <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
+                        <td style="color: var(--text-muted); padding: 8px 10px;">${idx + 1}</td>
+                        <td style="padding: 8px 10px;">
+                          <span style="font-family: var(--font-mono); font-weight: 800; color: #38bdf8; background: rgba(56,189,248,0.1); border: 1px solid rgba(56,189,248,0.25); padding: 2px 6px; border-radius: 4px; display: inline-block;">
+                            ${item.serialNumber}
+                          </span>
+                        </td>
+                        <td style="padding: 8px 10px;">
+                          <div style="font-weight: 700; color: #fff;">${item.machineNameStr || 'Sewing Machine'}</div>
+                          <div style="font-size: 10px; color: var(--text-secondary);">${item.brandStr || ''} ${item.modelStr || ''}</div>
+                        </td>
+                        <td style="padding: 8px 10px;">
+                          <div style="color: #cbd5e1;">${item.previousFloorStr || item.previousFloorId || '—'}</div>
+                          <div style="font-size: 10px; color: var(--text-muted);">Line: <strong>${item.previousLineStr || item.previousLineId || '—'}</strong></div>
+                        </td>
+                        <td style="padding: 8px 10px;">
+                          <strong style="color: #38bdf8;">${masterDataService.getLineById(item.scannedLineId)?.name || item.scannedLineId || '—'}</strong>
+                        </td>
+                        <td style="padding: 8px 10px; text-align: center;">${resBadge}</td>
+                        <td style="padding: 8px 10px; color: var(--text-secondary); font-family: var(--font-mono); font-size: 10.5px;">${scanDt}</td>
+                      </tr>
+                    `;
+                  }).join('')}
+                </tbody>
+              </table>
+            </div>
+          `}
+        </div>
+
+        <!-- Modal Footer -->
+        <div class="modal-footer" style="padding: 12px 18px; background: rgba(255,255,255,0.03); border-top: 1px solid rgba(255,255,255,0.08); display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+          <button type="button" id="btn-export-session-details-excel" class="btn btn-outline" style="border-color: #10b981; color: #34d399; font-size: 11.5px; padding: 6px 14px; font-weight: 800; border-radius: 8px; display: flex; align-items: center; gap: 6px; background: rgba(16, 185, 129, 0.1);">
+            <span>📊</span> Export Session Details to Excel
+          </button>
+          <button type="button" id="btn-close-session-details-btn" class="btn btn-secondary" style="font-size: 12px; padding: 7px 18px; border-radius: 8px; font-weight: 700;">
+            Close
+          </button>
+        </div>
+
+      </div>
     </div>
   `;
 }
@@ -1889,6 +3026,107 @@ export function initRelocateViewEvents() {
       }
     });
   });
+
+  // 10. History Tab Sub-Tabs, Search, Filters, View Session & Export
+  root.querySelectorAll('.btn-history-subtab').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      historySubTab = btn.getAttribute('data-subtab');
+      historyFilter = 'ALL';
+      historySearch = '';
+      refreshView();
+    });
+  });
+
+  const inpHistSearch = root.querySelector('#inp-history-search');
+  if (inpHistSearch) {
+    inpHistSearch.addEventListener('input', (e) => {
+      historySearch = e.target.value;
+      refreshView();
+      const newInp = document.getElementById('inp-history-search');
+      if (newInp) {
+        newInp.focus();
+        newInp.setSelectionRange(newInp.value.length, newInp.value.length);
+      }
+    });
+  }
+
+  const btnClearHistSearch = root.querySelector('#btn-clear-history-search');
+  if (btnClearHistSearch) {
+    btnClearHistSearch.addEventListener('click', (e) => {
+      e.preventDefault();
+      historySearch = '';
+      refreshView();
+    });
+  }
+
+  root.querySelectorAll('.btn-history-filter-pill').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      historyFilter = btn.getAttribute('data-filter');
+      refreshView();
+    });
+  });
+
+  root.querySelectorAll('.btn-view-session-details').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      const sId = btn.getAttribute('data-session-id');
+      const session = (relocateService.getAllSessions() || []).find(s => s.id === sId);
+      if (session) {
+        viewingSessionModal = session;
+        refreshView();
+      }
+    });
+  });
+
+  const btnCloseSessionModal = root.querySelector('#btn-close-session-details-modal');
+  if (btnCloseSessionModal) {
+    btnCloseSessionModal.addEventListener('click', () => {
+      viewingSessionModal = null;
+      refreshView();
+    });
+  }
+
+  const btnCloseSessionBtn = root.querySelector('#btn-close-session-details-btn');
+  if (btnCloseSessionBtn) {
+    btnCloseSessionBtn.addEventListener('click', () => {
+      viewingSessionModal = null;
+      refreshView();
+    });
+  }
+
+  const sessionOverlay = root.querySelector('#modal-session-details-overlay');
+  if (sessionOverlay) {
+    sessionOverlay.addEventListener('click', (e) => {
+      if (e.target === sessionOverlay) {
+        viewingSessionModal = null;
+        refreshView();
+      }
+    });
+  }
+
+  const btnExportHistory = root.querySelector('#btn-export-history-excel');
+  if (btnExportHistory) {
+    btnExportHistory.addEventListener('click', (e) => {
+      e.preventDefault();
+      if (historySubTab === 'movements') {
+        const enriched = getEnrichedRelocationHistory();
+        exportMovementsToExcel(enriched);
+      } else {
+        const sessions = relocateService.getAllSessions() || [];
+        exportSessionsToExcel(sessions);
+      }
+    });
+  }
+
+  const btnExportSessionDetails = root.querySelector('#btn-export-session-details-excel');
+  if (btnExportSessionDetails && viewingSessionModal) {
+    btnExportSessionDetails.addEventListener('click', (e) => {
+      e.preventDefault();
+      exportSingleSessionToExcel(viewingSessionModal);
+    });
+  }
 
   // Direct Shortcut to QR Code & Label Studio
   const btnGotoQr = root.querySelector('#btn-relocate-goto-qr-codes');

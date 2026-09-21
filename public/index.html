@@ -153,20 +153,16 @@
     };
 
     // Auto cache flush on new deployment build version
-    var CURRENT_BUILD = '4.6.8';
+    var CURRENT_BUILD = '4.6.9';
     if (localStorage.getItem('al_muslim_build_ver') !== CURRENT_BUILD) {
       try { localStorage.removeItem('al_muslim_build_ver'); } catch(_) {}
+      try { localStorage.removeItem('erp_last_active_tab'); } catch(_) {}
       localStorage.setItem('al_muslim_build_ver', CURRENT_BUILD);
-      if (caches && caches.keys) {
-        caches.keys().then(function(names) {
-          names.forEach(function(n) { caches.delete(n); });
-        });
-      }
     }
   </script>
 
-  <!-- Main ES Module Application Entrypoint (Cache-Busted v4.6.8) -->
-  <script type="module" src="js/app.js?v=4.6.8"></script>
+  <!-- Main ES Module Application Entrypoint (Cache-Busted v4.6.9) -->
+  <script type="module" src="js/app.js?v=4.6.9"></script>
 
   <style>
     @keyframes spin {
