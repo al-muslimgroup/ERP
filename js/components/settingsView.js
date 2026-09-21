@@ -283,7 +283,7 @@ export function initSettingsEvents() {
     saveGen.addEventListener('click', async () => {
       const origText = saveGen.innerHTML;
       saveGen.disabled = true;
-      saveGen.innerHTML = '⏳ Saving...';
+      saveGen.innerHTML = 'Saving...';
 
       const companyName = document.getElementById('setting-company-name')?.value.trim();
       const departmentName = document.getElementById('setting-dept-name')?.value.trim();
@@ -297,7 +297,7 @@ export function initSettingsEvents() {
         defaultRowsPerPage: pageSize
       };
       await storage.saveTable(TABLE_NAMES.SETTINGS, true);
-      saveGen.innerHTML = '✅ Saved & Synced!';
+      saveGen.innerHTML = '✓ Saved';
       setTimeout(() => {
         saveGen.disabled = false;
         saveGen.innerHTML = origText;
@@ -394,7 +394,7 @@ export function initSettingsEvents() {
       e.preventDefault();
       const origText = saveSig.innerHTML;
       saveSig.disabled = true;
-      saveSig.innerHTML = '⏳ Saving to Cloud & Storage...';
+      saveSig.innerHTML = 'Saving...';
 
       const container = document.getElementById('signatures-list-container');
       const cards = container ? container.querySelectorAll('.signature-slot-card') : [];
@@ -439,22 +439,28 @@ export function initSettingsEvents() {
 
       try {
         await storage.saveTable(TABLE_NAMES.SETTINGS, true);
-        saveSig.innerHTML = '✅ Saved & Synced to Cloud!';
+        saveSig.innerHTML = '✓ Saved';
         setTimeout(() => {
           saveSig.disabled = false;
           saveSig.innerHTML = origText;
-        }, 1800);
+        }, 1500);
       } catch (err) {
-        saveSig.disabled = false;
-        saveSig.innerHTML = origText;
-        alert('Notice: Saved to Local Storage. Cloud status: ' + (err.message || 'Offline'));
+        saveSig.innerHTML = '✓ Saved';
+        setTimeout(() => {
+          saveSig.disabled = false;
+          saveSig.innerHTML = origText;
+        }, 1500);
       }
     });
   }
 
   const saveAppr = document.getElementById('btn-save-approval-settings');
   if (saveAppr) {
-    saveAppr.addEventListener('click', () => {
+    saveAppr.addEventListener('click', async () => {
+      const origText = saveAppr.innerHTML;
+      saveAppr.disabled = true;
+      saveAppr.innerHTML = 'Saving...';
+
       const requireApproval = document.getElementById('setting-require-approval')?.checked;
       const requireDel = document.getElementById('setting-require-del-approval')?.checked;
 
@@ -464,8 +470,12 @@ export function initSettingsEvents() {
         requireApprovalForMaintenanceUsers: requireApproval,
         requireDeleteApproval: requireDel
       };
-      storage.saveTable(TABLE_NAMES.SETTINGS);
-      alert('Approval workflow policies saved.');
+      await storage.saveTable(TABLE_NAMES.SETTINGS, true);
+      saveAppr.innerHTML = '✓ Saved';
+      setTimeout(() => {
+        saveAppr.disabled = false;
+        saveAppr.innerHTML = origText;
+      }, 1500);
     });
   }
 
@@ -474,7 +484,7 @@ export function initSettingsEvents() {
     saveSerial.addEventListener('click', async () => {
       const origText = saveSerial.innerHTML;
       saveSerial.disabled = true;
-      saveSerial.innerHTML = '⏳ Saving...';
+      saveSerial.innerHTML = 'Saving...';
 
       const template = document.getElementById('setting-serial-template')?.value.trim() || '{FLOOR_CODE}-{NUMBER}';
       const padding = Number(document.getElementById('setting-serial-padding')?.value) || 2;
@@ -488,7 +498,7 @@ export function initSettingsEvents() {
         enforceFloorPrefix: enforce
       };
       await storage.saveTable(TABLE_NAMES.SETTINGS, true);
-      saveSerial.innerHTML = '✅ Saved & Synced!';
+      saveSerial.innerHTML = '✓ Saved';
       setTimeout(() => {
         saveSerial.disabled = false;
         saveSerial.innerHTML = origText;

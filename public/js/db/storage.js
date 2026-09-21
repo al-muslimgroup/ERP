@@ -57,6 +57,9 @@ class StorageEngine {
     this._suppressServerPersist = false;
     this._isCloudConnected = true;
     this._cloudPersistDebounces = {};
+    this.lastTableUpdates = {};
+    this._remoteSyncTimer = null;
+    this._isCheckingRemote = false;
   }
 
   init() {
@@ -87,13 +90,25 @@ class StorageEngine {
       this.isInitialized = true;
       this._suppressServerPersist = false;
 
-      // Register unload flush handler to guarantee zero data loss
+      // Register unload flush handler and multi-device cloud synchronizers
       if (!this._unloadRegistered && typeof window !== 'undefined') {
         this._unloadRegistered = true;
         window.addEventListener('beforeunload', () => this.flushImmediate());
         document.addEventListener('visibilitychange', () => {
-          if (document.visibilityState === 'hidden') this.flushImmediate();
+          if (document.visibilityState === 'hidden') {
+            this.flushImmediate();
+          } else if (document.visibilityState === 'visible') {
+            this.checkAndSyncRemoteChanges();
+          }
         });
+        window.addEventListener('focus', () => {
+          this.checkAndSyncRemoteChanges();
+        });
+        if (!this._remoteSyncTimer) {
+          this._remoteSyncTimer = setInterval(() => {
+            this.checkAndSyncRemoteChanges();
+          }, 30000);
+        }
       }
 
       // Synchronize immediately with server persistent database (single source of truth)
@@ -559,43 +574,109 @@ class StorageEngine {
     }
   }
 
-  saveTable(table, immediateCloud = false) {
+  async saveTable(table, dataOrImmediate = null, maybeImmediate = false) {
+    let immediate = false;
+    if (typeof dataOrImmediate === 'boolean') {
+      immediate = dataOrImmediate;
+    } else if (dataOrImmediate !== null && dataOrImmediate !== undefined) {
+      this.data[table] = dataOrImmediate;
+      immediate = Boolean(maybeImmediate);
+    } else {
+      immediate = Boolean(maybeImmediate);
+    }
+
+    const records = this.data[table];
+
     try {
-      localStorage.setItem(STORAGE_KEY_PREFIX + table, JSON.stringify(this.data[table] || []));
+      localStorage.setItem(STORAGE_KEY_PREFIX + table, JSON.stringify(records || []));
       localStorage.setItem(STORAGE_KEY_PREFIX + 'version', SCHEMA_VERSION);
       localStorage.setItem(STORAGE_KEY_PREFIX + 'last_saved', new Date().toISOString());
     } catch (err) {
       console.error('Failed to save table to localStorage:', table, err);
     }
+
+    if (!this.lastTableUpdates) this.lastTableUpdates = {};
+    this.lastTableUpdates[table] = Date.now();
+
+    // Debounced sync to local node server (if running)
     if (this._autoPersistDebounce) clearTimeout(this._autoPersistDebounce);
     this._autoPersistDebounce = setTimeout(() => {
       this.persistToServerDatabase();
-    }, 150);
+    }, 250);
 
-    // Single-table cloud persistence
+    // Immediate Firestore REST write
     if (this._cloudPersistDebounces && this._cloudPersistDebounces[table]) {
       clearTimeout(this._cloudPersistDebounces[table]);
     }
     if (!this._cloudPersistDebounces) this._cloudPersistDebounces = {};
 
-    if (immediateCloud || table === TABLE_NAMES.SETTINGS) {
-      return firebaseSync.saveTableToFirestore(table, this.data[table]).then(ok => {
+    this.updateStatusBadge('saving');
+
+    const doCloudSave = async () => {
+      try {
+        const ok = await firebaseSync.saveTableToFirestore(table, records);
         if (ok) {
           this._isCloudConnected = true;
           this.updateStatusBadge('saved');
+          return true;
         }
-        return ok;
-      }).catch(() => false);
+        return false;
+      } catch (e) {
+        console.warn(`[Storage] Firebase save warning for ${table}:`, e.message);
+        return false;
+      }
+    };
+
+    if (immediate || table === TABLE_NAMES.SETTINGS) {
+      return await doCloudSave();
     }
 
-    this._cloudPersistDebounces[table] = setTimeout(() => {
-      firebaseSync.saveTableToFirestore(table, this.data[table]).then(ok => {
-        if (ok) {
-          this._isCloudConnected = true;
+    return new Promise(resolve => {
+      this._cloudPersistDebounces[table] = setTimeout(async () => {
+        const res = await doCloudSave();
+        resolve(res);
+      }, 100);
+    });
+  }
+
+  async checkAndSyncRemoteChanges() {
+    if (this._isCheckingRemote) return;
+    this._isCheckingRemote = true;
+    try {
+      const timestamps = await firebaseSync.fetchTableTimestamps();
+      if (!timestamps || typeof timestamps !== 'object') return;
+
+      const tablesToUpdate = [];
+      for (const [tbl, remoteTs] of Object.entries(timestamps)) {
+        if (!remoteTs) continue;
+        const remoteTime = new Date(remoteTs).getTime();
+        const localTime = this.lastTableUpdates[tbl] || 0;
+        // If remote Firestore was updated more than 1s after local update
+        if (remoteTime > (localTime + 1000)) {
+          tablesToUpdate.push(tbl);
+        }
+      }
+
+      if (tablesToUpdate.length > 0) {
+        console.log(`[Storage Multi-Device Sync] 🔄 Remote changes detected in ${tablesToUpdate.length} tables:`, tablesToUpdate);
+        let anyUpdated = false;
+        for (const tbl of tablesToUpdate) {
+          const freshData = await firebaseSync.fetchTableFromFirestore(tbl);
+          if (freshData !== null && freshData !== undefined) {
+            this.applyIncomingDatabaseRecords({ [tbl]: freshData }, `Remote Cloud (${tbl})`);
+            this.lastTableUpdates[tbl] = Date.now();
+            anyUpdated = true;
+          }
+        }
+        if (anyUpdated) {
           this.updateStatusBadge('saved');
         }
-      }).catch(() => {});
-    }, 600);
+      }
+    } catch (err) {
+      console.warn('[Storage Multi-Device Sync] Remote check note:', err.message);
+    } finally {
+      this._isCheckingRemote = false;
+    }
   }
 
   saveAll() {
@@ -618,91 +699,54 @@ class StorageEngine {
     Object.keys(serverRecs).forEach(tbl => {
       if (Array.isArray(serverRecs[tbl])) {
         if (serverRecs[tbl].length > 0) {
-          if (tbl === TABLE_NAMES.FLOORS || tbl === TABLE_NAMES.UNITS || tbl === TABLE_NAMES.GROUPS || tbl === TABLE_NAMES.LINES || tbl === TABLE_NAMES.MACHINE_NAMES || tbl === TABLE_NAMES.MODELS || tbl === TABLE_NAMES.BRANDS || tbl === TABLE_NAMES.CATEGORIES || tbl === TABLE_NAMES.PREVENTIVE_CONFIG || tbl === TABLE_NAMES.MACHINES || tbl === TABLE_NAMES.USERS) {
-            // Persistent database is authoritative source of truth for machines, users, hierarchy & config
-            if (tbl === TABLE_NAMES.MACHINE_NAMES) {
-              const seen = new Set();
-              const cleanRecs = [];
-              const dupIds = new Set(Object.keys(duplicateIdMap));
-              serverRecs[tbl].forEach(m => {
-                if (m && m.name && !dupIds.has(m.id)) {
-                  const norm = m.name.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
-                  if (!seen.has(norm)) {
-                    seen.add(norm);
-                    cleanRecs.push(m);
-                  }
+          if (tbl === TABLE_NAMES.MACHINE_NAMES) {
+            const seen = new Set();
+            const cleanRecs = [];
+            const dupIds = new Set(Object.keys(duplicateIdMap));
+            serverRecs[tbl].forEach(m => {
+              if (m && m.name && !dupIds.has(m.id)) {
+                const norm = m.name.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+                if (!seen.has(norm)) {
+                  seen.add(norm);
+                  cleanRecs.push(m);
                 }
+              }
+            });
+            this.data[tbl] = cleanRecs;
+          } else if (tbl === TABLE_NAMES.MACHINES) {
+            const incoming = serverRecs[tbl] || [];
+            const hasMock = incoming.some(m => m && m.serialNumber && String(m.serialNumber).startsWith('JK-PM-'));
+            if (hasMock && (this.data[tbl]?.length >= 500)) {
+              console.warn('[Database Store] ⚠️ Blocked incoming mock machines from replacing real factory machines.');
+              return;
+            }
+            const cleanMachines = incoming
+              .filter(m => !(m && m.serialNumber && String(m.serialNumber).startsWith('JK-PM-')))
+              .map(m => {
+                if (m && duplicateIdMap[m.machineNameId]) {
+                  return { ...m, machineNameId: duplicateIdMap[m.machineNameId] };
+                }
+                return m;
               });
-              this.data[tbl] = cleanRecs;
-            } else if (tbl === TABLE_NAMES.MACHINES) {
-              // Real factory machines list from Cloud Firestore or Persistent Store
-              const incoming = serverRecs[tbl] || [];
-              const hasMock = incoming.some(m => m && m.serialNumber && String(m.serialNumber).startsWith('JK-PM-'));
-              if (hasMock && (this.data[tbl]?.length >= 500)) {
-                console.warn('[Database Store] ⚠️ Blocked incoming mock machines from replacing real factory machines.');
-                return;
-              }
-              const cleanMachines = incoming
-                .filter(m => !(m && m.serialNumber && String(m.serialNumber).startsWith('JK-PM-')))
-                .map(m => {
-                  if (m && duplicateIdMap[m.machineNameId]) {
-                    return { ...m, machineNameId: duplicateIdMap[m.machineNameId] };
-                  }
-                  return m;
-                });
-              if (cleanMachines.length >= 500 || !this.data[tbl] || this.data[tbl].length === 0) {
-                this.data[tbl] = cleanMachines;
-              }
-            } else {
-              this.data[tbl] = serverRecs[tbl];
+            if (cleanMachines.length >= 500 || !this.data[tbl] || this.data[tbl].length === 0) {
+              this.data[tbl] = cleanMachines;
             }
           } else {
-            // Intelligently merge by record ID so newly added items are not wiped out
-            const localList = (this.data[tbl] || []).filter(item => {
-              if (item && item.serialNumber && String(item.serialNumber).startsWith('JK-PM-')) return false;
-              return true;
-            });
-            const mergedMap = new Map();
-            localList.forEach(item => { if (item && item.id) mergedMap.set(item.id, item); });
-            serverRecs[tbl].forEach(sItem => { if (sItem && sItem.id) mergedMap.set(sItem.id, sItem); });
-            let merged = Array.from(mergedMap.values());
-
-            // If storage_master, auto-migrate alias machine names
-            if (tbl === TABLE_NAMES.STORAGE_MASTER) {
-              const smAliasMap = {
-                'plain machine 1-needle': 'Plane Machine',
-                'plain machine': 'Plane Machine',
-                'overlock 4-thread': 'Over Lock Machine',
-                'overlock 5-thread': 'Over Lock Machine',
-                'flatlock cylinder bed': 'Flat Lock Machine',
-                'bar tack machine': 'Bar tak Machine',
-                'feed off the arm': 'Feed of The Arm Machine'
-              };
-              merged.forEach(it => {
-                if (it && it.category === 'MACHINE' && it.machineName) {
-                  const lower = it.machineName.trim().toLowerCase();
-                  if (smAliasMap[lower]) {
-                    it.machineName = smAliasMap[lower];
-                  }
-                }
-              });
-            }
-
-            this.data[tbl] = merged;
+            // Firestore / persistent database is the authoritative single source of truth
+            this.data[tbl] = serverRecs[tbl];
           }
 
           try {
             localStorage.setItem(STORAGE_KEY_PREFIX + tbl, JSON.stringify(this.data[tbl]));
           } catch (_) {}
           updated = true;
-        } else if (tbl === TABLE_NAMES.MACHINE_NAMES || tbl === TABLE_NAMES.MODELS || tbl === TABLE_NAMES.BRANDS) {
-          if (Array.isArray(this.data[tbl]) && this.data[tbl].length > 0) {
-            this.data[tbl] = [];
-            try {
-              localStorage.setItem(STORAGE_KEY_PREFIX + tbl, JSON.stringify([]));
-            } catch (_) {}
-            updated = true;
-          }
+        } else if (Array.isArray(this.data[tbl]) && this.data[tbl].length > 0 && (tbl === TABLE_NAMES.RELOCATE_SESSIONS || tbl === TABLE_NAMES.RELOCATION_HISTORY || tbl === TABLE_NAMES.RELOCATION_APPROVALS)) {
+          // Allow empty arrays for session tables
+          this.data[tbl] = [];
+          try {
+            localStorage.setItem(STORAGE_KEY_PREFIX + tbl, JSON.stringify([]));
+          } catch (_) {}
+          updated = true;
         }
       } else if (serverRecs[tbl] && typeof serverRecs[tbl] === 'object' && !Array.isArray(serverRecs[tbl])) {
         // Handle object tables such as settings and homepage_config
@@ -746,14 +790,17 @@ class StorageEngine {
   }
 
   async syncWithServerDatabase() {
-    // 1. Google Cloud Firestore sync
+    let cloudLoadedSuccessfully = false;
+
+    // 1. Google Cloud Firestore sync (Primary Single Source of Truth)
     try {
       const cloudData = await firebaseSync.fetchAllFromFirestore();
-      if (cloudData && typeof cloudData === 'object') {
+      if (cloudData && typeof cloudData === 'object' && Object.keys(cloudData).length > 0) {
         const hasCloudMachines = Array.isArray(cloudData[TABLE_NAMES.MACHINES]) && cloudData[TABLE_NAMES.MACHINES].length > 0;
         if (hasCloudMachines) {
           this._isCloudConnected = true;
-          this.applyIncomingDatabaseRecords(cloudData, 'Google Cloud Firestore');
+          this.applyIncomingDatabaseRecords(cloudData, 'Google Cloud Firestore REST');
+          cloudLoadedSuccessfully = true;
         } else if (Array.isArray(this.data[TABLE_NAMES.MACHINES]) && this.data[TABLE_NAMES.MACHINES].length > 0) {
           console.log('[Firebase Sync] Cloud database is new, uploading initial factory records...');
           firebaseSync.saveAllToFirestore(this.data).then(ok => {
@@ -775,23 +822,33 @@ class StorageEngine {
       console.warn('[Database Store] Firebase cloud check note:', cloudErr.message);
     }
 
-    // 2. Local Node.js server sync
+    // 2. Local Node.js server sync (Secondary / Offline Backup only)
     try {
       const url = getApiEndpoint('/api/db/records');
-      const res = await fetch(url, { cache: 'no-store' });
-      if (res.ok) {
-        const data = await res.json();
-        if (data && data.status === 'ok' && data.records && typeof data.records === 'object') {
-          const serverRecs = data.records;
-          const hasServerData = Array.isArray(serverRecs.machines) && serverRecs.machines.length > 0;
-          if (hasServerData) {
-            this.applyIncomingDatabaseRecords(serverRecs, 'Local Server (data/erp_database.json)');
-          } else {
-            await this.persistToServerDatabase();
+      if (cloudLoadedSuccessfully) {
+        // If Cloud Firestore is authoritative and updated, keep local Node server in sync with cloud data
+        fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(this.data)
+        }).catch(() => {});
+      } else {
+        // Cloud was unavailable: fallback to local Node server
+        const res = await fetch(url, { cache: 'no-store' });
+        if (res.ok) {
+          const data = await res.json();
+          if (data && data.status === 'ok' && data.records && typeof data.records === 'object') {
+            const serverRecs = data.records;
+            const hasServerData = Array.isArray(serverRecs.machines) && serverRecs.machines.length > 0;
+            if (hasServerData) {
+              this.applyIncomingDatabaseRecords(serverRecs, 'Local Server (data/erp_database.json)');
+            }
           }
         }
-      } else {
-        // Static database fallback for GitHub Pages & static web hosts if local Node API is not available
+      }
+    } catch (e) {
+      if (!cloudLoadedSuccessfully) {
+        // 3. Static database fallback if both Cloud and Node server are offline
         try {
           const staticRes = await fetch('data/erp_database.json?v=' + Date.now(), { cache: 'no-store' });
           if (staticRes.ok) {
@@ -802,18 +859,6 @@ class StorageEngine {
           }
         } catch (_) {}
       }
-    } catch (e) {
-      // 3. Static database fallback for GitHub Pages & static web hosts
-      try {
-        const staticRes = await fetch('data/erp_database.json?v=' + Date.now(), { cache: 'no-store' });
-        if (staticRes.ok) {
-          const staticData = await staticRes.json();
-          if (staticData && Array.isArray(staticData.machines) && staticData.machines.length > 0) {
-            this.applyIncomingDatabaseRecords(staticData, 'Static Factory Database (data/erp_database.json)');
-          }
-        }
-      } catch (_) {}
-      console.info('[Database Store] Local node server offline or on static host.');
     }
   }
 
