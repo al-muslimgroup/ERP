@@ -428,22 +428,8 @@ function renderSessionSetupView() {
           <span>📋</span> Start New Verification &amp; Relocation Session
         </h2>
         <p style="font-size: 12px; color: var(--text-muted); margin-top: 4px; line-height: 1.4;">
-          Select target Unit and Floor or scan a Location QR tag. The system takes an instant snapshot of all machines registered on this floor for physical verification and auto-idle classification.
+          Select target Unit and Floor to start. The system takes an instant snapshot of all machines registered on this floor for physical verification and auto-idle classification.
         </p>
-      </div>
-
-      <!-- Quick Location QR Scan Banner -->
-      <div style="background: rgba(56, 189, 248, 0.08); border: 1.5px dashed #38bdf8; border-radius: 10px; padding: 10px 14px; display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap;">
-        <div style="display: flex; align-items: center; gap: 8px;">
-          <span style="font-size: 22px;">📍</span>
-          <div>
-            <div style="font-size: 13px; font-weight: 800; color: #fff;">Have a Location QR Placard?</div>
-            <div style="font-size: 11px; color: #38bdf8;">Scan floor tag (e.g. AKM-TISTA) to auto-select Unit &amp; Floor</div>
-          </div>
-        </div>
-        <button type="button" id="btn-scan-loc-setup" class="btn btn-primary btn-sm" style="font-weight: 800; font-size: 12px; padding: 8px 14px; background: linear-gradient(135deg, #0284c7 0%, #0369a1 100%); border: 1px solid #38bdf8; box-shadow: 0 2px 8px rgba(2, 132, 199, 0.4);">
-          📷 Scan Location QR
-        </button>
       </div>
 
       <form id="form-start-relocate-session" style="display: flex; flex-direction: column; gap: 14px;">
