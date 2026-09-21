@@ -983,22 +983,52 @@ export function initHomepageManagerEvents() {
 
   const btnPreviewPublishDirect = document.getElementById('btn-preview-publish-direct');
   if (btnPreviewPublishDirect) {
-    btnPreviewPublishDirect.addEventListener('click', (e) => {
+    btnPreviewPublishDirect.addEventListener('click', async (e) => {
       e.stopPropagation();
-      homepageService.publishConfig();
-      notificationService.success('Draft published to Live Home Page successfully!');
-      closeModal();
+      const origText = btnPreviewPublishDirect.innerHTML;
+      btnPreviewPublishDirect.disabled = true;
+      btnPreviewPublishDirect.innerHTML = '⏳ Publishing to Firebase...';
+      try {
+        const result = await homepageService.publishConfig();
+        if (result && result.success) {
+          notificationService.success('✅ Draft published to Live Home Page and synced to Firebase!');
+          closeModal();
+        } else {
+          notificationService.error('❌ Publish failed: ' + (result?.error || 'Firebase write error. Try again.'));
+          btnPreviewPublishDirect.disabled = false;
+          btnPreviewPublishDirect.innerHTML = origText;
+        }
+      } catch (err) {
+        notificationService.error('❌ Publish failed: ' + err.message);
+        btnPreviewPublishDirect.disabled = false;
+        btnPreviewPublishDirect.innerHTML = origText;
+      }
     });
   }
 
   // 11. Publish to Live Action
   const btnPublish = document.getElementById('btn-home-mgr-publish');
   if (btnPublish) {
-    btnPublish.addEventListener('click', (e) => {
+    btnPublish.addEventListener('click', async (e) => {
       e.stopPropagation();
-      homepageService.publishConfig();
-      notificationService.success('Home Page changes published to Live successfully!');
-      refreshView();
+      const origText = btnPublish.innerHTML;
+      btnPublish.disabled = true;
+      btnPublish.innerHTML = '⏳ Publishing to Firebase...';
+      try {
+        const result = await homepageService.publishConfig();
+        if (result && result.success) {
+          notificationService.success('✅ Home Page published & synced to Firebase! All devices will update within 15 seconds.');
+          refreshView();
+        } else {
+          notificationService.error('❌ Publish failed: ' + (result?.error || 'Firebase write error. Check your connection.'));
+          btnPublish.disabled = false;
+          btnPublish.innerHTML = origText;
+        }
+      } catch (err) {
+        notificationService.error('❌ Publish failed: ' + err.message);
+        btnPublish.disabled = false;
+        btnPublish.innerHTML = origText;
+      }
     });
   }
 
@@ -1016,9 +1046,21 @@ export function initHomepageManagerEvents() {
       });
 
       if (confirmed) {
-        homepageService.resetToDefaults();
-        notificationService.success('Home Page reset to corporate defaults.');
-        refreshView();
+        const origResetText = btnReset?.innerHTML;
+        if (btnReset) { btnReset.disabled = true; btnReset.innerHTML = '⏳ Resetting...'; }
+        try {
+          const result = await homepageService.resetToDefaults();
+          if (result && result.success) {
+            notificationService.success('✅ Home Page reset to corporate defaults and synced to Firebase.');
+            refreshView();
+          } else {
+            notificationService.error('❌ Reset failed: ' + (result?.error || 'Firebase write error.'));
+            if (btnReset) { btnReset.disabled = false; btnReset.innerHTML = origResetText; }
+          }
+        } catch (err) {
+          notificationService.error('❌ Reset failed: ' + err.message);
+          if (btnReset) { btnReset.disabled = false; btnReset.innerHTML = origResetText; }
+        }
       }
     });
   }

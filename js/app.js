@@ -23,7 +23,7 @@ import { renderMasterDataView, initMasterDataEvents } from './components/masterD
 import { renderCustomFieldsMgr, initCustomFieldsEvents } from './components/customFieldsMgr.js';
 import { renderExcelManagerView, initExcelManagerEvents } from './components/excelManagerView.js';
 import { renderUserManagement, initUserManagementEvents } from './components/userManagement.js';
-import { renderHomepageManagerView, initHomepageManagerEvents } from './components/homepageManagerView.js?v=3.8.5';
+import { renderHomepageManagerView, initHomepageManagerEvents } from './components/homepageManagerView.js?v=4.7.0';
 import { renderEmailConfigView, initEmailConfigEvents } from './components/emailConfigView.js';
 import { renderExcelImportModal, initExcelImportEvents } from './components/excelImportModal.js';
 import { renderReportsView, initReportsEvents } from './components/reportsView.js';
@@ -41,7 +41,7 @@ import { renderChangePasswordModal, initChangePasswordModalEvents } from './comp
 import { renderStorageView, initStorageEvents } from './components/storageView.js';
 import { renderPreventiveMaintenanceView, initPreventiveMaintenanceEvents } from './components/preventiveMaintenanceView.js?v=2.6.5';
 import { smartStorageService } from './services/smartStorageService.js';
-import { renderRelocateView, initRelocateViewEvents } from './components/relocateView.js?v=4.6.9';
+import { renderRelocateView, initRelocateViewEvents } from './components/relocateView.js?v=4.7.0';
 import { renderQrCodeView, initQrCodeEvents } from './components/qrCodeView.js?v=4.6.6';
 import { chatService } from './services/chatService.js';
 
@@ -183,6 +183,14 @@ class ERPApplication {
 
     window.addEventListener('erp:storage-updated', () => {
       this.renderMainContent();
+    });
+
+    // Re-render when homepage config changes from another device (via Firebase polling)
+    window.addEventListener('erp:homepage-updated', () => {
+      const cv = state.get('currentView');
+      if (cv === 'home' || cv === 'homepage-manager') {
+        this.renderMainContent();
+      }
     });
 
     window.addEventListener('erp:preventive-maintenance-updated', () => {

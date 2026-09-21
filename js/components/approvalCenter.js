@@ -290,7 +290,7 @@ export function renderApprovalCenter() {
                     </div>
 
                     <!-- Footer -->
-                    ${isPending && isAdmin ? `
+                    ${isPending && (isAdmin || authService.hasAccess('transfers', 'APPROVE')) ? `
                       <div style="background: var(--bg-card); padding: 12px 20px; border-top: 1px solid var(--border-color); display: flex; justify-content: flex-end; gap: 10px;">
                         <button class="btn btn-warning btn-sm btn-action-revise-edit" data-id="${req.id}">
                           ✏️ Request Revision
