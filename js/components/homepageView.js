@@ -490,6 +490,9 @@ export function initHomepageEvents() {
   const btnLogout = document.getElementById('btn-home-logout');
   if (btnLogout) {
     btnLogout.addEventListener('click', () => {
+      try {
+        storage.flushImmediate();
+      } catch (_) {}
       authService.logout();
       window.location.hash = '#login';
       window.location.reload();

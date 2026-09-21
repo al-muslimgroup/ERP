@@ -869,17 +869,24 @@ export const DEFAULT_SETTINGS = {
   allowManualSerialOverride: true,
   // Report Signature Signatories Configuration (Dynamic Add/Edit/Remove list)
   signatures: [
-    { id: 'sig-1', name: 'Engr. Tanvir Ahmed', title: 'Prepared By (Maintenance In-Charge)', enabled: true },
-    { id: 'sig-2', name: 'Engr. Delwar Hossain', title: 'Verified By (Floor Engineer)', enabled: true },
-    { id: 'sig-3', name: 'Engr. Tanvir Ahmed', title: 'Approved By (Chief Maintenance Director)', enabled: true }
+    { id: 'sig-1', name: 'Engr. Motaher Hossain', title: 'Prepared By (Engineer)', enabled: true },
+    { id: 'sig-2', name: 'Engr. Delwar Hossain', title: 'Verified By (AGM / Sr. AGM)', enabled: true },
+    { id: 'sig-3', name: 'Mohammad Liton Miah', title: 'Approved By (GM)', enabled: true }
   ],
-  sig1Name: 'Engr. Tanvir Ahmed',
-  sig1Title: 'Prepared By (Maintenance In-Charge)',
+  sig1Name: 'Engr. Motaher Hossain',
+  sig1Title: 'Prepared By (Engineer)',
   showSig1: true,
   sig2Name: 'Engr. Delwar Hossain',
-  sig2Title: 'Verified By (Floor Engineer)',
+  sig2Title: 'Verified By (AGM / Sr. AGM)',
   showSig2: true,
-  sig3Name: 'Engr. Tanvir Ahmed',
-  sig3Title: 'Approved By (Chief Maintenance Director)',
-  showSig3: true
+  sig3Name: 'Mohammad Liton Miah',
+  sig3Title: 'Approved By (GM)',
+  showSig3: true,
+  signatory1Name: 'Engr. Motaher Hossain',
+  signatory1Title: 'Prepared By (Engineer)',
+  signatory2Name: 'Engr. Delwar Hossain',
+  signatory2Title: 'Verified By (AGM / Sr. AGM)',
+  signatory3Name: 'Mohammad Liton Miah',
+  signatory3Title: 'Approved By (GM)',
+  showSignaturesOnPdf: true
 };

@@ -6,6 +6,7 @@
 import { authService } from '../services/authService.js';
 import { emailService } from '../services/emailService.js';
 import { state } from '../state.js';
+import { storage } from '../db/storage.js';
 
 let modalMode = 'LOGIN'; // 'LOGIN' or 'FIRST_PASSWORD_CHANGE'
 let pendingUserId = null;
@@ -155,6 +156,9 @@ export function initLoginModalEvents() {
   // Logout button
   if (logoutBtn) {
     logoutBtn.addEventListener('click', () => {
+      try {
+        storage.flushImmediate();
+      } catch (_) {}
       authService.logout();
       state.set('activeModal', null);
       state.set('currentRoute', 'login');

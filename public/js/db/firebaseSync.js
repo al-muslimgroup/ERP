@@ -72,7 +72,8 @@ export async function saveTableToFirestore(tableName, records) {
     }
 
     const { db, fs } = fb;
-    const jsonStr = JSON.stringify(records ?? []);
+    const cleanRecords = JSON.parse(JSON.stringify(records ?? []));
+    const jsonStr = JSON.stringify(cleanRecords);
     const sizeBytes = new Blob([jsonStr]).size;
 
     if (sizeBytes < CHUNK_SIZE_BYTES) {
@@ -81,8 +82,8 @@ export async function saveTableToFirestore(tableName, records) {
       await fs.setDoc(docRef, {
         isChunked: false,
         updatedAt: new Date().toISOString(),
-        itemCount: Array.isArray(records) ? records.length : (records ? 1 : 0),
-        data: records,
+        itemCount: Array.isArray(cleanRecords) ? cleanRecords.length : (cleanRecords ? 1 : 0),
+        data: cleanRecords,
         rawJson: jsonStr
       });
       return true;
@@ -177,12 +178,14 @@ export async function fetchAllFromFirestore() {
           }
         }
         assembledTables[docId] = mergedList;
-      } else if (docData && docData.data !== undefined) {
-        assembledTables[docId] = docData.data;
       } else if (docData && docData.rawJson) {
         try {
           assembledTables[docId] = JSON.parse(docData.rawJson);
-        } catch (_) {}
+        } catch (_) {
+          if (docData.data !== undefined) assembledTables[docId] = docData.data;
+        }
+      } else if (docData && docData.data !== undefined) {
+        assembledTables[docId] = docData.data;
       }
     }
 

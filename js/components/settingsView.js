@@ -13,9 +13,9 @@ export function getSignaturesList(settings = {}) {
     return settings.signatures;
   }
   return [
-    { id: 'sig-1', name: settings.sig1Name || settings.signatory1Name || 'Engr. Tanvir Ahmed', title: settings.sig1Title || settings.signatory1Title || 'Prepared By (Maintenance In-Charge)', enabled: settings.showSig1 !== false },
-    { id: 'sig-2', name: settings.sig2Name || settings.signatory2Name || 'Engr. Delwar Hossain', title: settings.sig2Title || settings.signatory2Title || 'Verified By (Floor Engineer)', enabled: settings.showSig2 !== false },
-    { id: 'sig-3', name: settings.sig3Name || settings.signatory3Name || 'Engr. Tanvir Ahmed', title: settings.sig3Title || settings.signatory3Title || 'Approved By (Chief Maintenance Director)', enabled: settings.showSig3 !== false }
+    { id: 'sig-1', name: settings.sig1Name || settings.signatory1Name || 'Engr. Motaher Hossain', title: settings.sig1Title || settings.signatory1Title || 'Prepared By (Engineer)', enabled: settings.showSig1 !== false },
+    { id: 'sig-2', name: settings.sig2Name || settings.signatory2Name || 'Engr. Delwar Hossain', title: settings.sig2Title || settings.signatory2Title || 'Verified By (AGM / Sr. AGM)', enabled: settings.showSig2 !== false },
+    { id: 'sig-3', name: settings.sig3Name || settings.signatory3Name || 'Mohammad Liton Miah', title: settings.sig3Title || settings.signatory3Title || 'Approved By (GM)', enabled: settings.showSig3 !== false }
   ];
 }
 
@@ -280,7 +280,11 @@ export function renderSettingsView() {
 export function initSettingsEvents() {
   const saveGen = document.getElementById('btn-save-general-settings');
   if (saveGen) {
-    saveGen.addEventListener('click', () => {
+    saveGen.addEventListener('click', async () => {
+      const origText = saveGen.innerHTML;
+      saveGen.disabled = true;
+      saveGen.innerHTML = '⏳ Saving...';
+
       const companyName = document.getElementById('setting-company-name')?.value.trim();
       const departmentName = document.getElementById('setting-dept-name')?.value.trim();
       const pageSize = Number(document.getElementById('setting-page-size')?.value) || 50;
@@ -292,8 +296,12 @@ export function initSettingsEvents() {
         departmentName,
         defaultRowsPerPage: pageSize
       };
-      storage.saveTable(TABLE_NAMES.SETTINGS);
-      alert('General settings updated successfully.');
+      await storage.saveTable(TABLE_NAMES.SETTINGS, true);
+      saveGen.innerHTML = '✅ Saved & Synced!';
+      setTimeout(() => {
+        saveGen.disabled = false;
+        saveGen.innerHTML = origText;
+      }, 1500);
     });
   }
 
@@ -382,8 +390,12 @@ export function initSettingsEvents() {
   // Save Signatures Handler
   const saveSig = document.getElementById('btn-save-signature-settings');
   if (saveSig) {
-    saveSig.addEventListener('click', (e) => {
+    saveSig.addEventListener('click', async (e) => {
       e.preventDefault();
+      const origText = saveSig.innerHTML;
+      saveSig.disabled = true;
+      saveSig.innerHTML = '⏳ Saving to Cloud & Storage...';
+
       const container = document.getElementById('signatures-list-container');
       const cards = container ? container.querySelectorAll('.signature-slot-card') : [];
       
@@ -424,8 +436,19 @@ export function initSettingsEvents() {
         signatory3Title: sig3.title || '',
         showSignaturesOnPdf: signaturesList.some(s => s.enabled)
       };
-      storage.saveTable(TABLE_NAMES.SETTINGS);
-      alert('PDF & Print Report Signatures saved successfully.');
+
+      try {
+        await storage.saveTable(TABLE_NAMES.SETTINGS, true);
+        saveSig.innerHTML = '✅ Saved & Synced to Cloud!';
+        setTimeout(() => {
+          saveSig.disabled = false;
+          saveSig.innerHTML = origText;
+        }, 1800);
+      } catch (err) {
+        saveSig.disabled = false;
+        saveSig.innerHTML = origText;
+        alert('Notice: Saved to Local Storage. Cloud status: ' + (err.message || 'Offline'));
+      }
     });
   }
 
@@ -448,7 +471,11 @@ export function initSettingsEvents() {
 
   const saveSerial = document.getElementById('btn-save-serial-settings');
   if (saveSerial) {
-    saveSerial.addEventListener('click', () => {
+    saveSerial.addEventListener('click', async () => {
+      const origText = saveSerial.innerHTML;
+      saveSerial.disabled = true;
+      saveSerial.innerHTML = '⏳ Saving...';
+
       const template = document.getElementById('setting-serial-template')?.value.trim() || '{FLOOR_CODE}-{NUMBER}';
       const padding = Number(document.getElementById('setting-serial-padding')?.value) || 2;
       const enforce = document.getElementById('setting-enforce-prefix')?.checked;
@@ -460,8 +487,12 @@ export function initSettingsEvents() {
         serialNumberPadding: padding,
         enforceFloorPrefix: enforce
       };
-      storage.saveTable(TABLE_NAMES.SETTINGS);
-      alert('Machine Serial Number & Floor Short Code configuration saved successfully.');
+      await storage.saveTable(TABLE_NAMES.SETTINGS, true);
+      saveSerial.innerHTML = '✅ Saved & Synced!';
+      setTimeout(() => {
+        saveSerial.disabled = false;
+        saveSerial.innerHTML = origText;
+      }, 1500);
     });
   }
 

@@ -6,6 +6,7 @@
 import { authService } from '../services/authService.js';
 import { notificationService } from '../services/notificationService.js';
 import { state } from '../state.js';
+import { storage } from '../db/storage.js';
 
 function getRoleName(user) {
   const roleObj = authService.getRoleById(user?.roleId) || authService.getRoleByCode(user?.role);
@@ -290,6 +291,9 @@ export function initNavbarEvents() {
     btnLogout.addEventListener('click', () => {
       closeDropdown();
       if (confirm('Are you sure you want to log out of your session?')) {
+        try {
+          storage.flushImmediate();
+        } catch (_) {}
         authService.logout();
         try {
           window.location.hash = '#login';

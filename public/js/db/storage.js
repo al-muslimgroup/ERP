@@ -173,6 +173,7 @@ class StorageEngine {
   }
 
   loadFromStorage() {
+    if (typeof localStorage === 'undefined') return;
     Object.values(TABLE_NAMES).forEach(table => {
       const stored = localStorage.getItem(STORAGE_KEY_PREFIX + table);
       if (stored) {
@@ -558,7 +559,7 @@ class StorageEngine {
     }
   }
 
-  saveTable(table) {
+  saveTable(table, immediateCloud = false) {
     try {
       localStorage.setItem(STORAGE_KEY_PREFIX + table, JSON.stringify(this.data[table] || []));
       localStorage.setItem(STORAGE_KEY_PREFIX + 'version', SCHEMA_VERSION);
@@ -571,11 +572,22 @@ class StorageEngine {
       this.persistToServerDatabase();
     }, 150);
 
-    // Debounced Firebase single-table cloud persistence
+    // Single-table cloud persistence
     if (this._cloudPersistDebounces && this._cloudPersistDebounces[table]) {
       clearTimeout(this._cloudPersistDebounces[table]);
     }
     if (!this._cloudPersistDebounces) this._cloudPersistDebounces = {};
+
+    if (immediateCloud || table === TABLE_NAMES.SETTINGS) {
+      return firebaseSync.saveTableToFirestore(table, this.data[table]).then(ok => {
+        if (ok) {
+          this._isCloudConnected = true;
+          this.updateStatusBadge('saved');
+        }
+        return ok;
+      }).catch(() => false);
+    }
+
     this._cloudPersistDebounces[table] = setTimeout(() => {
       firebaseSync.saveTableToFirestore(table, this.data[table]).then(ok => {
         if (ok) {
@@ -692,6 +704,27 @@ class StorageEngine {
             updated = true;
           }
         }
+      } else if (serverRecs[tbl] && typeof serverRecs[tbl] === 'object' && !Array.isArray(serverRecs[tbl])) {
+        // Handle object tables such as settings and homepage_config
+        if (tbl === TABLE_NAMES.SETTINGS) {
+          const incomingSettings = serverRecs[tbl];
+          if (incomingSettings && typeof incomingSettings === 'object' && Object.keys(incomingSettings).length > 0) {
+            this.data[tbl] = {
+              ...(this.data[tbl] || {}),
+              ...incomingSettings
+            };
+            try {
+              localStorage.setItem(STORAGE_KEY_PREFIX + tbl, JSON.stringify(this.data[tbl]));
+            } catch (_) {}
+            updated = true;
+          }
+        } else if (tbl === TABLE_NAMES.HOMEPAGE_CONFIG) {
+          this.data[tbl] = serverRecs[tbl];
+          try {
+            localStorage.setItem(STORAGE_KEY_PREFIX + tbl, JSON.stringify(this.data[tbl]));
+          } catch (_) {}
+          updated = true;
+        }
       }
     });
 
@@ -757,6 +790,17 @@ class StorageEngine {
             await this.persistToServerDatabase();
           }
         }
+      } else {
+        // Static database fallback for GitHub Pages & static web hosts if local Node API is not available
+        try {
+          const staticRes = await fetch('data/erp_database.json?v=' + Date.now(), { cache: 'no-store' });
+          if (staticRes.ok) {
+            const staticData = await staticRes.json();
+            if (staticData && Array.isArray(staticData.machines) && staticData.machines.length > 0) {
+              this.applyIncomingDatabaseRecords(staticData, 'Static Factory Database (data/erp_database.json)');
+            }
+          }
+        } catch (_) {}
       }
     } catch (e) {
       // 3. Static database fallback for GitHub Pages & static web hosts
@@ -853,6 +897,18 @@ class StorageEngine {
 
   flushImmediate() {
     if (this._suppressServerPersist) return;
+
+    // Immediately trigger any pending single-table cloud persistence
+    if (this._cloudPersistDebounces) {
+      Object.keys(this._cloudPersistDebounces).forEach(table => {
+        if (this._cloudPersistDebounces[table]) {
+          clearTimeout(this._cloudPersistDebounces[table]);
+          this._cloudPersistDebounces[table] = null;
+          firebaseSync.saveTableToFirestore(table, this.data[table]).catch(() => {});
+        }
+      });
+    }
+
     if (!this.data || !Array.isArray(this.data[TABLE_NAMES.MACHINES]) || this.data[TABLE_NAMES.MACHINES].length === 0) {
       return;
     }

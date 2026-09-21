@@ -268,9 +268,9 @@ class PDFService {
           let signatures = settings.signatures;
           if (!Array.isArray(signatures) || signatures.length === 0) {
             signatures = [
-              { id: 'sig-1', name: settings.sig1Name || settings.signatory1Name || user.name || 'Engr. Tanvir Ahmed', title: settings.sig1Title || settings.signatory1Title || 'Prepared By (Maintenance In-Charge)', enabled: settings.showSig1 !== false },
-              { id: 'sig-2', name: settings.sig2Name || settings.signatory2Name || 'Engr. Delwar Hossain', title: settings.sig2Title || settings.signatory2Title || 'Verified By (Floor Engineer)', enabled: settings.showSig2 !== false },
-              { id: 'sig-3', name: settings.sig3Name || settings.signatory3Name || 'Engr. Tanvir Ahmed', title: settings.sig3Title || settings.signatory3Title || 'Approved By (Chief Maintenance Director)', enabled: settings.showSig3 !== false }
+              { id: 'sig-1', name: settings.sig1Name || settings.signatory1Name || user.name || 'Engr. Motaher Hossain', title: settings.sig1Title || settings.signatory1Title || 'Prepared By (Engineer)', enabled: settings.showSig1 !== false },
+              { id: 'sig-2', name: settings.sig2Name || settings.signatory2Name || 'Engr. Delwar Hossain', title: settings.sig2Title || settings.signatory2Title || 'Verified By (AGM / Sr. AGM)', enabled: settings.showSig2 !== false },
+              { id: 'sig-3', name: settings.sig3Name || settings.signatory3Name || 'Mohammad Liton Miah', title: settings.sig3Title || settings.signatory3Title || 'Approved By (GM)', enabled: settings.showSig3 !== false }
             ];
           }
           const activeSigs = signatures.filter(s => s.enabled !== false && ((s.name && s.name.trim()) || (s.title && s.title.trim())));
@@ -650,9 +650,9 @@ class PDFService {
     let signatures = settings.signatures;
     if (!Array.isArray(signatures) || signatures.length === 0) {
       signatures = [
-        { id: 'sig-1', name: settings.sig1Name || settings.signatory1Name || user.name || 'Engr. Tanvir Ahmed', title: settings.sig1Title || settings.signatory1Title || 'Prepared By (Maintenance In-Charge)', enabled: settings.showSig1 !== false },
-        { id: 'sig-2', name: settings.sig2Name || settings.signatory2Name || 'Engr. Delwar Hossain', title: settings.sig2Title || settings.signatory2Title || 'Verified By (Floor Engineer)', enabled: settings.showSig2 !== false },
-        { id: 'sig-3', name: settings.sig3Name || settings.signatory3Name || 'Engr. Tanvir Ahmed', title: settings.sig3Title || settings.signatory3Title || 'Approved By (Chief Maintenance Director)', enabled: settings.showSig3 !== false }
+        { id: 'sig-1', name: settings.sig1Name || settings.signatory1Name || user.name || 'Engr. Motaher Hossain', title: settings.sig1Title || settings.signatory1Title || 'Prepared By (Engineer)', enabled: settings.showSig1 !== false },
+        { id: 'sig-2', name: settings.sig2Name || settings.signatory2Name || 'Engr. Delwar Hossain', title: settings.sig2Title || settings.signatory2Title || 'Verified By (AGM / Sr. AGM)', enabled: settings.showSig2 !== false },
+        { id: 'sig-3', name: settings.sig3Name || settings.signatory3Name || 'Mohammad Liton Miah', title: settings.sig3Title || settings.signatory3Title || 'Approved By (GM)', enabled: settings.showSig3 !== false }
       ];
     }
     const activeSignatures = signatures.filter(s => s.enabled !== false && ((s.name && s.name.trim()) || (s.title && s.title.trim())));
