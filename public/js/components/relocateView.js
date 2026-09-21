@@ -799,10 +799,6 @@ function renderLiveScanView(session) {
   `;
 }
 
-    </div>
-  `;
-}
-
 // ─────────────────────────────────────────────────────────────
 // 3. CONFIRMATION MODAL FOR SCANNED MACHINE (Mobile Bottom Sheet)
 // ─────────────────────────────────────────────────────────────
