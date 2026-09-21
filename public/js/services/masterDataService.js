@@ -5,6 +5,7 @@
  */
 
 import { storage } from '../db/storage.js';
+import { CloudSaveError } from '../db/storage.js';
 import { TABLE_NAMES } from '../db/schema.js';
 import { authService } from './authService.js';
 import { auditService } from './auditService.js';
@@ -578,7 +579,7 @@ class MasterDataService {
   // ==========================================
 
   // --- 1. GROUP ---
-  createGroup(data) {
+  async createGroup(data) {
     if (!authService.isAdmin()) throw new Error('Admin authorization required.');
     if (!data.name || !data.name.trim()) throw new Error('Group Name is required.');
     const code = data.code?.trim() || data.name.substring(0, 4).toUpperCase();
@@ -588,21 +589,25 @@ class MasterDataService {
       description: data.description?.trim() || '',
       status: data.status || 'ACTIVE'
     });
+    const ok = await storage.saveTable(TABLE_NAMES.GROUPS, true);
+    if (!ok) { storage.delete(TABLE_NAMES.GROUPS, created.id); throw new CloudSaveError('❌ Cloud Save Failed: Group creation not confirmed.'); }
     auditService.log('MASTER_GROUP_CREATED', 'GROUP', created.id, `Created Group: ${created.name}`);
     this._broadcastChange();
     return created;
   }
 
-  updateGroup(id, updates) {
+  async updateGroup(id, updates) {
     if (!authService.isAdmin()) throw new Error('Admin authorization required.');
     const updated = storage.update(TABLE_NAMES.GROUPS, id, updates);
+    const ok = await storage.saveTable(TABLE_NAMES.GROUPS, true);
+    if (!ok) throw new CloudSaveError('❌ Cloud Save Failed: Group update not confirmed.');
     auditService.log('MASTER_GROUP_UPDATED', 'GROUP', id, `Updated Group: ${updated.name}`);
     this._broadcastChange();
     return updated;
   }
 
   // --- 2. UNIT / FACTORY ---
-  createUnit(data) {
+  async createUnit(data) {
     if (!authService.isAdmin()) throw new Error('Admin authorization required.');
     if (!data.name || !data.name.trim()) throw new Error('Factory / Unit Name is required.');
     if (!data.groupId) throw new Error('Parent Group is required.');
@@ -614,14 +619,18 @@ class MasterDataService {
       location: data.location?.trim() || 'Factory Complex',
       status: data.status || 'ACTIVE'
     });
+    const ok = await storage.saveTable(TABLE_NAMES.UNITS, true);
+    if (!ok) { storage.delete(TABLE_NAMES.UNITS, created.id); throw new CloudSaveError('❌ Cloud Save Failed: Unit creation not confirmed.'); }
     auditService.log('MASTER_UNIT_CREATED', 'UNIT', created.id, `Created Unit: ${created.name}`);
     this._broadcastChange();
     return created;
   }
 
-  updateUnit(id, updates) {
+  async updateUnit(id, updates) {
     if (!authService.isAdmin()) throw new Error('Admin authorization required.');
     const updated = storage.update(TABLE_NAMES.UNITS, id, updates);
+    const ok = await storage.saveTable(TABLE_NAMES.UNITS, true);
+    if (!ok) throw new CloudSaveError('❌ Cloud Save Failed: Unit update not confirmed.');
     auditService.log('MASTER_UNIT_UPDATED', 'UNIT', id, `Updated Unit: ${updated.name}`);
     this._broadcastChange();
     return updated;
@@ -671,7 +680,7 @@ class MasterDataService {
   }
 
   // --- 3. FLOOR ---
-  createFloor(data) {
+  async createFloor(data) {
     if (!authService.isAdmin()) throw new Error('Admin authorization required.');
     if (!data.name || !data.name.trim()) throw new Error('Floor Name is required.');
     if (!data.unitId) throw new Error('Parent Factory/Unit is required.');
@@ -679,65 +688,39 @@ class MasterDataService {
     if (!code) {
       const lower = data.name.trim().toLowerCase();
       const codeMap = {
-        'jamuna': 'JA',
-        'jamuna floor': 'JA',
-        'buriganga': 'BG',
-        'buriganga floor': 'BG',
-        'chitra': 'CH',
-        'chitra floor': 'CH',
-        'padma': 'PD',
-        'padma floor': 'PD',
-        'titas': 'TT',
-        'titas floor': 'TT',
-        'titash': 'TT',
-        'titash floor': 'TT',
-        'tista': 'TS',
-        'tista floor': 'TS',
-        'surma': 'SU',
-        'surma floor': 'SU',
-        'meghna': 'MG',
-        'meghna floor': 'MG',
-        'pilot': 'PT',
-        'model line': 'ML',
-        'sample': 'SM'
+        'jamuna': 'JA', 'jamuna floor': 'JA', 'buriganga': 'BG', 'buriganga floor': 'BG',
+        'chitra': 'CH', 'chitra floor': 'CH', 'padma': 'PD', 'padma floor': 'PD',
+        'titas': 'TT', 'titas floor': 'TT', 'titash': 'TT', 'titash floor': 'TT',
+        'tista': 'TS', 'tista floor': 'TS', 'surma': 'SU', 'surma floor': 'SU',
+        'meghna': 'MG', 'meghna floor': 'MG', 'pilot': 'PT', 'model line': 'ML', 'sample': 'SM'
       };
       code = codeMap[lower] || data.name.substring(0, 2).toUpperCase();
     }
     const created = storage.insert(TABLE_NAMES.FLOORS, {
-      unitId: data.unitId,
-      name: data.name.trim(),
-      code: code,
+      unitId: data.unitId, name: data.name.trim(), code: code,
       locationTag: data.locationTag ? String(data.locationTag).trim().toUpperCase() : '',
-      building: data.building?.trim() || 'Main Building',
-      status: data.status || 'ACTIVE'
+      building: data.building?.trim() || 'Main Building', status: data.status || 'ACTIVE'
     });
 
-    // Auto-create {FLOOR_CODE}-A primary line
+    // Auto-create {FLOOR_CODE}-A primary line and {FLOOR_CODE}-Idle line
     const primaryLineName = `${code}-A`;
-    storage.insert(TABLE_NAMES.LINES, {
-      floorId: created.id,
-      name: primaryLineName,
-      code: primaryLineName,
-      supervisor: 'Line Incharge',
-      status: 'ACTIVE'
-    });
-
-    // Auto-create {FLOOR_CODE}-Idle line for standby machinery pool
+    storage.insert(TABLE_NAMES.LINES, { floorId: created.id, name: primaryLineName, code: primaryLineName, supervisor: 'Line Incharge', status: 'ACTIVE' });
     const idleName = `${code}-Idle`;
-    storage.insert(TABLE_NAMES.LINES, {
-      floorId: created.id,
-      name: idleName,
-      code: idleName,
-      supervisor: 'Standby / Maintenance Pool',
-      status: 'ACTIVE'
-    });
+    storage.insert(TABLE_NAMES.LINES, { floorId: created.id, name: idleName, code: idleName, supervisor: 'Standby / Maintenance Pool', status: 'ACTIVE' });
 
-    auditService.log('MASTER_FLOOR_CREATED', 'FLOOR', created.id, `Created Floor: ${created.name} [${code}] [Tag: ${created.locationTag || 'Auto'}] with lines ${primaryLineName} and ${idleName}`);
+    // Confirmed cloud writes for floors + lines
+    const [floorsOk, linesOk] = await Promise.all([
+      storage.saveTable(TABLE_NAMES.FLOORS, true),
+      storage.saveTable(TABLE_NAMES.LINES, true)
+    ]);
+    if (!floorsOk || !linesOk) { storage.delete(TABLE_NAMES.FLOORS, created.id); throw new CloudSaveError('❌ Cloud Save Failed: Floor creation not confirmed.'); }
+
+    auditService.log('MASTER_FLOOR_CREATED', 'FLOOR', created.id, `Created Floor: ${created.name} [${code}] with lines ${primaryLineName} and ${idleName}`);
     this._broadcastChange();
     return created;
   }
 
-  updateFloor(id, updates) {
+  async updateFloor(id, updates) {
     if (!authService.isAdmin()) throw new Error('Admin authorization required.');
     const oldFloor = storage.getItem(TABLE_NAMES.FLOORS, id);
     const oldCode = oldFloor?.code?.toUpperCase().trim();
@@ -753,14 +736,15 @@ class MasterDataService {
       childLines.forEach(l => {
         if (l.name.toUpperCase().startsWith(oldCode + '-')) {
           const suffix = l.name.substring(oldCode.length + 1);
-          storage.update(TABLE_NAMES.LINES, l.id, {
-            name: `${newCode}-${suffix}`,
-            code: `${newCode}-${suffix}`
-          });
+          storage.update(TABLE_NAMES.LINES, l.id, { name: `${newCode}-${suffix}`, code: `${newCode}-${suffix}` });
         }
       });
+      // Save lines after rename
+      await storage.saveTable(TABLE_NAMES.LINES, true);
     }
 
+    const ok = await storage.saveTable(TABLE_NAMES.FLOORS, true);
+    if (!ok) throw new CloudSaveError('❌ Cloud Save Failed: Floor update not confirmed.');
     auditService.log('MASTER_FLOOR_UPDATED', 'FLOOR', id, `Updated Floor: ${updated.name} [${updated.code}] [Tag: ${updated.locationTag || 'Auto'}]`);
     this._broadcastChange();
     return updated;
@@ -845,7 +829,7 @@ class MasterDataService {
   }
 
   // --- 4. LINE ---
-  createLine(data) {
+  async createLine(data) {
     if (!authService.isAdmin()) throw new Error('Admin authorization required.');
     if (!data.name || !data.name.trim()) throw new Error('Line Name / Letter is required.');
     if (!data.floorId) throw new Error('Parent Floor is required.');
@@ -858,8 +842,8 @@ class MasterDataService {
 
     // Strict duplicate check: prevent multiple entries of the same line on this floor
     const existingLines = this.getLines(data.floorId, null, null, true);
-    const isDuplicate = existingLines.some(l => 
-      l.name.toUpperCase() === finalName.toUpperCase() || 
+    const isDuplicate = existingLines.some(l =>
+      l.name.toUpperCase() === finalName.toUpperCase() ||
       (l.code && l.code.toUpperCase() === code.toUpperCase())
     );
     if (isDuplicate) {
@@ -867,37 +851,36 @@ class MasterDataService {
     }
 
     const created = storage.insert(TABLE_NAMES.LINES, {
-      floorId: data.floorId,
-      name: finalName,
-      code: code,
-      supervisor: data.supervisor?.trim() || '',
-      status: data.status || 'ACTIVE'
+      floorId: data.floorId, name: finalName, code: code,
+      supervisor: data.supervisor?.trim() || '', status: data.status || 'ACTIVE'
     });
+    const ok = await storage.saveTable(TABLE_NAMES.LINES, true);
+    if (!ok) { storage.delete(TABLE_NAMES.LINES, created.id); throw new CloudSaveError('❌ Cloud Save Failed: Line creation not confirmed.'); }
     auditService.log('MASTER_LINE_CREATED', 'LINE', created.id, `Created Line: ${created.name}`);
     this._broadcastChange();
     return created;
   }
 
-  updateLine(id, updates) {
+  async updateLine(id, updates) {
     if (!authService.isAdmin()) throw new Error('Admin authorization required.');
     const line = storage.getItem(TABLE_NAMES.LINES, id);
     const floor = line ? this.getFloorById(line.floorId) : null;
     const floorCode = (floor?.code || 'FL').toUpperCase().trim();
 
     if (updates.name && /(?:^|-)\d+$/.test(updates.name.trim().toUpperCase())) {
-      throw new Error(`Numeric line values (e.g. "${updates.name}") are strictly not allowed. Line names must be alphabetic or standard process sections (e.g. A to Z, Cutting, Finishing, Size Set, Eyelet & APW Room).`);
+      throw new Error(`Numeric line values (e.g. "${updates.name}") are strictly not allowed.`);
     }
 
     if (updates.name && line) {
       const formattedName = updates.name.trim().toUpperCase();
       const existingLines = this.getLines(line.floorId, null, null, true);
       const isDuplicate = existingLines.some(l => l.id !== id && (l.name.toUpperCase() === formattedName || (l.code && l.code.toUpperCase() === formattedName)));
-      if (isDuplicate) {
-        throw new Error(`Line "${updates.name}" already exists on floor "${floor?.name || 'this floor'}". Multiple entries are strictly prevented.`);
-      }
+      if (isDuplicate) throw new Error(`Line "${updates.name}" already exists on floor "${floor?.name || 'this floor'}".`);
     }
 
     const updated = storage.update(TABLE_NAMES.LINES, id, updates);
+    const ok = await storage.saveTable(TABLE_NAMES.LINES, true);
+    if (!ok) throw new CloudSaveError('❌ Cloud Save Failed: Line update not confirmed.');
     auditService.log('MASTER_LINE_UPDATED', 'LINE', id, `Updated Line: ${updated.name}`);
     this._broadcastChange();
     return updated;
@@ -1049,59 +1032,63 @@ class MasterDataService {
     return created;
   }
 
-  updateMachineName(id, updates) {
+  async updateMachineName(id, updates) {
     if (!authService.isAdmin()) throw new Error('Admin authorization required.');
     const updated = storage.update(TABLE_NAMES.MACHINE_NAMES, id, updates);
+    const ok = await storage.saveTable(TABLE_NAMES.MACHINE_NAMES, true);
+    if (!ok) throw new CloudSaveError('❌ Cloud Save Failed: Machine Name update not confirmed.');
     auditService.log('MASTER_MACHINENAME_UPDATED', 'MACHINE_NAME', id, `Updated Machine Name: ${updated.name}`);
     this._broadcastChange();
     return updated;
   }
 
   // --- 6. BRAND ---
-  createBrand(data) {
+  async createBrand(data) {
     if (!authService.isAdmin()) throw new Error('Admin authorization required.');
     if (!data.name || !data.name.trim()) throw new Error('Brand Name is required.');
     const created = storage.insert(TABLE_NAMES.BRANDS, {
-      name: data.name.trim(),
-      country: data.country?.trim() || 'Global',
-      website: data.website?.trim() || '',
-      status: data.status || 'ACTIVE'
+      name: data.name.trim(), country: data.country?.trim() || 'Global',
+      website: data.website?.trim() || '', status: data.status || 'ACTIVE'
     });
+    const ok = await storage.saveTable(TABLE_NAMES.BRANDS, true);
+    if (!ok) { storage.delete(TABLE_NAMES.BRANDS, created.id); throw new CloudSaveError('❌ Cloud Save Failed: Brand creation not confirmed.'); }
     auditService.log('MASTER_BRAND_CREATED', 'BRAND', created.id, `Created Brand: ${created.name}`);
     this._broadcastChange();
     return created;
   }
 
-  updateBrand(id, updates) {
+  async updateBrand(id, updates) {
     if (!authService.isAdmin()) throw new Error('Admin authorization required.');
     const updated = storage.update(TABLE_NAMES.BRANDS, id, updates);
+    const ok = await storage.saveTable(TABLE_NAMES.BRANDS, true);
+    if (!ok) throw new CloudSaveError('❌ Cloud Save Failed: Brand update not confirmed.');
     auditService.log('MASTER_BRAND_UPDATED', 'BRAND', id, `Updated Brand: ${updated.name}`);
     this._broadcastChange();
     return updated;
   }
 
   // --- 7. MODEL ---
-  createModel(data) {
+  async createModel(data) {
     if (!authService.isAdmin()) throw new Error('Admin authorization required.');
     if (!data.name || !data.name.trim()) throw new Error('Model Name is required.');
     if (!data.machineNameId) throw new Error('Related Machine Name is required.');
     if (!data.brandId) throw new Error('Related Brand is required.');
-
     const created = storage.insert(TABLE_NAMES.MODELS, {
-      machineNameId: data.machineNameId,
-      brandId: data.brandId,
-      name: data.name.trim(),
-      description: data.description?.trim() || '',
-      status: data.status || 'ACTIVE'
+      machineNameId: data.machineNameId, brandId: data.brandId, name: data.name.trim(),
+      description: data.description?.trim() || '', status: data.status || 'ACTIVE'
     });
+    const ok = await storage.saveTable(TABLE_NAMES.MODELS, true);
+    if (!ok) { storage.delete(TABLE_NAMES.MODELS, created.id); throw new CloudSaveError('❌ Cloud Save Failed: Model creation not confirmed.'); }
     auditService.log('MASTER_MODEL_CREATED', 'MODEL', created.id, `Created Model: ${created.name}`);
     this._broadcastChange();
     return created;
   }
 
-  updateModel(id, updates) {
+  async updateModel(id, updates) {
     if (!authService.isAdmin()) throw new Error('Admin authorization required.');
     const updated = storage.update(TABLE_NAMES.MODELS, id, updates);
+    const ok = await storage.saveTable(TABLE_NAMES.MODELS, true);
+    if (!ok) throw new CloudSaveError('❌ Cloud Save Failed: Model update not confirmed.');
     auditService.log('MASTER_MODEL_UPDATED', 'MODEL', id, `Updated Model: ${updated.name}`);
     this._broadcastChange();
     return updated;
@@ -1123,20 +1110,20 @@ class MasterDataService {
     }
   }
 
-  toggleStatus(type, id) {
+  async toggleStatus(type, id) {
     if (!authService.isAdmin()) throw new Error('Admin authorization required.');
     const table = this._getTableForType(type);
     const item = storage.getItem(table, id);
     if (!item) throw new Error('Item not found.');
-
     const newStatus = item.status === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE';
     storage.update(table, id, { status: newStatus });
+    await storage.saveTable(table, true); // Best-effort; non-critical toggle
     auditService.log('MASTER_STATUS_TOGGLED', type.toUpperCase(), id, `Toggled status of ${item.name} to ${newStatus}`);
     this._broadcastChange();
     return newStatus;
   }
 
-  deleteItem(type, id, force = false) {
+  async deleteItem(type, id, force = false) {
     if (!authService.isAdmin()) throw new Error('Admin authorization required.');
     const table = this._getTableForType(type);
     const item = storage.getItem(table, id);
@@ -1153,12 +1140,20 @@ class MasterDataService {
 
     if (depCheck.hasDependencies && force) {
       storage.update(table, id, { status: 'INACTIVE' });
+      const ok = await storage.saveTable(table, true);
+      if (!ok) throw new CloudSaveError('❌ Cloud Save Failed: Item deactivation not confirmed.');
       auditService.log('MASTER_ITEM_DEACTIVATED', type.toUpperCase(), id, `Item had dependencies; soft deactivated '${item.name}'`);
       this._broadcastChange();
       return { softDeactivated: true, message: `'${item.name}' was deactivated to preserve existing machine records.` };
     }
 
     storage.delete(table, id);
+    const ok = await storage.saveTable(table, true);
+    if (!ok) {
+      // Rollback: re-insert
+      storage.insert(table, item);
+      throw new CloudSaveError('❌ Cloud Save Failed: Item deletion not confirmed.');
+    }
     auditService.log('MASTER_ITEM_DELETED', type.toUpperCase(), id, `Deleted '${item.name}'`);
     this._broadcastChange();
     return { deleted: true, message: `'${item.name}' was successfully deleted.` };

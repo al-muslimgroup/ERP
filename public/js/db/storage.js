@@ -37,6 +37,17 @@ const DUPLICATE_ID_MAP = {
 };
 const duplicateIdMap = DUPLICATE_ID_MAP;
 
+/**
+ * CloudSaveError — thrown when a Firestore write was attempted but HTTP 200 was NOT confirmed.
+ * UI components catch this to keep modals open and show error toast without showing false success.
+ */
+export class CloudSaveError extends Error {
+  constructor(message = 'Cloud Save Failed: Firebase write was not confirmed.') {
+    super(message);
+    this.name = 'CloudSaveError';
+  }
+}
+
 class StorageEngine {
   constructor() {
     this.data = {};
@@ -60,6 +71,9 @@ class StorageEngine {
     this.lastTableUpdates = {};
     this._remoteSyncTimer = null;
     this._isCheckingRemote = false;
+    // Map<tableName, serverUpdateTime> — tracks the server-confirmed updateTime for each table.
+    // Used for clock-skew-safe remote change detection without relying on local clock.
+    this.syncedDocVersions = new Map();
   }
 
   init() {
@@ -109,12 +123,12 @@ class StorageEngine {
           }
         });
         if (!this._remoteSyncTimer) {
-          // Poll every 30s for background synchronization (safe when not typing)
+          // Poll every 6s for real-time multi-device synchronization via sync_manifest (1 doc read)
           this._remoteSyncTimer = setInterval(() => {
             if (!this.isUserTyping()) {
               this.checkAndSyncRemoteChanges();
             }
-          }, 30000);
+          }, 6000);
         }
       }
 
@@ -582,21 +596,33 @@ class StorageEngine {
     }
   }
 
+  /**
+   * Persist a table to localStorage (immediate) and Google Cloud Firestore (confirmed write).
+   *
+   * CONFIRMED WRITE DISCIPLINE:
+   * - Always awaits Firestore HTTP 200 before returning true
+   * - Returns false if cloud write is not confirmed (caller must decide rollback)
+   * - Updates syncedDocVersions with server updateTime on success
+   *
+   * @param {string} table - Table name
+   * @param {boolean|*} dataOrImmediate - Optional new data or immediate flag
+   * @param {boolean} maybeImmediate - Immediate flag if dataOrImmediate is data
+   * @returns {Promise<boolean>} - true if Firestore write confirmed, false otherwise
+   */
   async saveTable(table, dataOrImmediate = null, maybeImmediate = false) {
-    let immediate = false;
+    let immediate = true; // Default to immediate (confirmed write)
     if (typeof dataOrImmediate === 'boolean') {
       immediate = dataOrImmediate;
     } else if (dataOrImmediate !== null && dataOrImmediate !== undefined) {
       this.data[table] = dataOrImmediate;
-      immediate = Boolean(maybeImmediate);
-    } else {
-      immediate = Boolean(maybeImmediate);
+      immediate = Boolean(maybeImmediate) !== false; // default true
     }
 
     const records = this.data[table];
 
+    // 1. Write to localStorage immediately (local cache always updated first)
     try {
-      localStorage.setItem(STORAGE_KEY_PREFIX + table, JSON.stringify(records || []));
+      localStorage.setItem(STORAGE_KEY_PREFIX + table, JSON.stringify(records ?? []));
       localStorage.setItem(STORAGE_KEY_PREFIX + 'version', SCHEMA_VERSION);
       localStorage.setItem(STORAGE_KEY_PREFIX + 'last_saved', new Date().toISOString());
     } catch (err) {
@@ -606,45 +632,95 @@ class StorageEngine {
     if (!this.lastTableUpdates) this.lastTableUpdates = {};
     this.lastTableUpdates[table] = Date.now();
 
-    // Debounced sync to local node server (if running)
+    // Debounced sync to local node server (non-blocking, fire-and-forget)
     if (this._autoPersistDebounce) clearTimeout(this._autoPersistDebounce);
     this._autoPersistDebounce = setTimeout(() => {
       this.persistToServerDatabase();
     }, 250);
 
-    // Immediate Firestore REST write
-    if (this._cloudPersistDebounces && this._cloudPersistDebounces[table]) {
-      clearTimeout(this._cloudPersistDebounces[table]);
-    }
-    if (!this._cloudPersistDebounces) this._cloudPersistDebounces = {};
-
+    // 2. Confirmed Firestore REST write
     this.updateStatusBadge('saving');
 
     const doCloudSave = async () => {
       try {
-        const ok = await firebaseSync.saveTableToFirestore(table, records);
-        if (ok) {
+        const result = await firebaseSync.saveTableToFirestore(table, records);
+        if (result && result.success) {
           this._isCloudConnected = true;
+          // Store server-confirmed updateTime for clock-skew-safe remote detection
+          if (result.updateTime) {
+            this.syncedDocVersions.set(table, result.updateTime);
+          }
           this.updateStatusBadge('saved');
           return true;
         }
+        this._isCloudConnected = false;
+        this.updateStatusBadge('error');
         return false;
       } catch (e) {
         console.warn(`[Storage] Firebase save warning for ${table}:`, e.message);
+        this.updateStatusBadge('error');
         return false;
       }
     };
 
-    if (immediate || table === TABLE_NAMES.SETTINGS) {
-      return await doCloudSave();
+    // Background (healing / init) writes use a short debounce to avoid write storms
+    if (!immediate) {
+      if (!this._cloudPersistDebounces) this._cloudPersistDebounces = {};
+      if (this._cloudPersistDebounces[table]) clearTimeout(this._cloudPersistDebounces[table]);
+      return new Promise(resolve => {
+        this._cloudPersistDebounces[table] = setTimeout(async () => {
+          const res = await doCloudSave();
+          resolve(res);
+        }, 250);
+      });
     }
 
-    return new Promise(resolve => {
-      this._cloudPersistDebounces[table] = setTimeout(async () => {
-        const res = await doCloudSave();
-        resolve(res);
-      }, 100);
-    });
+    // Immediate (user-action) write — await confirmation
+    return await doCloudSave();
+  }
+
+  /**
+   * Atomic write-and-confirm transaction helper.
+   *
+   * Snapshots the current table state, applies mutation in memory, then persists to Firestore.
+   * If the Firestore write fails (HTTP non-200 or network error), the snapshot is restored
+   * and a CloudSaveError is thrown — caller's modal stays open, no false success.
+   *
+   * @param {string} tableName - Table to mutate
+   * @param {Function} mutationFn - Synchronous function that receives data array and mutates it
+   * @returns {Promise<any>} - The updated table data after confirmed cloud write
+   * @throws {CloudSaveError} - If Firestore write was not confirmed
+   */
+  async writeAndConfirm(tableName, mutationFn) {
+    // Snapshot for rollback
+    const snapshot = JSON.parse(JSON.stringify(this.data[tableName] ?? []));
+
+    // Apply mutation in-memory
+    if (!this.data[tableName]) this.data[tableName] = [];
+    mutationFn(this.data[tableName]);
+
+    // Rebuild indexes if needed
+    if (tableName === TABLE_NAMES.MACHINES) {
+      this.rebuildAllIndexes();
+    }
+
+    // Attempt confirmed cloud write
+    const ok = await this.saveTable(tableName, true);
+
+    if (!ok) {
+      // Rollback in-memory state
+      this.data[tableName] = snapshot;
+      if (tableName === TABLE_NAMES.MACHINES) {
+        this.rebuildAllIndexes();
+      }
+      try {
+        localStorage.setItem(STORAGE_KEY_PREFIX + tableName, JSON.stringify(snapshot));
+      } catch (_) {}
+      this.updateStatusBadge('error');
+      throw new CloudSaveError(`❌ Cloud Save Failed: Firebase write for '${tableName}' was not confirmed. Check your connection.`);
+    }
+
+    return this.data[tableName];
   }
 
   isUserTyping() {
@@ -665,22 +741,21 @@ class StorageEngine {
     if (this._isCheckingRemote || this.isUserTyping()) return;
     this._isCheckingRemote = true;
     try {
-      const timestamps = await firebaseSync.fetchTableTimestamps();
-      if (!timestamps || typeof timestamps !== 'object') return;
+      // Fetch sync_manifest: single lightweight document read (~150ms, 1 Firestore read)
+      const manifest = await firebaseSync.fetchSyncManifest();
+      if (!manifest || typeof manifest !== 'object' || Object.keys(manifest).length === 0) return;
 
       const isViewingSettings = typeof window !== 'undefined' && window.state && window.state.get('currentView') === 'settings';
 
       const tablesToUpdate = [];
-      for (const [tbl, remoteTs] of Object.entries(timestamps)) {
+      for (const [tbl, remoteTs] of Object.entries(manifest)) {
         if (!remoteTs) continue;
         // Never pull settings in background while user is viewing settings
-        if (tbl === TABLE_NAMES.SETTINGS && isViewingSettings) {
-          continue;
-        }
-        const remoteTime = new Date(remoteTs).getTime();
-        const localTime = this.lastTableUpdates[tbl] || 0;
-        // If remote Firestore was updated more than 2s after local update
-        if (remoteTime > (localTime + 2000)) {
+        if (tbl === TABLE_NAMES.SETTINGS && isViewingSettings) continue;
+
+        // Use server-confirmed updateTime for comparison (clock-skew-safe)
+        const knownServerTs = this.syncedDocVersions.get(tbl) || '';
+        if (remoteTs > knownServerTs) {
           tablesToUpdate.push(tbl);
         }
       }
@@ -689,11 +764,21 @@ class StorageEngine {
         console.log(`[Storage Multi-Device Sync] 🔄 Remote changes detected in ${tablesToUpdate.length} tables:`, tablesToUpdate);
         let anyUpdated = false;
         for (const tbl of tablesToUpdate) {
-          const freshData = await firebaseSync.fetchTableFromFirestore(tbl);
-          if (freshData !== null && freshData !== undefined) {
-            this.applyIncomingDatabaseRecords({ [tbl]: freshData }, `Remote Cloud (${tbl})`);
-            this.lastTableUpdates[tbl] = Date.now();
-            anyUpdated = true;
+          const result = await firebaseSync.fetchTableFromFirestore(tbl);
+          if (result !== null && result !== undefined) {
+            // result is { data, updateTime } from updated fetchTableFromFirestore
+            const tableData = result.data !== undefined ? result.data : result;
+            const remoteUpdateTime = result.updateTime || manifest[tbl];
+
+            if (tableData !== null && tableData !== undefined) {
+              this.applyIncomingDatabaseRecords({ [tbl]: tableData }, `Remote Cloud (${tbl})`);
+              this.lastTableUpdates[tbl] = Date.now();
+              // Mark that we know about this server version — prevent re-fetching our own writes
+              if (remoteUpdateTime) {
+                this.syncedDocVersions.set(tbl, remoteUpdateTime);
+              }
+              anyUpdated = true;
+            }
           }
         }
         if (anyUpdated) {
@@ -839,6 +924,14 @@ class StorageEngine {
         const hasCloudMachines = Array.isArray(cloudData[TABLE_NAMES.MACHINES]) && cloudData[TABLE_NAMES.MACHINES].length > 0;
         if (hasCloudMachines) {
           this._isCloudConnected = true;
+
+          // Seed syncedDocVersions with server updateTimes to prevent immediately
+          // re-detecting our own startup write as a "remote change" during the first poll cycle
+          const updateTimes = cloudData._updateTimes || {};
+          for (const [tbl, ts] of Object.entries(updateTimes)) {
+            if (ts) this.syncedDocVersions.set(tbl, ts);
+          }
+
           this.applyIncomingDatabaseRecords(cloudData, 'Google Cloud Firestore REST');
           cloudLoadedSuccessfully = true;
         } else if (Array.isArray(this.data[TABLE_NAMES.MACHINES]) && this.data[TABLE_NAMES.MACHINES].length > 0) {
@@ -1032,12 +1125,19 @@ class StorageEngine {
       statusEl.style.color = '#38bdf8';
       statusEl.title = 'Google Cloud Firestore Synchronized (maint-dept-erp)';
       statusEl.innerHTML = '<span style="font-size: 12px; line-height: 1;">☁️</span><span class="db-status-text">Cloud Synced</span>';
-    } else if (status === 'error' || status === 'offline') {
-      statusEl.style.borderColor = 'rgba(239, 68, 68, 0.4)';
-      statusEl.style.background = 'rgba(239, 68, 68, 0.15)';
+    } else if (status === 'error') {
+      // Distinct error state: cloud write was attempted but failed
+      statusEl.style.borderColor = 'rgba(239, 68, 68, 0.5)';
+      statusEl.style.background = 'rgba(239, 68, 68, 0.18)';
       statusEl.style.color = '#f87171';
-      statusEl.title = 'Offline / LocalStorage mode';
-      statusEl.innerHTML = '<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#ef4444;box-shadow:0 0 6px #ef4444;"></span><span class="db-status-text">Local Only</span>';
+      statusEl.title = '❌ Cloud Save Failed — Firebase write not confirmed. Data may be local only.';
+      statusEl.innerHTML = '<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#ef4444;box-shadow:0 0 8px #ef4444;animation:pulse 1s infinite;"></span><span class="db-status-text">Save Error</span>';
+    } else if (status === 'offline') {
+      statusEl.style.borderColor = 'rgba(148, 163, 184, 0.4)';
+      statusEl.style.background = 'rgba(148, 163, 184, 0.12)';
+      statusEl.style.color = '#94a3b8';
+      statusEl.title = 'Offline / LocalStorage mode — reconnect to sync';
+      statusEl.innerHTML = '<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#94a3b8;"></span><span class="db-status-text">Local Only</span>';
     }
   }
 

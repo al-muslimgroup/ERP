@@ -4,6 +4,7 @@
  */
 
 import { storage } from '../db/storage.js';
+import { CloudSaveError } from '../db/storage.js';
 import { TABLE_NAMES, TRANSFER_STATUSES, ROLES, APPROVER_TYPES } from '../db/schema.js';
 import { authService } from './authService.js';
 import { masterDataService } from './masterDataService.js';
@@ -92,9 +93,10 @@ class TransferService {
   }
 
   /**
-   * Initiates a new Machine Transfer Request through the dynamic approval workflow engine
+   * Initiates a new Machine Transfer Request through the dynamic approval workflow engine.
+   * CONFIRMED WRITE: awaits Firestore HTTP 200. Throws CloudSaveError on failure.
    */
-  createTransferRequest({ machineId, destGroupId, destUnitId, destFloorId, destLineId, reason, remarks, documents = [] }) {
+  async createTransferRequest({ machineId, destGroupId, destUnitId, destFloorId, destLineId, reason, remarks, documents = [] }) {
     const user = authService.getCurrentUser() || { id: 'usr-1', name: 'Authorized User', role: 'USER' };
     const machine = storage.getItem(TABLE_NAMES.MACHINES, machineId);
     if (!machine) throw new Error('Machine record not found in ERP database.');
@@ -268,6 +270,21 @@ class TransferService {
 
     storage.insert(TABLE_NAMES.TRANSFER_REQUESTS, newRequest);
 
+    // Confirmed cloud writes — await HTTP 200 for both tables
+    const [machinesOk, requestsOk] = await Promise.all([
+      storage.saveTable(TABLE_NAMES.MACHINES, true),
+      storage.saveTable(TABLE_NAMES.TRANSFER_REQUESTS, true)
+    ]);
+
+    if (!machinesOk || !requestsOk) {
+      // Rollback: restore machine status and remove the inserted request
+      storage.update(TABLE_NAMES.MACHINES, machine.id, { status: machine.status, updatedBy: machine.updatedBy, updatedAt: machine.updatedAt });
+      const requests = storage.getTable(TABLE_NAMES.TRANSFER_REQUESTS);
+      const idx = requests.findIndex(r => r.id === newRequest.id);
+      if (idx !== -1) requests.splice(idx, 1);
+      throw new CloudSaveError('❌ Cloud Save Failed: Transfer request could not be saved to the cloud. Check your connection.');
+    }
+
     // Send notifications to approvers
     notificationService.notify({
       title: '⚠️ Machine Transfer Approval Required',
@@ -291,9 +308,10 @@ class TransferService {
   }
 
   /**
-   * Approves the current step in the transfer approval workflow
+   * Approves the current step in the transfer approval workflow.
+   * CONFIRMED WRITE: awaits Firestore HTTP 200.
    */
-  approveStep(requestId, remarks = '', additionalDocuments = []) {
+  async approveStep(requestId, remarks = '', additionalDocuments = []) {
     const user = authService.getCurrentUser();
     const req = this.getTransferRequestById(requestId);
     if (!req) throw new Error('Transfer request not found.');
@@ -376,6 +394,10 @@ class TransferService {
         updatedAt: now.toISOString()
       });
 
+      // Confirmed cloud write
+      const ok = await storage.saveTable(TABLE_NAMES.TRANSFER_REQUESTS, true);
+      if (!ok) throw new CloudSaveError('❌ Cloud Save Failed: Transfer approval step could not be saved to the cloud.');
+
       notificationService.notify(
         'Transfer Advanced to Next Level',
         `Transfer ${req.requestNumber} (Machine ${req.machineInfo.serialNumber}) approved by ${user.name}. Now awaiting Level ${nextLevel} approval.`,
@@ -395,9 +417,10 @@ class TransferService {
   }
 
   /**
-   * Rejects the transfer request with a mandatory reason
+   * Rejects the transfer request with a mandatory reason.
+   * CONFIRMED WRITE: awaits Firestore HTTP 200.
    */
-  rejectTransfer(requestId, rejectionReason) {
+  async rejectTransfer(requestId, rejectionReason) {
     const user = authService.getCurrentUser();
     const req = this.getTransferRequestById(requestId);
     if (!req) throw new Error('Transfer request not found.');
@@ -457,6 +480,13 @@ class TransferService {
       updatedAt: now.toISOString()
     });
 
+    // Confirmed cloud writes for both affected tables
+    const [machinesOk, requestsOk] = await Promise.all([
+      storage.saveTable(TABLE_NAMES.MACHINES, true),
+      storage.saveTable(TABLE_NAMES.TRANSFER_REQUESTS, true)
+    ]);
+    if (!machinesOk || !requestsOk) throw new CloudSaveError('❌ Cloud Save Failed: Transfer rejection could not be saved to the cloud.');
+
     notificationService.notify(
       'Machine Transfer Rejected',
       `Transfer request ${req.requestNumber} for Machine ${req.machineInfo.serialNumber} was rejected by ${user.name}. Reason: ${rejectionReason}`,
@@ -475,9 +505,10 @@ class TransferService {
   }
 
   /**
-   * Returns transfer request back to requester for revision
+   * Returns transfer request back to requester for revision.
+   * CONFIRMED WRITE: awaits Firestore HTTP 200.
    */
-  returnForRevision(requestId, revisionComments) {
+  async returnForRevision(requestId, revisionComments) {
     const user = authService.getCurrentUser();
     const req = this.getTransferRequestById(requestId);
     if (!req) throw new Error('Transfer request not found.');
@@ -512,6 +543,10 @@ class TransferService {
       updatedAt: now.toISOString()
     });
 
+    // Confirmed cloud write
+    const ok = await storage.saveTable(TABLE_NAMES.TRANSFER_REQUESTS, true);
+    if (!ok) throw new CloudSaveError('❌ Cloud Save Failed: Return-for-revision could not be saved to the cloud.');
+
     notificationService.notify(
       'Transfer Returned for Revision',
       `Transfer ${req.requestNumber} for Machine ${req.machineInfo.serialNumber} was returned by ${user.name} for revision. Note: ${revisionComments}`,
@@ -530,9 +565,10 @@ class TransferService {
   }
 
   /**
-   * Resubmits a revised transfer request
+   * Resubmits a revised transfer request.
+   * CONFIRMED WRITE: awaits Firestore HTTP 200.
    */
-  resubmitTransfer(requestId, { destGroupId, destUnitId, destFloorId, destLineId, reason, remarks, documents = [] }) {
+  async resubmitTransfer(requestId, { destGroupId, destUnitId, destFloorId, destLineId, reason, remarks, documents = [] }) {
     const user = authService.getCurrentUser();
     const req = this.getTransferRequestById(requestId);
     if (!req) throw new Error('Transfer request not found.');
@@ -602,13 +638,18 @@ class TransferService {
       `Resubmitted with new destination ${destPath}.`
     );
 
+    // Confirmed cloud write
+    const ok = await storage.saveTable(TABLE_NAMES.TRANSFER_REQUESTS, true);
+    if (!ok) throw new CloudSaveError('❌ Cloud Save Failed: Transfer resubmission could not be saved to the cloud.');
+
     return updated;
   }
 
   /**
-   * Cancels a transfer request
+   * Cancels a transfer request.
+   * CONFIRMED WRITE: awaits Firestore HTTP 200.
    */
-  cancelTransfer(requestId, reason = 'Cancelled by requester') {
+  async cancelTransfer(requestId, reason = 'Cancelled by requester') {
     const user = authService.getCurrentUser();
     const req = this.getTransferRequestById(requestId);
     if (!req) throw new Error('Transfer request not found.');
@@ -656,13 +697,21 @@ class TransferService {
       `Transfer ${req.requestNumber} cancelled by ${user.name}: ${reason}`
     );
 
+    // Confirmed cloud writes for both affected tables
+    const [machinesOk, requestsOk] = await Promise.all([
+      storage.saveTable(TABLE_NAMES.MACHINES, true),
+      storage.saveTable(TABLE_NAMES.TRANSFER_REQUESTS, true)
+    ]);
+    if (!machinesOk || !requestsOk) throw new CloudSaveError('❌ Cloud Save Failed: Transfer cancellation could not be saved to the cloud.');
+
     return updated;
   }
 
   /**
-   * FINAL EXECUTION: Atomically changes physical machine location in live inventory database
+   * FINAL EXECUTION: Atomically changes physical machine location in live inventory database.
+   * CONFIRMED WRITE: awaits Firestore HTTP 200 for all 3 affected tables.
    */
-  executeFinalTransfer(requestId, history = null, docs = null) {
+  async executeFinalTransfer(requestId, history = null, docs = null) {
     const user = authService.getCurrentUser();
     const req = this.getTransferRequestById(requestId);
     if (!req) throw new Error('Transfer request not found.');
@@ -754,6 +803,16 @@ class TransferService {
       machine.serialNumber,
       `Physical location moved from [${req.sourcePath}] to [${req.destPath}] via Request ${req.requestNumber}. Approved by ${user.name}.`
     );
+
+    // Confirmed cloud writes for all 3 tables atomically
+    const [machinesOk, transfersOk, requestsOk] = await Promise.all([
+      storage.saveTable(TABLE_NAMES.MACHINES, true),
+      storage.saveTable(TABLE_NAMES.TRANSFERS, true),
+      storage.saveTable(TABLE_NAMES.TRANSFER_REQUESTS, true)
+    ]);
+    if (!machinesOk || !transfersOk || !requestsOk) {
+      throw new CloudSaveError('❌ Cloud Save Failed: Transfer execution could not be fully confirmed by the cloud. Please verify data integrity.');
+    }
 
     // 5. Automatic Machine Lifecycle History Record
     historyService.recordActivity({

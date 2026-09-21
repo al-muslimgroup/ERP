@@ -1231,13 +1231,17 @@ export function initInventoryTableEvents() {
         try {
           const allFiltered = machineService.getMachines({ ...filters, limit: 'ALL' });
           const idsToDelete = allFiltered.items.map(m => m.id);
-          const res = machineService.bulkPermanentDelete(idsToDelete, 'Admin mass delete filtered');
+          const res = await machineService.bulkPermanentDelete(idsToDelete, 'Admin mass delete filtered');
           state.clearSelection();
           state.resetFilters();
           state.emit('inventory:updated');
-          notificationService.success(`Deleted ${res.deletedCount} machines successfully.`);
+          notificationService.success(`✅ Deleted ${res.deletedCount} machines and saved to cloud.`);
         } catch (err) {
-          notificationService.error(err.message);
+          if (err.name === 'CloudSaveError') {
+            notificationService.error(err.message || '❌ Cloud Save Failed: Bulk deletion not confirmed.');
+          } else {
+            notificationService.error(err.message);
+          }
         }
       }
     });
@@ -1304,12 +1308,16 @@ export function initInventoryTableEvents() {
     if (confirmed) {
       try {
         const idList = Array.from(selIds);
-        const result = machineService.bulkPermanentDelete(idList, 'Admin selected bulk deletion');
+        const result = await machineService.bulkPermanentDelete(idList, 'Admin selected bulk deletion');
         state.clearSelection();
         state.emit('inventory:updated');
-        notificationService.success(`Successfully deleted ${result.deletedCount} machine(s). Inventory updated.`);
+        notificationService.success(`✅ Successfully deleted ${result.deletedCount} machine(s) and saved to cloud.`);
       } catch (err) {
-        notificationService.error(err.message || 'Failed to delete selected machines.');
+        if (err.name === 'CloudSaveError') {
+          notificationService.error(err.message || '❌ Cloud Save Failed: Bulk deletion not confirmed.');
+        } else {
+          notificationService.error(err.message || 'Failed to delete selected machines.');
+        }
       }
     }
   };

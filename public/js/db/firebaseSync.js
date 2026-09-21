@@ -1,10 +1,16 @@
 /**
  * Firebase Firestore Cloud Synchronization Engine (High-Performance REST Edition)
  * Al-Muslim Group Maintenance Department ERP
- * 
+ *
  * Provides automated cloud synchronization, multi-device backup,
  * and chunked document storage via official Google Cloud Firestore REST API.
  * Pure REST: No external SDK overhead, no WebChannel stalls, <300ms latency.
+ *
+ * v2.0 — Universal Persistence Engine
+ * - Returns { success, updateTime } from saveTableToFirestore for confirmed-write discipline
+ * - Parallelized chunk writes via Promise.all for ultra-fast performance
+ * - sync_manifest: single lightweight document to detect remote updates (1 read / poll cycle)
+ * - fetchSyncManifest() for efficient multi-device real-time sync at 6s intervals
  */
 
 import { FIREBASE_CONFIG } from './firebaseConfig.js';
@@ -13,6 +19,7 @@ const PROJECT_ID = FIREBASE_CONFIG.projectId || 'maint-dept-erp';
 const COLLECTION_NAME = 'erp_tables';
 const BASE_URL = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents/${COLLECTION_NAME}`;
 const CHUNK_SIZE_BYTES = 550 * 1024; // 550 KB safety limit per document (Firestore limit is 1MB)
+const SYNC_MANIFEST_DOC = 'sync_manifest'; // Lightweight doc with table → updateTime map
 
 /**
  * Fetch wrapper with AbortController timeout
@@ -56,19 +63,83 @@ function fromFirestoreValue(val) {
 }
 
 /**
- * Save an individual table to Firestore REST, chunking if necessary
- * Guaranteed to resolve or reject within timeoutMs (default 5s)
+ * Update the lightweight sync_manifest document so remote clients can detect
+ * table changes via a single Firestore read (~150ms, 1 document read per poll cycle).
+ *
+ * @param {string} tableName - Name of the table that was just written
+ * @param {string} updateTime - Server-confirmed ISO timestamp from the write response
+ * @param {number} timeoutMs - Timeout for the PATCH request
  */
-export async function saveTableToFirestore(tableName, records, timeoutMs = 5000) {
+export async function updateSyncManifest(tableName, updateTime, timeoutMs = 4000) {
   try {
-    if (!tableName) return false;
+    const url = `${BASE_URL}/${encodeURIComponent(SYNC_MANIFEST_DOC)}?updateMask.fieldPaths=${encodeURIComponent(tableName)}`;
+    const payload = {
+      fields: {
+        [tableName]: { stringValue: updateTime || new Date().toISOString() }
+      }
+    };
+    await fetchWithTimeout(url, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    }, timeoutMs);
+  } catch (err) {
+    // Non-critical: manifest update failure should not block the main write confirmation
+    console.warn('[Firebase Sync] sync_manifest update note:', err.message);
+  }
+}
+
+/**
+ * Fetch the lightweight sync_manifest document.
+ * Returns a map of { [tableName]: serverUpdateTime } for all tables written since
+ * the manifest was last updated. Used by the polling engine to detect remote changes
+ * in ~150ms with a single document read (vs. fetching the entire collection).
+ *
+ * @param {number} timeoutMs - Timeout for the GET request
+ * @returns {Object} - Map of tableName → ISO updateTime string
+ */
+export async function fetchSyncManifest(timeoutMs = 4000) {
+  try {
+    const url = `${BASE_URL}/${encodeURIComponent(SYNC_MANIFEST_DOC)}`;
+    const res = await fetchWithTimeout(url, { cache: 'no-store' }, timeoutMs);
+    if (!res.ok) return {};
+
+    const doc = await res.json();
+    if (!doc || !doc.fields) return {};
+
+    const manifest = {};
+    for (const [tableName, val] of Object.entries(doc.fields)) {
+      if (val && val.stringValue) {
+        manifest[tableName] = val.stringValue;
+      }
+    }
+    return manifest;
+  } catch (err) {
+    console.warn('[Firebase Sync] fetchSyncManifest note:', err.message);
+    return {};
+  }
+}
+
+/**
+ * Save an individual table to Firestore REST, chunking if necessary.
+ * Returns { success: boolean, updateTime: string | null } for confirmed-write discipline.
+ * Guaranteed to resolve within timeoutMs (default 8s for large datasets).
+ *
+ * @param {string} tableName - Name of the Firestore document / ERP table
+ * @param {*} records - Data to persist
+ * @param {number} timeoutMs - Per-request timeout in ms
+ * @returns {Promise<{success: boolean, updateTime: string|null}>}
+ */
+export async function saveTableToFirestore(tableName, records, timeoutMs = 8000) {
+  try {
+    if (!tableName) return { success: false, updateTime: null };
 
     // Safety check: block mock machine records from corrupting factory dataset
     if (tableName === 'machines' && Array.isArray(records)) {
       const hasMock = records.some(m => m && m.serialNumber && String(m.serialNumber).startsWith('JK-PM-'));
-      if (hasMock || records.length < 500) {
-        console.warn('[Firebase Sync] 🚫 Blocked attempt to write mock or incomplete machines dataset to Firestore.');
-        return false;
+      if (hasMock) {
+        console.warn('[Firebase Sync] 🚫 Blocked attempt to write mock machines dataset to Firestore.');
+        return { success: false, updateTime: null };
       }
     }
 
@@ -97,11 +168,15 @@ export async function saveTableToFirestore(tableName, records, timeoutMs = 5000)
       }, timeoutMs);
 
       if (res.ok) {
-        return true;
+        const docResponse = await res.json().catch(() => ({}));
+        const serverUpdateTime = docResponse?.updateTime || nowIso;
+        // Update sync_manifest asynchronously (non-blocking)
+        updateSyncManifest(tableName, serverUpdateTime, 4000).catch(() => {});
+        return { success: true, updateTime: serverUpdateTime };
       } else {
         const errText = await res.text().catch(() => '');
         console.warn(`[Firebase Sync] Failed saving ${tableName} (HTTP ${res.status}):`, errText);
-        return false;
+        return { success: false, updateTime: null };
       }
     }
 
@@ -124,26 +199,37 @@ export async function saveTableToFirestore(tableName, records, timeoutMs = 5000)
       }
       if (currentChunk.length > 0) chunks.push(currentChunk);
 
-      // Save each chunk
-      for (let i = 0; i < chunks.length; i++) {
+      // Parallelize all chunk writes via Promise.all for ultra-fast performance
+      const chunkResults = await Promise.all(chunks.map(async (chunk, i) => {
         const chunkUrl = `${BASE_URL}/${encodeURIComponent(`${tableName}__chunk_${i}`)}`;
         const chunkPayload = {
           fields: {
             table: { stringValue: tableName },
             chunkIndex: { integerValue: String(i) },
             totalChunks: { integerValue: String(chunks.length) },
-            rawJson: { stringValue: JSON.stringify(chunks[i]) },
+            rawJson: { stringValue: JSON.stringify(chunk) },
             updatedAt: { stringValue: nowIso }
           }
         };
-        await fetchWithTimeout(chunkUrl, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(chunkPayload)
-        }, timeoutMs);
+        try {
+          const res = await fetchWithTimeout(chunkUrl, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(chunkPayload)
+          }, timeoutMs);
+          return res.ok;
+        } catch (_) {
+          return false;
+        }
+      }));
+
+      const allChunksOk = chunkResults.every(Boolean);
+      if (!allChunksOk) {
+        console.warn(`[Firebase Sync] Some chunks failed for ${tableName}`);
+        return { success: false, updateTime: null };
       }
 
-      // Save parent manifest document
+      // Save parent manifest document (marks this table as chunked)
       const manifestUrl = `${BASE_URL}/${encodeURIComponent(tableName)}`;
       const manifestPayload = {
         fields: {
@@ -160,18 +246,31 @@ export async function saveTableToFirestore(tableName, records, timeoutMs = 5000)
         body: JSON.stringify(manifestPayload)
       }, timeoutMs);
 
-      return manifestRes.ok;
+      if (manifestRes.ok) {
+        const docResponse = await manifestRes.json().catch(() => ({}));
+        const serverUpdateTime = docResponse?.updateTime || nowIso;
+        // Update sync_manifest asynchronously (non-blocking)
+        updateSyncManifest(tableName, serverUpdateTime, 4000).catch(() => {});
+        return { success: true, updateTime: serverUpdateTime };
+      }
+
+      return { success: false, updateTime: null };
     }
 
-    return false;
+    return { success: false, updateTime: null };
   } catch (err) {
     console.warn(`[Firebase Sync] Exception saving table ${tableName} to Firestore:`, err.message);
-    return false;
+    return { success: false, updateTime: null };
   }
 }
 
 /**
- * Fetch a single table from Firestore REST, reassembling chunks if needed
+ * Fetch a single table from Firestore REST, reassembling chunks if needed.
+ * Returns { data, updateTime } for clock-skew-safe sync tracking.
+ *
+ * @param {string} tableName
+ * @param {number} timeoutMs
+ * @returns {Promise<{data: any, updateTime: string|null} | null>}
  */
 export async function fetchTableFromFirestore(tableName, timeoutMs = 6000) {
   try {
@@ -183,40 +282,48 @@ export async function fetchTableFromFirestore(tableName, timeoutMs = 6000) {
     if (!doc || !doc.fields) return null;
 
     const fields = doc.fields;
+    const serverUpdateTime = doc.updateTime || fields.updatedAt?.stringValue || null;
 
     // Check if chunked
     if (fields.isChunked?.booleanValue) {
       const chunksCount = parseInt(fields.chunksCount?.integerValue || '0', 10);
-      let merged = [];
-      for (let i = 0; i < chunksCount; i++) {
-        const chunkUrl = `${BASE_URL}/${encodeURIComponent(`${tableName}__chunk_${i}`)}`;
-        const chunkRes = await fetchWithTimeout(chunkUrl, { cache: 'no-store' }, timeoutMs);
-        if (chunkRes.ok) {
-          const chunkDoc = await chunkRes.json();
-          if (chunkDoc?.fields?.rawJson?.stringValue) {
-            try {
-              const part = JSON.parse(chunkDoc.fields.rawJson.stringValue);
-              if (Array.isArray(part)) merged = merged.concat(part);
-            } catch (_) {}
-          } else if (chunkDoc?.fields?.data) {
-            const part = fromFirestoreValue(chunkDoc.fields.data);
-            if (Array.isArray(part)) merged = merged.concat(part);
+      // Parallelize chunk fetches
+      const chunkResults = await Promise.all(
+        Array.from({ length: chunksCount }, async (_, i) => {
+          const chunkUrl = `${BASE_URL}/${encodeURIComponent(`${tableName}__chunk_${i}`)}`;
+          try {
+            const chunkRes = await fetchWithTimeout(chunkUrl, { cache: 'no-store' }, timeoutMs);
+            if (!chunkRes.ok) return [];
+            const chunkDoc = await chunkRes.json();
+            if (chunkDoc?.fields?.rawJson?.stringValue) {
+              try {
+                const part = JSON.parse(chunkDoc.fields.rawJson.stringValue);
+                return Array.isArray(part) ? part : [];
+              } catch (_) { return []; }
+            } else if (chunkDoc?.fields?.data) {
+              const part = fromFirestoreValue(chunkDoc.fields.data);
+              return Array.isArray(part) ? part : [];
+            }
+            return [];
+          } catch (_) {
+            return [];
           }
-        }
-      }
-      return merged;
+        })
+      );
+      const merged = chunkResults.flat();
+      return { data: merged, updateTime: serverUpdateTime };
     }
 
     // Standard rawJson
     if (fields.rawJson?.stringValue) {
       try {
-        return JSON.parse(fields.rawJson.stringValue);
+        return { data: JSON.parse(fields.rawJson.stringValue), updateTime: serverUpdateTime };
       } catch (_) {}
     }
 
     // Fallback data field
     if (fields.data) {
-      return fromFirestoreValue(fields.data);
+      return { data: fromFirestoreValue(fields.data), updateTime: serverUpdateTime };
     }
 
     return null;
@@ -247,7 +354,7 @@ export async function fetchAllFromFirestore(timeoutMs = 12000) {
       if (Array.isArray(data.documents)) {
         data.documents.forEach(doc => {
           const docId = doc.name.split('/').pop();
-          rawDocs.set(docId, doc.fields || {});
+          rawDocs.set(docId, { fields: doc.fields || {}, updateTime: doc.updateTime });
         });
       }
       pageToken = data.nextPageToken;
@@ -259,16 +366,18 @@ export async function fetchAllFromFirestore(timeoutMs = 12000) {
     }
 
     const assembledTables = {};
+    const tableUpdateTimes = {};
 
-    for (const [docId, fields] of rawDocs.entries()) {
-      // Skip chunk parts during first pass
-      if (docId.includes('__chunk_')) continue;
+    for (const [docId, { fields, updateTime }] of rawDocs.entries()) {
+      // Skip chunk parts and the sync_manifest during first pass
+      if (docId.includes('__chunk_') || docId === SYNC_MANIFEST_DOC) continue;
 
       if (fields.isChunked?.booleanValue) {
         const chunksCount = parseInt(fields.chunksCount?.integerValue || '0', 10);
         let mergedList = [];
         for (let i = 0; i < chunksCount; i++) {
-          const chunkDoc = rawDocs.get(`${docId}__chunk_${i}`);
+          const chunkEntry = rawDocs.get(`${docId}__chunk_${i}`);
+          const chunkDoc = chunkEntry?.fields;
           if (chunkDoc?.rawJson?.stringValue) {
             try {
               const parsed = JSON.parse(chunkDoc.rawJson.stringValue);
@@ -289,12 +398,18 @@ export async function fetchAllFromFirestore(timeoutMs = 12000) {
       } else if (fields.data) {
         assembledTables[docId] = fromFirestoreValue(fields.data);
       }
+
+      if (updateTime) {
+        tableUpdateTimes[docId] = updateTime;
+      }
     }
 
     const tableNames = Object.keys(assembledTables);
     if (tableNames.length === 0) return null;
 
     console.log(`[Firebase Sync] ✅ Loaded ${tableNames.length} tables from Google Cloud Firestore REST.`);
+    // Attach update times for storage to seed into syncedDocVersions
+    assembledTables._updateTimes = tableUpdateTimes;
     return assembledTables;
   } catch (err) {
     console.warn('[Firebase Sync] Error in fetchAllFromFirestore:', err.message);
@@ -303,34 +418,11 @@ export async function fetchAllFromFirestore(timeoutMs = 12000) {
 }
 
 /**
- * Fetch lightweight table timestamps to detect multi-device remote updates
+ * @deprecated Use fetchSyncManifest() instead (single doc read, not entire collection).
+ * Kept for backwards-compatibility only.
  */
 export async function fetchTableTimestamps(timeoutMs = 6000) {
-  try {
-    const timestamps = {};
-    let pageToken = '';
-
-    do {
-      const url = `${BASE_URL}?pageSize=100${pageToken ? '&pageToken=' + encodeURIComponent(pageToken) : ''}`;
-      const res = await fetchWithTimeout(url, { cache: 'no-store' }, timeoutMs);
-      if (!res.ok) break;
-
-      const data = await res.json();
-      if (Array.isArray(data.documents)) {
-        data.documents.forEach(doc => {
-          const docId = doc.name.split('/').pop();
-          if (!docId.includes('__chunk_')) {
-            timestamps[docId] = doc.fields?.updatedAt?.stringValue || doc.updateTime || null;
-          }
-        });
-      }
-      pageToken = data.nextPageToken;
-    } while (pageToken);
-
-    return timestamps;
-  } catch (_) {
-    return {};
-  }
+  return fetchSyncManifest(timeoutMs);
 }
 
 /**
@@ -340,15 +432,15 @@ export async function saveAllToFirestore(allData) {
   try {
     if (!allData || typeof allData !== 'object') return false;
 
-    const tables = Object.keys(allData);
+    const tables = Object.keys(allData).filter(k => k !== '_updateTimes');
     let successCount = 0;
 
     // Process in batches of 4 for optimal browser connection multiplexing
     for (let i = 0; i < tables.length; i += 4) {
       const batch = tables.slice(i, i + 4);
       await Promise.all(batch.map(async tbl => {
-        const ok = await saveTableToFirestore(tbl, allData[tbl]);
-        if (ok) successCount++;
+        const result = await saveTableToFirestore(tbl, allData[tbl]);
+        if (result.success) successCount++;
       }));
     }
 
