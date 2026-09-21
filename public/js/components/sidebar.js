@@ -210,8 +210,8 @@ export function renderSidebar() {
           <div class="brand-text-container" style="min-width: 0; flex: 1; display: flex; flex-direction: column; justify-content: center; overflow: visible;">
             <div class="brand-title-row" style="display: flex; align-items: center; justify-content: space-between; gap: 6px; min-width: 0; width: 100%;">
               <span class="brand-text-title" style="font-weight: 800; font-size: 13.5px; letter-spacing: 0.5px; color: #ffffff; line-height: 1.2; text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6); white-space: nowrap;">AL-MUSLIM GROUP</span>
-              <span class="brand-status-pill" title="Production System Active" style="display: inline-flex; align-items: center; gap: 4px; background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.4); border-radius: 9999px; padding: 1.5px 7px; font-size: 8.5px; font-weight: 700; color: #34d399; letter-spacing: 0.5px; flex-shrink: 0; white-space: nowrap;">
-                <span class="brand-status-dot" style="width: 5px; height: 5px; border-radius: 50%; background: #10b981; box-shadow: 0 0 6px #10b981; display: inline-block;"></span>PROD
+              <span class="brand-status-pill" title="Live System Active" style="display: inline-flex; align-items: center; gap: 4px; background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.4); border-radius: 9999px; padding: 1.5px 7px; font-size: 8.5px; font-weight: 700; color: #34d399; letter-spacing: 0.5px; flex-shrink: 0; white-space: nowrap;">
+                <span class="brand-status-dot" style="width: 5px; height: 5px; border-radius: 50%; background: #10b981; box-shadow: 0 0 6px #10b981; display: inline-block;"></span>Live
               </span>
             </div>
             <div class="brand-text-sub" style="font-size: 8.5px; color: #38bdf8; font-weight: 700; text-transform: uppercase; letter-spacing: 0.6px; margin-top: 3px; line-height: 1.2; white-space: nowrap;" title="Maintenance Department ERP">
