@@ -61,6 +61,13 @@ export function renderQrScannerModal() {
           <!-- Scanner Container for Html5Qrcode -->
           <div id="qr-reader-container" style="width: 100%; height: 100%; position: absolute; inset: 0;"></div>
 
+          <!-- Camera facing mode badge (indicates Back vs Front camera, can click to toggle) -->
+          <button type="button" id="qr-camera-mode-badge" style="position: absolute; top: 12px; z-index: 15; background: rgba(15, 23, 42, 0.88); backdrop-filter: blur(8px); border: 1.5px solid #38bdf8; border-radius: 20px; padding: 6px 14px; font-size: 11.5px; font-weight: 700; color: #38bdf8; display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; box-shadow: 0 4px 14px rgba(0,0,0,0.6);" title="Tap to switch camera">
+            <span id="qr-camera-dot" style="width: 8px; height: 8px; border-radius: 50%; background: #22c55e; display: inline-block; box-shadow: 0 0 6px #22c55e;"></span>
+            <span id="qr-camera-mode-text">📷 Back Camera (Rear)</span>
+            <span style="font-size: 10px; opacity: 0.75; margin-left: 2px;">⇄ Flip</span>
+          </button>
+
           <!-- Crosshair / Aiming Box -->
           <div class="qr-aiming-box" style="position: absolute; width: min(72vw, 250px); height: min(72vw, 250px); border: 2.5px solid #38bdf8; border-radius: 18px; box-shadow: 0 0 0 4000px rgba(0,0,0,0.55); pointer-events: none; display: flex; align-items: center; justify-content: center;">
             <!-- Laser scanning sweep -->
@@ -113,9 +120,9 @@ export function renderQrScannerModal() {
               🔦 <span class="btn-text-torch">Torch</span>
             </button>
 
-            <!-- Flip Camera -->
-            <button type="button" id="btn-qr-switch-camera" class="btn btn-secondary btn-sm" style="min-height: 42px; min-width: 44px; padding: 6px 12px; font-weight: 700; font-size: 12px; display: inline-flex; align-items: center; gap: 5px;" title="Switch Camera">
-              🔄 <span class="btn-text-flip">Flip</span>
+            <!-- Flip Camera (Front / Back) -->
+            <button type="button" id="btn-qr-switch-camera" class="btn btn-secondary btn-sm" style="min-height: 42px; min-width: 44px; padding: 6px 12px; font-weight: 700; font-size: 12px; display: inline-flex; align-items: center; gap: 5px; border-color: #38bdf8;" title="Switch between Back and Front Camera">
+              🔄 <span class="btn-text-flip">Switch to Front</span>
             </button>
 
             <!-- File Upload -->
@@ -189,15 +196,17 @@ export async function initQrScannerModalEvents({ onScanSuccess, onManualSearchRe
   const errorEl = document.getElementById('qr-camera-error');
   const errorMsgEl = document.getElementById('qr-camera-error-msg');
   const flipBtn = document.getElementById('btn-qr-switch-camera');
+  const badgeBtn = document.getElementById('qr-camera-mode-badge');
   const torchBtn = document.getElementById('btn-qr-torch');
   const manualBtn = document.getElementById('btn-qr-manual-fallback');
   const errorManualBtn = document.getElementById('btn-qr-error-manual');
   const fileUploadInp = document.getElementById('file-qr-upload');
   const fileUploadBtnInp = document.getElementById('file-qr-upload-btn');
 
-  let currentCameraIndex = 0;
   let availableCameras = [];
   let isScanningActive = false;
+  let isBackFacing = true; // ALWAYS start with Back (Rear / Environment) Camera first!
+  let isSwitching = false;
   isTorchOn = false;
 
   const destroyScanner = async () => {
@@ -245,7 +254,8 @@ export async function initQrScannerModalEvents({ onScanSuccess, onManualSearchRe
     try {
       if (loadingEl) {
         loadingEl.style.display = 'block';
-        loadingEl.querySelector('div:nth-child(2)').textContent = 'Analyzing Photo...';
+        const msg = loadingEl.querySelector('div:nth-child(2)');
+        if (msg) msg.textContent = 'Analyzing Photo...';
       }
       const html5Qr = new Html5Qrcode('qr-reader-container');
       const result = await html5Qr.scanFile(file, true);
@@ -297,6 +307,74 @@ export async function initQrScannerModalEvents({ onScanSuccess, onManualSearchRe
     });
   }
 
+  // Camera Facing Detection Helpers
+  const isBackCameraDevice = (cam) => {
+    if (!cam) return false;
+    const label = (cam.label || '').toLowerCase();
+    return label.includes('back') || 
+           label.includes('rear') || 
+           label.includes('environment') || 
+           label.includes('facing back') ||
+           label.includes('main') ||
+           label.includes('0, facing back');
+  };
+
+  const isFrontCameraDevice = (cam) => {
+    if (!cam) return false;
+    const label = (cam.label || '').toLowerCase();
+    return label.includes('front') || 
+           label.includes('user') || 
+           label.includes('selfie') || 
+           label.includes('facing front') ||
+           label.includes('1, facing front');
+  };
+
+  const resolveCameraTarget = () => {
+    if (isBackFacing) {
+      const backCam = availableCameras.find(isBackCameraDevice);
+      if (backCam && backCam.id) return backCam.id;
+      // Default standard constraint: Rear/Back camera
+      return { facingMode: 'environment' };
+    } else {
+      const frontCam = availableCameras.find(isFrontCameraDevice);
+      if (frontCam && frontCam.id) return frontCam.id;
+      // Default standard constraint: Front camera
+      return { facingMode: 'user' };
+    }
+  };
+
+  const updateCameraUI = (isBack) => {
+    const modeText = document.getElementById('qr-camera-mode-text');
+    const dot = document.getElementById('qr-camera-dot');
+    const flipText = document.querySelector('.btn-text-flip');
+
+    if (isBack) {
+      if (modeText) modeText.textContent = '📷 Back Camera (Rear)';
+      if (dot) {
+        dot.style.background = '#22c55e';
+        dot.style.boxShadow = '0 0 6px #22c55e';
+      }
+      if (flipText) flipText.textContent = 'Switch to Front';
+      if (torchBtn) {
+        torchBtn.disabled = false;
+        torchBtn.style.opacity = '1';
+        torchBtn.title = 'Toggle Flashlight / Torch';
+      }
+    } else {
+      if (modeText) modeText.textContent = '🤳 Front Camera';
+      if (dot) {
+        dot.style.background = '#38bdf8';
+        dot.style.boxShadow = '0 0 6px #38bdf8';
+      }
+      if (flipText) flipText.textContent = 'Switch to Back';
+      if (torchBtn) {
+        torchBtn.disabled = true;
+        torchBtn.style.opacity = '0.45';
+        torchBtn.title = 'Torch only available on Back Camera';
+      }
+    }
+  };
+
   // Initialize Html5Qrcode
   if (typeof Html5Qrcode === 'undefined') {
     if (loadingEl) loadingEl.style.display = 'none';
@@ -307,66 +385,97 @@ export async function initQrScannerModalEvents({ onScanSuccess, onManualSearchRe
     return;
   }
 
+  const startCamera = async (targetConfig) => {
+    if (loadingEl) {
+      loadingEl.style.display = 'block';
+      const textNode = loadingEl.querySelector('div:nth-child(2)');
+      if (textNode) textNode.textContent = isBackFacing ? 'Opening Back Camera...' : 'Opening Front Camera...';
+    }
+    if (errorEl) errorEl.style.display = 'none';
+
+    const config = {
+      fps: 20,
+      qrbox: (viewfinderWidth, viewfinderHeight) => {
+        const minDim = Math.min(viewfinderWidth, viewfinderHeight);
+        const boxSize = Math.max(200, Math.floor(minDim * 0.75));
+        return { width: boxSize, height: boxSize };
+      },
+      aspectRatio: window.innerWidth <= 640 ? undefined : 1.0
+    };
+
+    try {
+      await activeScanner.start(targetConfig, config, handleDecoded, () => {});
+      isScanningActive = true;
+      if (loadingEl) loadingEl.style.display = 'none';
+
+      // After camera starts and permission is granted, query available cameras to cache their labels
+      try {
+        availableCameras = await Html5Qrcode.getCameras();
+      } catch (_) {}
+
+      updateCameraUI(isBackFacing);
+    } catch (err) {
+      console.warn('Target camera start failed, attempting facing fallback:', err);
+      try {
+        const fallbackConfig = isBackFacing ? { facingMode: 'user' } : { facingMode: 'environment' };
+        await activeScanner.start(fallbackConfig, config, handleDecoded, () => {});
+        isScanningActive = true;
+        isBackFacing = !isBackFacing;
+        if (loadingEl) loadingEl.style.display = 'none';
+
+        try {
+          availableCameras = await Html5Qrcode.getCameras();
+        } catch (_) {}
+
+        updateCameraUI(isBackFacing);
+      } catch (err2) {
+        console.error('All camera attempts failed:', err2);
+        if (loadingEl) loadingEl.style.display = 'none';
+        if (errorEl) {
+          errorEl.style.display = 'flex';
+          errorMsgEl.textContent = err2.message || 'Camera permission denied or camera unavailable.';
+        }
+      }
+    }
+  };
+
+  const switchCameraFacing = async () => {
+    if (isSwitching) return;
+    isSwitching = true;
+    try {
+      await destroyScanner();
+      isBackFacing = !isBackFacing;
+      updateCameraUI(isBackFacing);
+
+      activeScanner = new Html5Qrcode('qr-reader-container');
+      const nextTarget = resolveCameraTarget();
+      await startCamera(nextTarget);
+    } catch (err) {
+      console.error('Camera switch failed:', err);
+    } finally {
+      isSwitching = false;
+    }
+  };
+
+  // Switch camera event listeners (unconditionally bound to both button and viewport badge)
+  if (flipBtn) flipBtn.addEventListener('click', switchCameraFacing);
+  if (badgeBtn) badgeBtn.addEventListener('click', switchCameraFacing);
+
   try {
     activeScanner = new Html5Qrcode('qr-reader-container');
 
+    // Pre-fetch cameras if already permitted
     try {
       availableCameras = await Html5Qrcode.getCameras();
     } catch (_) {
       availableCameras = [];
     }
 
-    const startCamera = async (cameraIdOrFacing) => {
-      if (loadingEl) loadingEl.style.display = 'block';
-      if (errorEl) errorEl.style.display = 'none';
-
-      const config = {
-        fps: 20,
-        qrbox: (viewfinderWidth, viewfinderHeight) => {
-          const minDim = Math.min(viewfinderWidth, viewfinderHeight);
-          const boxSize = Math.max(200, Math.floor(minDim * 0.75));
-          return { width: boxSize, height: boxSize };
-        },
-        aspectRatio: window.innerWidth <= 640 ? undefined : 1.0
-      };
-
-      try {
-        if (cameraIdOrFacing) {
-          await activeScanner.start(cameraIdOrFacing, config, handleDecoded, () => {});
-        } else {
-          await activeScanner.start({ facingMode: 'environment' }, config, handleDecoded, () => {});
-        }
-        isScanningActive = true;
-        if (loadingEl) loadingEl.style.display = 'none';
-      } catch (err) {
-        console.warn('Camera environment start failed, trying user camera fallback:', err);
-        try {
-          await activeScanner.start({ facingMode: 'user' }, config, handleDecoded, () => {});
-          isScanningActive = true;
-          if (loadingEl) loadingEl.style.display = 'none';
-        } catch (err2) {
-          console.error('All camera attempts failed:', err2);
-          if (loadingEl) loadingEl.style.display = 'none';
-          if (errorEl) {
-            errorEl.style.display = 'flex';
-            errorMsgEl.textContent = err2.message || 'Camera permission denied or camera in use.';
-          }
-        }
-      }
-    };
-
-    // Camera flip button
-    if (flipBtn && availableCameras.length > 1) {
-      flipBtn.addEventListener('click', async () => {
-        await destroyScanner();
-        activeScanner = new Html5Qrcode('qr-reader-container');
-        currentCameraIndex = (currentCameraIndex + 1) % availableCameras.length;
-        startCamera(availableCameras[currentCameraIndex].id);
-      });
-    }
-
-    // Default start with rear camera
-    await startCamera(availableCameras.length > 0 ? availableCameras[0].id : null);
+    // ALWAYS start with Rear / Back camera by default
+    isBackFacing = true;
+    updateCameraUI(true);
+    const initialConfig = resolveCameraTarget();
+    await startCamera(initialConfig);
 
   } catch (initErr) {
     console.error('Failed to initialize Html5Qrcode:', initErr);
