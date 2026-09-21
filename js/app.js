@@ -41,7 +41,7 @@ import { renderChangePasswordModal, initChangePasswordModalEvents } from './comp
 import { renderStorageView, initStorageEvents } from './components/storageView.js';
 import { renderPreventiveMaintenanceView, initPreventiveMaintenanceEvents } from './components/preventiveMaintenanceView.js?v=2.6.5';
 import { smartStorageService } from './services/smartStorageService.js';
-import { renderRelocateView, initRelocateViewEvents } from './components/relocateView.js?v=4.6.6';
+import { renderRelocateView, initRelocateViewEvents } from './components/relocateView.js?v=4.6.7';
 import { renderQrCodeView, initQrCodeEvents } from './components/qrCodeView.js?v=4.6.6';
 import { chatService } from './services/chatService.js';
 

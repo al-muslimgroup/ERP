@@ -10,7 +10,7 @@ import { authService } from '../services/authService.js';
 import { masterDataService } from '../services/masterDataService.js';
 import { relocateService } from '../services/relocateService.js';
 import { notificationService } from '../services/notificationService.js';
-import { renderQrScannerModal, initQrScannerModalEvents } from './qrScannerModal.js';
+import { renderQrScannerModal, initQrScannerModalEvents } from './qrScannerModal.js?v=4.6.7';
 import { state } from '../state.js';
 
 let activeTab = 'scan'; // 'scan' | 'idle' | 'approvals' | 'history'
@@ -20,7 +20,7 @@ let completeModalOpen = false;
 let editingScanItem = null; // Item being edited in modal
 let scannedListSearch = ''; // Search query on scanned machines
 let scannedListFilter = 'ALL'; // 'ALL' | 'CORRECT' | 'LINE_MISMATCH' | 'FLOOR_MISMATCH'
-let kpisCollapsedOnMobile = false; // KPI stats compact toggle on mobile
+let kpisCollapsedOnMobile = (typeof window !== 'undefined' && window.innerWidth <= 768); // Default to compact on mobile to maximize card feed area
 
 export function renderRelocateView() {
   const activeSession = relocateService.getActiveSession();
@@ -97,6 +97,9 @@ export function renderRelocateView() {
         ${renderReconciliationModal(activeSession)}
         ${renderEditScanModal(activeSession)}
       </div>
+
+      <!-- Dedicated Scanner Modal Container (Prevents overwriting session modals) -->
+      <div id="relocate-scanner-slot"></div>
 
     </div>
 
@@ -241,7 +244,10 @@ export function renderRelocateView() {
       /* Bottom Sheet Modal Styles on Mobile */
       @media (max-width: 768px) {
         .relocate-view-root {
-          padding: 8px 10px 125px 10px !important;
+          padding: 8px 10px 145px 10px !important;
+          height: auto !important;
+          min-height: 100% !important;
+          overflow-y: visible !important;
         }
 
         .relocate-desktop-actions {
@@ -251,12 +257,16 @@ export function renderRelocateView() {
         .relocate-scanned-feed-wrap {
           min-height: auto !important;
           overflow: visible !important;
+          margin-bottom: 24px !important;
         }
 
         .relocate-scanned-list {
           overflow-y: visible !important;
           max-height: none !important;
-          padding: 8px !important;
+          padding: 8px 8px 145px 8px !important;
+          display: flex !important;
+          flex-direction: column !important;
+          gap: 10px !important;
         }
 
         .relocate-top-nav-card {
@@ -631,6 +641,11 @@ function renderScannedItemsList(session) {
       </div>
     `;
   }).join('');
+
+  return cardsHtml + `
+    <!-- Extra bottom clearance spacer so the last card is 100% visible above mobile fixed action dock -->
+    <div style="height: 130px; width: 100%; flex-shrink: 0;" class="mobile-dock-spacer" aria-hidden="true"></div>
+  `;
 }
 
 function renderLiveScanView(session) {
@@ -679,48 +694,69 @@ function renderLiveScanView(session) {
         </button>
       </div>
 
-      <!-- Live Counters Header (Collapsible on mobile, always visible on desktop) -->
-      <div id="relocate-kpi-container" style="${kpisCollapsedOnMobile ? 'display: none;' : 'display: flex; flex-direction: column; gap: 10px;'}">
-        <div class="relocate-kpi-grid">
-          <div class="relocate-kpi-box" style="border-left: 3px solid #94a3b8;">
-            <div style="font-size: 10.5px; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">Expected Snapshot</div>
-            <div class="relocate-kpi-val" style="color: #fff;">${metrics.expectedTotal}</div>
+      <!-- Live Counters Header (Compact 1-line strip when collapsed on mobile, full grid when expanded) -->
+      ${kpisCollapsedOnMobile ? `
+        <div class="relocate-kpi-compact-strip" style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; background: var(--bg-card); border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: 8px 10px; text-align: center;">
+          <div style="border-right: 1px solid rgba(255,255,255,0.08);">
+            <div style="font-size: 9.5px; color: #94a3b8; text-transform: uppercase; font-weight: 700;">Target</div>
+            <div style="font-size: 15px; font-weight: 900; color: #fff;">${metrics.expectedTotal}</div>
           </div>
-          <div class="relocate-kpi-box" style="border-left: 3px solid #34d399; border-color: rgba(52, 211, 153, 0.3);">
-            <div style="font-size: 10.5px; font-weight: 700; color: #34d399; text-transform: uppercase;">Scanned &amp; Verified</div>
-            <div class="relocate-kpi-val" style="color: #34d399;">${metrics.scannedTotal}</div>
+          <div style="border-right: 1px solid rgba(255,255,255,0.08);">
+            <div style="font-size: 9.5px; color: #34d399; text-transform: uppercase; font-weight: 700;">Verified</div>
+            <div style="font-size: 15px; font-weight: 900; color: #34d399;">${metrics.scannedTotal}</div>
           </div>
-          <div class="relocate-kpi-box" style="border-left: 3px solid #38bdf8; border-color: rgba(56, 189, 248, 0.3);">
-            <div style="font-size: 10.5px; font-weight: 700; color: #38bdf8; text-transform: uppercase;">Idle (Unscanned)</div>
-            <div class="relocate-kpi-val" style="color: #38bdf8;">${metrics.idleCount}</div>
+          <div style="border-right: 1px solid rgba(255,255,255,0.08);">
+            <div style="font-size: 9.5px; color: #38bdf8; text-transform: uppercase; font-weight: 700;">Idle</div>
+            <div style="font-size: 15px; font-weight: 900; color: #38bdf8;">${metrics.idleCount}</div>
           </div>
-          <div class="relocate-kpi-box" style="border-left: 3px solid #fbbf24; border-color: rgba(251, 191, 36, 0.3);">
-            <div style="font-size: 10.5px; font-weight: 700; color: #fbbf24; text-transform: uppercase;">Pending Relocate</div>
-            <div class="relocate-kpi-val" style="color: #fbbf24;">${metrics.pendingRelocationCount}</div>
+          <div>
+            <div style="font-size: 9.5px; color: #fbbf24; text-transform: uppercase; font-weight: 700;">Pending</div>
+            <div style="font-size: 15px; font-weight: 900; color: #fbbf24;">${metrics.pendingRelocationCount}</div>
           </div>
         </div>
+      ` : `
+        <div id="relocate-kpi-container" style="display: flex; flex-direction: column; gap: 10px;">
+          <div class="relocate-kpi-grid">
+            <div class="relocate-kpi-box" style="border-left: 3px solid #94a3b8;">
+              <div style="font-size: 10.5px; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">Expected Snapshot</div>
+              <div class="relocate-kpi-val" style="color: #fff;">${metrics.expectedTotal}</div>
+            </div>
+            <div class="relocate-kpi-box" style="border-left: 3px solid #34d399; border-color: rgba(52, 211, 153, 0.3);">
+              <div style="font-size: 10.5px; font-weight: 700; color: #34d399; text-transform: uppercase;">Scanned &amp; Verified</div>
+              <div class="relocate-kpi-val" style="color: #34d399;">${metrics.scannedTotal}</div>
+            </div>
+            <div class="relocate-kpi-box" style="border-left: 3px solid #38bdf8; border-color: rgba(56, 189, 248, 0.3);">
+              <div style="font-size: 10.5px; font-weight: 700; color: #38bdf8; text-transform: uppercase;">Idle (Unscanned)</div>
+              <div class="relocate-kpi-val" style="color: #38bdf8;">${metrics.idleCount}</div>
+            </div>
+            <div class="relocate-kpi-box" style="border-left: 3px solid #fbbf24; border-color: rgba(251, 191, 36, 0.3);">
+              <div style="font-size: 10.5px; font-weight: 700; color: #fbbf24; text-transform: uppercase;">Pending Relocate</div>
+              <div class="relocate-kpi-val" style="color: #fbbf24;">${metrics.pendingRelocationCount}</div>
+            </div>
+          </div>
 
-        <!-- Line Breakdown Progress Bars -->
-        <div style="background: var(--bg-card); border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: 8px 12px;">
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-            <span style="font-size: 11px; font-weight: 700; color: #fff;">Line Scan Progress:</span>
-            <span style="font-size: 10.5px; color: var(--text-muted);">${metrics.lineBreakdown.length} Lines Targeted</span>
-          </div>
-          <div style="display: flex; gap: 8px; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; padding-bottom: 2px;">
-            ${metrics.lineBreakdown.map(lb => {
-              const isFinished = lb.scanned >= lb.expected && lb.expected > 0;
-              return `
-                <div style="flex-shrink: 0; min-width: 105px; background: rgba(0,0,0,0.25); border: 1px solid ${isFinished ? '#34d399' : 'rgba(255,255,255,0.08)'}; border-radius: 6px; padding: 4px 8px; font-size: 11px;">
-                  <div style="display: flex; justify-content: space-between; font-weight: 700;">
-                    <span style="color: ${isFinished ? '#34d399' : '#fff'};">${lb.lineName}</span>
-                    <span style="color: ${isFinished ? '#34d399' : '#38bdf8'}; font-family: var(--font-mono); margin-left: 6px;">${lb.scanned} / ${lb.expected}</span>
+          <!-- Line Breakdown Progress Bars -->
+          <div style="background: var(--bg-card); border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: 8px 12px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+              <span style="font-size: 11px; font-weight: 700; color: #fff;">Line Scan Progress:</span>
+              <span style="font-size: 10.5px; color: var(--text-muted);">${metrics.lineBreakdown.length} Lines Targeted</span>
+            </div>
+            <div style="display: flex; gap: 8px; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; padding-bottom: 2px;">
+              ${metrics.lineBreakdown.map(lb => {
+                const isFinished = lb.scanned >= lb.expected && lb.expected > 0;
+                return `
+                  <div style="flex-shrink: 0; min-width: 105px; background: rgba(0,0,0,0.25); border: 1px solid ${isFinished ? '#34d399' : 'rgba(255,255,255,0.08)'}; border-radius: 6px; padding: 4px 8px; font-size: 11px;">
+                    <div style="display: flex; justify-content: space-between; font-weight: 700;">
+                      <span style="color: ${isFinished ? '#34d399' : '#fff'};">${lb.lineName}</span>
+                      <span style="color: ${isFinished ? '#34d399' : '#38bdf8'}; font-family: var(--font-mono); margin-left: 6px;">${lb.scanned} / ${lb.expected}</span>
+                    </div>
                   </div>
-                </div>
-              `;
-            }).join('')}
+                `;
+              }).join('')}
+            </div>
           </div>
         </div>
-      </div>
+      `}
 
       <!-- Primary Action Buttons (Desktop inline controls, hidden on mobile in favor of bottom dock) -->
       <div class="relocate-desktop-actions" style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
@@ -1449,16 +1485,21 @@ export function initRelocateViewEvents() {
 
   // Open Camera Scanner helper
   const openCameraScanner = () => {
-    const modalContainer = document.getElementById('relocate-modal-container');
-    if (modalContainer) {
-      modalContainer.innerHTML = renderQrScannerModal();
+    const slot = document.getElementById('relocate-scanner-slot') || document.getElementById('relocate-modal-container');
+    if (slot) {
+      slot.innerHTML = renderQrScannerModal();
       initQrScannerModalEvents({
         onScanSuccess: (decodedText) => {
+          slot.innerHTML = '';
           handleMachineIdentified(decodedText);
         },
         onManualSearchRequest: () => {
+          slot.innerHTML = '';
           manualSearchModalOpen = true;
           refreshView();
+        },
+        onClose: () => {
+          slot.innerHTML = '';
         }
       });
     }
@@ -1603,10 +1644,6 @@ export function initRelocateViewEvents() {
       const needleQuantity = root.querySelector('#confirm-needle-quantity')?.value;
       const remarks = root.querySelector('#confirm-scan-remarks')?.value;
 
-      // Immediately clear pending machine so confirmation modal is completely closed and reset
-      pendingScanMachine = null;
-      refreshView();
-
       try {
         const result = relocateService.recordScan(session.id, currentMachine.id, {
           scannedLineId,
@@ -1614,11 +1651,31 @@ export function initRelocateViewEvents() {
           remarks
         });
 
+        // Clear pending machine and re-render the view so the newly added machine is immediately in the DOM
+        pendingScanMachine = null;
+        refreshView();
+
         if (result && result.duplicate) {
           notificationService.notifyWarning('Duplicate Scan', result.message);
         } else {
           notificationService.notifySuccess('Scan Recorded', `Machine [${currentMachine.serialNumber}] verified at line!`);
         }
+
+        // Scroll the newly scanned machine card into view and highlight it with a glowing border
+        setTimeout(() => {
+          const scanId = result.scanRecord?.scanId;
+          const newCard = scanId ? document.querySelector(`.scanned-machine-card[data-scan-id="${scanId}"]`) : null;
+          if (newCard) {
+            newCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            newCard.style.outline = '2.5px solid #38bdf8';
+            newCard.style.boxShadow = '0 0 24px rgba(56, 189, 248, 0.7)';
+            setTimeout(() => {
+              newCard.style.outline = '';
+              newCard.style.boxShadow = '';
+            }, 3000);
+          }
+        }, 120);
+
       } catch (err) {
         notificationService.notifyError('Scan Failed', 'Error recording scan: ' + (err.message || err));
       }
