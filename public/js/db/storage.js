@@ -105,9 +105,10 @@ class StorageEngine {
           this.checkAndSyncRemoteChanges();
         });
         if (!this._remoteSyncTimer) {
+          // Poll every 15s for faster multi-device synchronization
           this._remoteSyncTimer = setInterval(() => {
             this.checkAndSyncRemoteChanges();
-          }, 30000);
+          }, 15000);
         }
       }
 
@@ -168,7 +169,8 @@ class StorageEngine {
       [TABLE_NAMES.RELOCATION_HISTORY]: [],
       [TABLE_NAMES.RELOCATION_APPROVALS]: [],
       [TABLE_NAMES.DOCUMENTS]: [],
-      [TABLE_NAMES.PERMISSION_PRESETS]: JSON.parse(JSON.stringify(DEFAULT_PERMISSION_PRESETS || []))
+      [TABLE_NAMES.PERMISSION_PRESETS]: JSON.parse(JSON.stringify(DEFAULT_PERMISSION_PRESETS || [])),
+      [TABLE_NAMES.HOMEPAGE_CONFIG]: null
     };
 
     Object.values(TABLE_NAMES).forEach(table => {
@@ -783,6 +785,12 @@ class StorageEngine {
         window.dispatchEvent(new CustomEvent('erp:inventory-updated'));
         if (window.state && typeof window.state.emit === 'function') {
           window.state.emit('inventory:updated');
+        }
+        // Dispatch homepage-specific event when homepage_config is updated from remote
+        if (serverRecs && serverRecs[TABLE_NAMES.HOMEPAGE_CONFIG]) {
+          window.dispatchEvent(new CustomEvent('erp:homepage-updated', {
+            detail: this.data[TABLE_NAMES.HOMEPAGE_CONFIG]
+          }));
         }
       }
     }

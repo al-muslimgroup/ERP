@@ -306,6 +306,11 @@ class WorkflowService {
       return true;
     }
 
+    // 2. Explicit APPROVE permission grant (user-level access control)
+    if (authService.hasAccess('transfers', 'APPROVE')) {
+      return true;
+    }
+
     const currentStepIndex = (transferRequest.currentLevel || 1) - 1;
     const currentStep = transferRequest.levels?.[currentStepIndex];
     if (!currentStep) return false;

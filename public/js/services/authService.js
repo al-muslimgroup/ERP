@@ -199,6 +199,19 @@ class AuthService {
     if (!this.currentUser && typeof localStorage !== 'undefined' && localStorage.getItem('al_muslim_active_user_id')) {
       this.init();
     }
+    // Refresh from storage to get latest permissions (e.g. updated by another device via Firebase sync)
+    if (this.currentUser?.id) {
+      const fresh = storage.getItem(TABLE_NAMES.USERS, this.currentUser.id);
+      if (fresh && fresh.status === 'ACTIVE') {
+        // Only update if something relevant changed (avoid infinite loops)
+        if (JSON.stringify(fresh.permissions) !== JSON.stringify(this.currentUser.permissions) ||
+            fresh.role !== this.currentUser.role ||
+            fresh.roleId !== this.currentUser.roleId ||
+            fresh.presetId !== this.currentUser.presetId) {
+          this.currentUser = fresh;
+        }
+      }
+    }
     return this.currentUser;
   }
 
@@ -535,9 +548,9 @@ class AuthService {
 
   isAdmin() {
     if (this.isSuperAdmin()) return true;
+    // Only check actual role/roleId — not permission checks which could elevate non-admins
     return this.currentUser?.role === 'ADMIN' ||
-           this.currentUser?.roleId === 'role-admin' ||
-           this.hasAccess('user_management', 'VIEW_USERS');
+           this.currentUser?.roleId === 'role-admin';
   }
 
   isManager() {

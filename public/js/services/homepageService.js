@@ -3,11 +3,15 @@
  * Dynamic Home Page Content & Section Management Service
  * Handles live published & draft home page configuration, feature cards,
  * ERP modules showcase, CTA buttons, and corporate branding.
+ * 
+ * ✅ Firebase Synchronized: All published configs write to Firestore.
+ * ✅ Multi-Device Real-Time: Other devices receive updates via 15s polling.
  */
 
 import { storage } from '../db/storage.js';
 import { TABLE_NAMES } from '../db/schema.js';
 import { auditService } from './auditService.js';
+import * as firebaseSync from '../db/firebaseSync.js';
 
 export const DEFAULT_HOMEPAGE_CONFIG = {
   version: '2.6',
@@ -223,27 +227,55 @@ export const DEFAULT_HOMEPAGE_CONFIG = {
   }
 };
 
-const STORAGE_KEY_PUBLISHED = 'al_muslim_homepage_published_config';
+// Draft config key — drafts are local-only until published to Firebase
 const STORAGE_KEY_DRAFT = 'al_muslim_homepage_draft_config';
 
 class HomepageService {
   constructor() {
-    this.init();
+    this._initDraft();
   }
 
-  init() {
+  /**
+   * Initialize draft from Firebase-backed published config if no local draft exists
+   */
+  _initDraft() {
     try {
-      const published = localStorage.getItem(STORAGE_KEY_PUBLISHED);
-      if (!published) {
-        localStorage.setItem(STORAGE_KEY_PUBLISHED, JSON.stringify(DEFAULT_HOMEPAGE_CONFIG));
-      }
       const draft = localStorage.getItem(STORAGE_KEY_DRAFT);
       if (!draft) {
-        localStorage.setItem(STORAGE_KEY_DRAFT, published || JSON.stringify(DEFAULT_HOMEPAGE_CONFIG));
+        // Pre-populate draft from Firebase-synced published config
+        const published = this._getFirebasePublishedConfig();
+        localStorage.setItem(STORAGE_KEY_DRAFT, JSON.stringify(published));
       }
     } catch (e) {
-      console.error('Error initializing HomepageService:', e);
+      console.error('Error initializing HomepageService draft:', e);
     }
+  }
+
+  /**
+   * Get published config from Firebase-synced storage (single source of truth)
+   * Falls back to localStorage legacy key, then defaults.
+   */
+  _getFirebasePublishedConfig() {
+    try {
+      // Primary: Firebase-synced storage engine
+      const stored = storage.data && storage.data[TABLE_NAMES.HOMEPAGE_CONFIG];
+      if (stored && typeof stored === 'object' && Object.keys(stored).length > 0) {
+        return this.mergeWithDefaults(stored);
+      }
+    } catch (e) {}
+
+    // Fallback: legacy localStorage key (for backward compat)
+    try {
+      const legacy = localStorage.getItem('al_muslim_homepage_published_config');
+      if (legacy) {
+        const parsed = JSON.parse(legacy);
+        if (parsed && typeof parsed === 'object' && Object.keys(parsed).length > 0) {
+          return this.mergeWithDefaults(parsed);
+        }
+      }
+    } catch (e) {}
+
+    return JSON.parse(JSON.stringify(DEFAULT_HOMEPAGE_CONFIG));
   }
 
   mergeWithDefaults(saved) {
@@ -287,16 +319,17 @@ class HomepageService {
     return merged;
   }
 
+  /**
+   * Get published config — always reads from Firebase-synced storage.
+   * This ensures other devices always see the latest published version.
+   */
   getPublishedConfig() {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY_PUBLISHED);
-      if (saved) {
-        return this.mergeWithDefaults(JSON.parse(saved));
-      }
-    } catch (e) {}
-    return JSON.parse(JSON.stringify(DEFAULT_HOMEPAGE_CONFIG));
+    return this._getFirebasePublishedConfig();
   }
 
+  /**
+   * Get draft config — reads from localStorage (local-only until published)
+   */
   getDraftConfig() {
     try {
       const saved = localStorage.getItem(STORAGE_KEY_DRAFT);
@@ -307,6 +340,10 @@ class HomepageService {
     return this.getPublishedConfig();
   }
 
+  /**
+   * Save draft config to localStorage only (not Firebase yet).
+   * Draft stays local until publishConfig() is called.
+   */
   saveDraftConfig(config) {
     try {
       localStorage.setItem(STORAGE_KEY_DRAFT, JSON.stringify(config));
@@ -317,44 +354,120 @@ class HomepageService {
     }
   }
 
-  publishConfig() {
+  /**
+   * Publish config to Firebase — the main sync operation.
+   * 
+   * Flow: User clicks Publish → Firebase write starts → 
+   *       Firebase confirms success → UI shows Saved Successfully
+   *       Firebase fails → UI shows Save Failed (data NOT shown as updated)
+   * 
+   * @returns {Promise<{success: boolean, config?: object, error?: string}>}
+   */
+  async publishConfig() {
     try {
       const draft = this.getDraftConfig();
       draft.lastPublishedAt = new Date().toISOString();
-      localStorage.setItem(STORAGE_KEY_PUBLISHED, JSON.stringify(draft));
+      draft.updatedAt = draft.lastPublishedAt;
+
+      // Step 1: Write to Firebase Firestore (primary source of truth)
+      const ok = await firebaseSync.saveTableToFirestore(
+        TABLE_NAMES.HOMEPAGE_CONFIG,
+        draft,
+        8000  // 8s timeout for publish
+      );
+
+      if (!ok) {
+        console.warn('[HomepageService] Firebase write failed during publish');
+        return { success: false, error: 'Firebase write failed. Check your internet connection and try again.' };
+      }
+
+      // Step 2: Update local storage engine in-memory data (so getPublishedConfig() returns latest)
+      if (!storage.data) storage.data = {};
+      storage.data[TABLE_NAMES.HOMEPAGE_CONFIG] = draft;
+
+      // Step 3: Update local draft to match published
       localStorage.setItem(STORAGE_KEY_DRAFT, JSON.stringify(draft));
-      
+
+      // Step 4: Update legacy localStorage key (backward compat)
+      try {
+        localStorage.setItem('al_muslim_homepage_published_config', JSON.stringify(draft));
+      } catch (_) {}
+
+      // Step 5: Update lastTableUpdates so this device knows it just wrote
+      if (!storage.lastTableUpdates) storage.lastTableUpdates = {};
+      storage.lastTableUpdates[TABLE_NAMES.HOMEPAGE_CONFIG] = Date.now();
+
+      // Step 6: Dispatch update event so current page re-renders if needed
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('erp:homepage-updated', { detail: draft }));
+        window.dispatchEvent(new CustomEvent('erp:storage-updated'));
+      }
+
       auditService.log(
         'HOMEPAGE_PUBLISHED',
         'ADMIN',
         'homepage-config',
-        'Administrator published updated dynamic Home Page configuration.'
+        'Administrator published updated dynamic Home Page configuration to Firebase.'
       );
 
-      return draft;
+      console.log('[HomepageService] ✅ Homepage config published to Firebase successfully');
+      return { success: true, config: draft };
+
     } catch (e) {
-      console.error('Failed to publish homepage config:', e);
-      throw new Error('Failed to publish homepage changes: ' + e.message);
+      console.error('[HomepageService] Publish failed:', e);
+      return { success: false, error: e.message || 'Unexpected error during publish.' };
     }
   }
 
-  resetToDefaults() {
+  /**
+   * Reset to factory defaults and publish to Firebase
+   * @returns {Promise<{success: boolean, config?: object, error?: string}>}
+   */
+  async resetToDefaults() {
     const defaults = JSON.parse(JSON.stringify(DEFAULT_HOMEPAGE_CONFIG));
     defaults.lastPublishedAt = new Date().toISOString();
-    localStorage.setItem(STORAGE_KEY_PUBLISHED, JSON.stringify(defaults));
+    defaults.updatedAt = defaults.lastPublishedAt;
+
+    // Write reset to Firebase
+    const ok = await firebaseSync.saveTableToFirestore(
+      TABLE_NAMES.HOMEPAGE_CONFIG,
+      defaults,
+      8000
+    );
+
+    if (!ok) {
+      return { success: false, error: 'Firebase write failed during reset. Try again.' };
+    }
+
+    // Update in-memory and local storage
+    if (!storage.data) storage.data = {};
+    storage.data[TABLE_NAMES.HOMEPAGE_CONFIG] = defaults;
     localStorage.setItem(STORAGE_KEY_DRAFT, JSON.stringify(defaults));
-    
+    try {
+      localStorage.setItem('al_muslim_homepage_published_config', JSON.stringify(defaults));
+    } catch (_) {}
+
+    if (!storage.lastTableUpdates) storage.lastTableUpdates = {};
+    storage.lastTableUpdates[TABLE_NAMES.HOMEPAGE_CONFIG] = Date.now();
+
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('erp:homepage-updated', { detail: defaults }));
+      window.dispatchEvent(new CustomEvent('erp:storage-updated'));
+    }
+
     auditService.log(
       'HOMEPAGE_RESET_DEFAULT',
       'ADMIN',
       'homepage-config',
-      'Administrator reset Home Page to corporate factory defaults.'
+      'Administrator reset Home Page to corporate factory defaults and synced to Firebase.'
     );
 
-    return defaults;
+    return { success: true, config: defaults };
   }
 
-  // Feature Management Helpers
+  // ── Feature Management Helpers ─────────────────────────────────────────────
+  // All helpers operate on the local draft. Call publishConfig() to sync to Firebase.
+
   addFeature(featureData) {
     const config = this.getDraftConfig();
     if (!config.features.items) config.features.items = [];
@@ -402,7 +515,8 @@ class HomepageService {
     throw new Error('Feature not found.');
   }
 
-  // Module Showcase Helpers
+  // ── Module Showcase Helpers ────────────────────────────────────────────────
+
   addModule(moduleData) {
     const config = this.getDraftConfig();
     if (!config.modules.items) config.modules.items = [];
