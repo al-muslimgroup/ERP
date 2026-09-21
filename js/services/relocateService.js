@@ -331,6 +331,65 @@ class RelocateService {
   }
 
   /**
+   * Updates an existing scan record in the active session (e.g. line, needle quantity, remarks)
+   */
+  updateScan(sessionId, scanIdOrMachineId, { scannedLineId, needleQuantity, remarks }) {
+    const session = this.getSessionById(sessionId);
+    if (!session) throw new Error('Relocation session not found.');
+    if (session.status !== 'IN_PROGRESS') throw new Error('Cannot edit scan in a completed or cancelled session.');
+
+    const scanIndex = session.scanned.findIndex(s => s.scanId === scanIdOrMachineId || s.machineId === scanIdOrMachineId);
+    if (scanIndex === -1) throw new Error('Scanned machine record not found.');
+
+    const oldScan = session.scanned[scanIndex];
+    const machine = this.lookupMachine(oldScan.machineId);
+    if (!machine) throw new Error('Machine record not found.');
+
+    const targetLineId = scannedLineId !== undefined ? scannedLineId : oldScan.scannedLineId;
+    const evalResult = this.evaluateLocation(session, machine, targetLineId);
+
+    const updatedScan = {
+      ...oldScan,
+      scannedLineId: targetLineId,
+      needleQuantity: needleQuantity !== undefined ? String(needleQuantity).trim() : oldScan.needleQuantity,
+      remarks: remarks !== undefined ? String(remarks).trim() : oldScan.remarks,
+      matchType: evalResult.matchType,
+      evalResult: evalResult,
+      updatedAt: new Date().toISOString()
+    };
+
+    session.scanned[scanIndex] = updatedScan;
+    storage.update(TABLE_NAMES.RELOCATE_SESSIONS, session.id, { scanned: session.scanned });
+    this._broadcastChange();
+
+    return {
+      success: true,
+      updatedScan
+    };
+  }
+
+  /**
+   * Removes a scanned machine record from the active session (reverting it to unscanned / idle)
+   */
+  removeScan(sessionId, scanIdOrMachineId) {
+    const session = this.getSessionById(sessionId);
+    if (!session) throw new Error('Relocation session not found.');
+    if (session.status !== 'IN_PROGRESS') throw new Error('Cannot remove scan from a completed session.');
+
+    const scanIndex = session.scanned.findIndex(s => s.scanId === scanIdOrMachineId || s.machineId === scanIdOrMachineId);
+    if (scanIndex === -1) throw new Error('Scanned machine record not found.');
+
+    const [removedScan] = session.scanned.splice(scanIndex, 1);
+    storage.update(TABLE_NAMES.RELOCATE_SESSIONS, session.id, { scanned: session.scanned });
+    this._broadcastChange();
+
+    return {
+      success: true,
+      removedScan
+    };
+  }
+
+  /**
    * Computes live reconciliation metrics for a session
    */
   getReconciliationMetrics(session) {

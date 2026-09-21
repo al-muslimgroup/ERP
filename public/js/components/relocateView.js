@@ -17,6 +17,10 @@ let activeTab = 'scan'; // 'scan' | 'idle' | 'approvals' | 'history'
 let pendingScanMachine = null; // Machine object pending confirmation in modal
 let manualSearchModalOpen = false;
 let completeModalOpen = false;
+let editingScanItem = null; // Item being edited in modal
+let scannedListSearch = ''; // Search query on scanned machines
+let scannedListFilter = 'ALL'; // 'ALL' | 'CORRECT' | 'LINE_MISMATCH' | 'FLOOR_MISMATCH'
+let kpisCollapsedOnMobile = false; // KPI stats compact toggle on mobile
 
 export function renderRelocateView() {
   const activeSession = relocateService.getActiveSession();
@@ -91,6 +95,7 @@ export function renderRelocateView() {
         ${renderConfirmationModal()}
         ${renderManualSearchModal()}
         ${renderReconciliationModal(activeSession)}
+        ${renderEditScanModal(activeSession)}
       </div>
 
     </div>
@@ -236,7 +241,22 @@ export function renderRelocateView() {
       /* Bottom Sheet Modal Styles on Mobile */
       @media (max-width: 768px) {
         .relocate-view-root {
-          padding: 8px 10px 95px 10px;
+          padding: 8px 10px 125px 10px !important;
+        }
+
+        .relocate-desktop-actions {
+          display: none !important;
+        }
+
+        .relocate-scanned-feed-wrap {
+          min-height: auto !important;
+          overflow: visible !important;
+        }
+
+        .relocate-scanned-list {
+          overflow-y: visible !important;
+          max-height: none !important;
+          padding: 8px !important;
         }
 
         .relocate-top-nav-card {
@@ -507,10 +527,121 @@ function renderSessionSetupView() {
 // ─────────────────────────────────────────────────────────────
 // 2. LIVE SCAN VIEW (Active Session)
 // ─────────────────────────────────────────────────────────────
+function renderScannedItemsList(session) {
+  if (!session || !session.scanned || session.scanned.length === 0) {
+    return `
+      <div style="text-align: center; padding: 36px 16px; color: var(--text-muted);">
+        <div style="font-size: 38px; margin-bottom: 8px;">📦</div>
+        <div style="font-weight: 800; font-size: 14px; color: #fff;">No machines scanned yet</div>
+        <div style="font-size: 12px; margin-top: 4px; color: #94a3b8;">
+          Tap <strong>Scan QR</strong> or <strong>Search</strong> to verify machines on this floor.
+        </div>
+      </div>
+    `;
+  }
+
+  let filtered = session.scanned.slice().reverse();
+
+  if (scannedListFilter && scannedListFilter !== 'ALL') {
+    filtered = filtered.filter(s => s.matchType === scannedListFilter);
+  }
+
+  if (scannedListSearch && scannedListSearch.trim()) {
+    const q = scannedListSearch.trim().toLowerCase();
+    filtered = filtered.filter(s => 
+      (s.serialNumber && s.serialNumber.toLowerCase().includes(q)) ||
+      (s.machineNameStr && s.machineNameStr.toLowerCase().includes(q)) ||
+      (s.brandStr && s.brandStr.toLowerCase().includes(q)) ||
+      (s.modelStr && s.modelStr.toLowerCase().includes(q)) ||
+      (s.scannedLineId && s.scannedLineId.toLowerCase().includes(q)) ||
+      (s.remarks && s.remarks.toLowerCase().includes(q))
+    );
+  }
+
+  if (filtered.length === 0) {
+    return `
+      <div style="text-align: center; padding: 30px 16px; color: var(--text-muted);">
+        <div style="font-size: 28px; margin-bottom: 6px;">🔍</div>
+        <div style="font-weight: 700; font-size: 13px; color: #cbd5e1;">No matching scanned machines</div>
+        <div style="font-size: 11.5px; margin-top: 3px;">Try clearing your search query or filter pills.</div>
+      </div>
+    `;
+  }
+
+  return filtered.map((s, idx) => {
+    const isVerified = s.matchType === 'CORRECT';
+    const isLineMove = s.matchType === 'LINE_MISMATCH';
+    const targetLine = masterDataService.getLineById(s.scannedLineId);
+    const borderColor = isVerified ? 'rgba(52, 211, 153, 0.4)' : (isLineMove ? 'rgba(56, 189, 248, 0.4)' : 'rgba(251, 191, 36, 0.5)');
+    const timeStr = s.scannedAt ? new Date(s.scannedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+
+    return `
+      <div class="scanned-machine-card" data-scan-id="${s.scanId}" style="background: var(--bg-card); border: 1.5px solid ${borderColor}; border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.25);">
+        
+        <!-- Header: Serial, Badge, Time -->
+        <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 8px;">
+          <div style="min-width: 0; flex: 1;">
+            <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
+              <span style="font-family: var(--font-mono); font-size: 15px; font-weight: 900; color: #38bdf8; letter-spacing: 0.3px;">${s.serialNumber}</span>
+              <span class="badge ${isVerified ? 'badge-active' : (isLineMove ? 'badge-idle' : 'badge-breakdown')}" style="font-size: 10.5px; font-weight: 800; padding: 2px 7px;">
+                ${s.evalResult?.icon || '•'} ${s.evalResult?.label || s.matchType}
+              </span>
+            </div>
+            <div style="font-size: 13px; font-weight: 700; color: #fff; margin-top: 3px; word-break: break-word;">${s.machineNameStr}</div>
+            <div style="font-size: 11.5px; color: var(--text-secondary);">${s.brandStr || ''} &bull; ${s.modelStr || ''}</div>
+          </div>
+          
+          <div style="text-align: right; flex-shrink: 0;">
+            <span style="font-size: 11px; color: #64748b; font-family: var(--font-mono); display: block;">${timeStr}</span>
+            <span style="font-size: 10px; color: #38bdf8; font-weight: 800;">#${session.scanned.length - idx}</span>
+          </div>
+        </div>
+
+        <!-- Location Information -->
+        <div style="background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 8px 10px; font-size: 12px; display: flex; flex-direction: column; gap: 4px;">
+          <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
+            <span style="color: #94a3b8; font-size: 11px;">Prev:</span>
+            <span style="color: #cbd5e1; font-weight: 600;">${s.previousFloorStr} / ${s.previousLineStr}</span>
+            <span style="color: #38bdf8; font-weight: 900;">➔</span>
+            <span style="color: #94a3b8; font-size: 11px;">Scanned at:</span>
+            <strong style="color: #34d399; font-weight: 800;">${targetLine?.name || s.scannedLineId}</strong>
+          </div>
+          ${s.needleQuantity ? `
+            <div style="font-size: 11.5px; color: #e2e8f0; display: flex; align-items: center; gap: 6px;">
+              <span>🪡 Needles: <strong style="color: #38bdf8;">${s.needleQuantity}</strong></span>
+            </div>
+          ` : ''}
+          ${s.remarks ? `
+            <div style="font-size: 11px; color: #94a3b8; font-style: italic;">
+              💬 "${s.remarks}"
+            </div>
+          ` : ''}
+        </div>
+
+        <!-- Action Buttons: Edit & Delete (Large, touch-friendly) -->
+        <div style="display: flex; justify-content: flex-end; align-items: center; gap: 8px; border-top: 1px solid rgba(255,255,255,0.06); padding-top: 6px;">
+          <button type="button" class="btn btn-secondary btn-sm btn-edit-scan" data-scan-id="${s.scanId}" style="min-height: 38px; padding: 6px 14px; font-size: 12px; font-weight: 800; display: inline-flex; align-items: center; gap: 5px; color: #38bdf8; border-color: rgba(56,189,248,0.4);">
+            ✏️ Edit
+          </button>
+          <button type="button" class="btn btn-ghost btn-sm btn-delete-scan" data-scan-id="${s.scanId}" data-serial="${s.serialNumber}" style="min-height: 38px; padding: 6px 14px; font-size: 12px; font-weight: 800; display: inline-flex; align-items: center; gap: 5px; color: #f87171; border: 1px solid rgba(239,68,68,0.3); background: rgba(239,68,68,0.08);">
+            🗑️ Delete
+          </button>
+        </div>
+
+      </div>
+    `;
+  }).join('');
+}
+
 function renderLiveScanView(session) {
   const metrics = relocateService.getReconciliationMetrics(session);
   const unt = masterDataService.getUnitById(session.unitId);
   const flr = masterDataService.getFloorById(session.floorId);
+
+  const totalCount = session.scanned.length;
+  const verifiedCount = session.scanned.filter(s => s.matchType === 'CORRECT').length;
+  const lineMoveCount = session.scanned.filter(s => s.matchType === 'LINE_MISMATCH').length;
+  const floorMoveCount = session.scanned.filter(s => s.matchType === 'FLOOR_MISMATCH').length;
 
   return `
     <div style="display: flex; flex-direction: column; gap: 10px; flex: 1; min-height: 0;">
@@ -538,48 +669,60 @@ function renderLiveScanView(session) {
         </div>
       </div>
 
-      <!-- Live Counters Header (Mobile-Friendly 2x2 Grid, Desktop 4-Col) -->
-      <div class="relocate-kpi-grid">
-        <div class="relocate-kpi-box" style="border-left: 3px solid #94a3b8;">
-          <div style="font-size: 10.5px; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">Expected Snapshot</div>
-          <div class="relocate-kpi-val" style="color: #fff;">${metrics.expectedTotal}</div>
-        </div>
-        <div class="relocate-kpi-box" style="border-left: 3px solid #34d399; border-color: rgba(52, 211, 153, 0.3);">
-          <div style="font-size: 10.5px; font-weight: 700; color: #34d399; text-transform: uppercase;">Scanned &amp; Verified</div>
-          <div class="relocate-kpi-val" style="color: #34d399;">${metrics.scannedTotal}</div>
-        </div>
-        <div class="relocate-kpi-box" style="border-left: 3px solid #38bdf8; border-color: rgba(56, 189, 248, 0.3);">
-          <div style="font-size: 10.5px; font-weight: 700; color: #38bdf8; text-transform: uppercase;">Idle (Unscanned)</div>
-          <div class="relocate-kpi-val" style="color: #38bdf8;">${metrics.idleCount}</div>
-        </div>
-        <div class="relocate-kpi-box" style="border-left: 3px solid #fbbf24; border-color: rgba(251, 191, 36, 0.3);">
-          <div style="font-size: 10.5px; font-weight: 700; color: #fbbf24; text-transform: uppercase;">Pending Relocate</div>
-          <div class="relocate-kpi-val" style="color: #fbbf24;">${metrics.pendingRelocationCount}</div>
-        </div>
+      <!-- Mobile Quick Stats Accordion Header -->
+      <div style="display: flex; justify-content: space-between; align-items: center; padding: 2px 4px;">
+        <span style="font-size: 12px; font-weight: 800; color: #cbd5e1; display: flex; align-items: center; gap: 6px;">
+          📊 Session Statistics (${metrics.scannedTotal}/${metrics.expectedTotal})
+        </span>
+        <button type="button" id="btn-toggle-kpi-mobile" class="btn btn-ghost btn-sm" style="font-size: 11px; padding: 2px 8px; color: #38bdf8; font-weight: 700;">
+          ${kpisCollapsedOnMobile ? '▼ Expand Counters' : '▲ Collapse Counters'}
+        </button>
       </div>
 
-      <!-- Line Breakdown Progress Bars (Scrollable horizontal or 2-col) -->
-      <div style="background: var(--bg-card); border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: 8px 12px;">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-          <span style="font-size: 11px; font-weight: 700; color: #fff;">Line Scan Progress:</span>
-          <span style="font-size: 10.5px; color: var(--text-muted);">${metrics.lineBreakdown.length} Lines Targeted</span>
+      <!-- Live Counters Header (Collapsible on mobile, always visible on desktop) -->
+      <div id="relocate-kpi-container" style="${kpisCollapsedOnMobile ? 'display: none;' : 'display: flex; flex-direction: column; gap: 10px;'}">
+        <div class="relocate-kpi-grid">
+          <div class="relocate-kpi-box" style="border-left: 3px solid #94a3b8;">
+            <div style="font-size: 10.5px; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">Expected Snapshot</div>
+            <div class="relocate-kpi-val" style="color: #fff;">${metrics.expectedTotal}</div>
+          </div>
+          <div class="relocate-kpi-box" style="border-left: 3px solid #34d399; border-color: rgba(52, 211, 153, 0.3);">
+            <div style="font-size: 10.5px; font-weight: 700; color: #34d399; text-transform: uppercase;">Scanned &amp; Verified</div>
+            <div class="relocate-kpi-val" style="color: #34d399;">${metrics.scannedTotal}</div>
+          </div>
+          <div class="relocate-kpi-box" style="border-left: 3px solid #38bdf8; border-color: rgba(56, 189, 248, 0.3);">
+            <div style="font-size: 10.5px; font-weight: 700; color: #38bdf8; text-transform: uppercase;">Idle (Unscanned)</div>
+            <div class="relocate-kpi-val" style="color: #38bdf8;">${metrics.idleCount}</div>
+          </div>
+          <div class="relocate-kpi-box" style="border-left: 3px solid #fbbf24; border-color: rgba(251, 191, 36, 0.3);">
+            <div style="font-size: 10.5px; font-weight: 700; color: #fbbf24; text-transform: uppercase;">Pending Relocate</div>
+            <div class="relocate-kpi-val" style="color: #fbbf24;">${metrics.pendingRelocationCount}</div>
+          </div>
         </div>
-        <div style="display: flex; gap: 8px; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; padding-bottom: 2px;">
-          ${metrics.lineBreakdown.map(lb => {
-    const isFinished = lb.scanned >= lb.expected && lb.expected > 0;
-    return `
-              <div style="flex-shrink: 0; min-width: 105px; background: rgba(0,0,0,0.25); border: 1px solid ${isFinished ? '#34d399' : 'rgba(255,255,255,0.08)'}; border-radius: 6px; padding: 4px 8px; font-size: 11px;">
-                <div style="display: flex; justify-content: space-between; font-weight: 700;">
-                  <span style="color: ${isFinished ? '#34d399' : '#fff'};">${lb.lineName}</span>
-                  <span style="color: ${isFinished ? '#34d399' : '#38bdf8'}; font-family: var(--font-mono); margin-left: 6px;">${lb.scanned} / ${lb.expected}</span>
+
+        <!-- Line Breakdown Progress Bars -->
+        <div style="background: var(--bg-card); border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: 8px 12px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+            <span style="font-size: 11px; font-weight: 700; color: #fff;">Line Scan Progress:</span>
+            <span style="font-size: 10.5px; color: var(--text-muted);">${metrics.lineBreakdown.length} Lines Targeted</span>
+          </div>
+          <div style="display: flex; gap: 8px; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; padding-bottom: 2px;">
+            ${metrics.lineBreakdown.map(lb => {
+              const isFinished = lb.scanned >= lb.expected && lb.expected > 0;
+              return `
+                <div style="flex-shrink: 0; min-width: 105px; background: rgba(0,0,0,0.25); border: 1px solid ${isFinished ? '#34d399' : 'rgba(255,255,255,0.08)'}; border-radius: 6px; padding: 4px 8px; font-size: 11px;">
+                  <div style="display: flex; justify-content: space-between; font-weight: 700;">
+                    <span style="color: ${isFinished ? '#34d399' : '#fff'};">${lb.lineName}</span>
+                    <span style="color: ${isFinished ? '#34d399' : '#38bdf8'}; font-family: var(--font-mono); margin-left: 6px;">${lb.scanned} / ${lb.expected}</span>
+                  </div>
                 </div>
-              </div>
-            `;
-  }).join('')}
+              `;
+            }).join('')}
+          </div>
         </div>
       </div>
 
-      <!-- Primary Action Buttons (Desktop inline controls) -->
+      <!-- Primary Action Buttons (Desktop inline controls, hidden on mobile in favor of bottom dock) -->
       <div class="relocate-desktop-actions" style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
         <button type="button" id="btn-open-camera-scanner" class="btn btn-primary" style="font-size: 14px; font-weight: 800; padding: 12px 18px; display: flex; align-items: center; justify-content: center; gap: 8px; background: linear-gradient(135deg, #0284c7 0%, #0369a1 100%); border: 1.5px solid #38bdf8; box-shadow: 0 4px 12px rgba(2, 132, 199, 0.4);">
           <span style="font-size: 20px;">📷</span> Scan QR Code
@@ -590,53 +733,71 @@ function renderLiveScanView(session) {
       </div>
 
       <!-- Feed of Scanned Machines in Current Session -->
-      <div style="background: var(--bg-surface); border: 1px solid var(--border-color); border-radius: var(--radius-md); display: flex; flex-direction: column; flex: 1; min-height: 220px; overflow: hidden;">
-        <div style="padding: 8px 12px; border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; background: rgba(255,255,255,0.02);">
-          <span style="font-size: 12px; font-weight: 800; color: #fff;">
-            Scanned Machines in Session (${session.scanned.length})
-          </span>
-          <span style="font-size: 11px; color: var(--text-muted);">
-            Latest on top
-          </span>
-        </div>
-
-        <div style="flex: 1; overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 6px;">
-          ${session.scanned.length === 0 ? `
-            <div style="text-align: center; padding: 40px 16px; color: var(--text-muted);">
-              <div style="font-size: 32px; margin-bottom: 8px;">📦</div>
-              <div style="font-weight: 700; font-size: 13px; color: #fff;">No machines scanned yet</div>
-              <div style="font-size: 11.5px; margin-top: 4px;">Tap <strong>Scan QR Code</strong> or <strong>Manual Search</strong> to record machines.</div>
+      <div class="relocate-scanned-feed-wrap" style="background: var(--bg-surface); border: 1px solid var(--border-color); border-radius: var(--radius-md); display: flex; flex-direction: column; flex: 1;">
+        
+        <!-- Filter & Search Toolbar (Sticky, Mobile Optimized) -->
+        <div style="padding: 10px 12px; background: rgba(15, 23, 42, 0.95); border-bottom: 1px solid var(--border-color); display: flex; flex-direction: column; gap: 8px;">
+          
+          <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px;">
+            <div style="display: flex; align-items: center; gap: 6px;">
+              <span style="font-size: 13px; font-weight: 800; color: #fff;">
+                Scanned Machines
+              </span>
+              <span style="background: #0284c7; color: #fff; font-size: 11px; font-weight: 800; padding: 2px 7px; border-radius: 12px; font-family: var(--font-mono);">
+                ${totalCount}
+              </span>
             </div>
-          ` : session.scanned.slice().reverse().map(s => {
-    const isVerified = s.matchType === 'CORRECT';
-    const isLineMove = s.matchType === 'LINE_MISMATCH';
-    const targetLine = masterDataService.getLineById(s.scannedLineId);
 
-    return `
-              <div style="background: var(--bg-card); border: 1px solid ${isVerified ? 'rgba(52, 211, 153, 0.3)' : (isLineMove ? 'rgba(56, 189, 248, 0.3)' : 'rgba(251, 191, 36, 0.4)')}; border-radius: 8px; padding: 10px 12px; display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap;">
-                <div style="min-width: 200px; flex: 1;">
-                  <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
-                    <span style="font-family: var(--font-mono); font-weight: 800; color: #38bdf8; font-size: 13.5px;">${s.serialNumber}</span>
-                    <span style="font-size: 12px; font-weight: 700; color: #fff;">${s.machineNameStr}</span>
-                    <span style="font-size: 11px; color: var(--text-secondary);">${s.brandStr} / ${s.modelStr}</span>
-                  </div>
-                  <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
-                    <span>Prev: <strong style="color: #cbd5e1;">${s.previousFloorStr} / ${s.previousLineStr}</strong></span>
-                    <span>&rarr;</span>
-                    <span>Scanned: <strong style="color: #34d399;">${targetLine?.name || s.scannedLineId}</strong></span>
-                    ${s.needleQuantity ? `<span style="background: rgba(56,189,248,0.12); padding: 1px 6px; border-radius: 4px; color: #38bdf8;">Needle: ${s.needleQuantity}</span>` : ''}
-                  </div>
-                </div>
-                <div style="flex-shrink: 0;">
-                  <span class="badge ${isVerified ? 'badge-active' : (isLineMove ? 'badge-idle' : 'badge-breakdown')}" style="font-size: 10.5px; font-weight: 700;">
-                    ${s.evalResult?.icon || '•'} ${s.evalResult?.label || s.matchType}
-                  </span>
-                </div>
-              </div>
-            `;
-  }).join('')}
+            <button type="button" id="btn-feed-quick-scan" class="btn btn-primary btn-sm" style="font-size: 11.5px; font-weight: 800; padding: 5px 10px; display: inline-flex; align-items: center; gap: 4px; background: #0284c7; border: 1px solid #38bdf8;">
+              📷 Scan Next
+            </button>
+          </div>
+
+          <!-- Realtime Search Input -->
+          <div style="position: relative;">
+            <input 
+              type="text" 
+              id="inp-scanned-filter-query" 
+              class="form-control" 
+              placeholder="🔍 Search scanned by serial, name, or line..." 
+              value="${scannedListSearch}"
+              style="padding: 8px 32px 8px 12px; font-size: 13px; min-height: 38px; border-radius: 8px; background: #090d16; border-color: rgba(56,189,248,0.3); color: #fff;"
+            />
+            ${scannedListSearch ? `
+              <button type="button" id="btn-clear-scanned-filter" style="position: absolute; right: 8px; top: 50%; transform: translateY(-50%); background: none; border: none; color: #94a3b8; font-size: 14px; cursor: pointer; padding: 4px;">✕</button>
+            ` : ''}
+          </div>
+
+          <!-- Filter Pills -->
+          <div style="display: flex; gap: 6px; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; padding-bottom: 2px;">
+            <button type="button" class="btn-scan-filter-pill ${scannedListFilter === 'ALL' ? 'active' : ''}" data-filter="ALL" style="flex-shrink: 0; font-size: 11px; font-weight: 700; padding: 4px 10px; border-radius: 14px; border: 1px solid ${scannedListFilter === 'ALL' ? '#38bdf8' : 'rgba(255,255,255,0.15)'}; background: ${scannedListFilter === 'ALL' ? 'rgba(56,189,248,0.2)' : 'rgba(255,255,255,0.04)'}; color: ${scannedListFilter === 'ALL' ? '#38bdf8' : '#cbd5e1'}; cursor: pointer;">
+              All (${totalCount})
+            </button>
+            <button type="button" class="btn-scan-filter-pill ${scannedListFilter === 'CORRECT' ? 'active' : ''}" data-filter="CORRECT" style="flex-shrink: 0; font-size: 11px; font-weight: 700; padding: 4px 10px; border-radius: 14px; border: 1px solid ${scannedListFilter === 'CORRECT' ? '#34d399' : 'rgba(255,255,255,0.15)'}; background: ${scannedListFilter === 'CORRECT' ? 'rgba(52,211,153,0.2)' : 'rgba(255,255,255,0.04)'}; color: ${scannedListFilter === 'CORRECT' ? '#34d399' : '#cbd5e1'}; cursor: pointer;">
+              ✓ Verified (${verifiedCount})
+            </button>
+            <button type="button" class="btn-scan-filter-pill ${scannedListFilter === 'LINE_MISMATCH' ? 'active' : ''}" data-filter="LINE_MISMATCH" style="flex-shrink: 0; font-size: 11px; font-weight: 700; padding: 4px 10px; border-radius: 14px; border: 1px solid ${scannedListFilter === 'LINE_MISMATCH' ? '#38bdf8' : 'rgba(255,255,255,0.15)'}; background: ${scannedListFilter === 'LINE_MISMATCH' ? 'rgba(56,189,248,0.2)' : 'rgba(255,255,255,0.04)'}; color: ${scannedListFilter === 'LINE_MISMATCH' ? '#38bdf8' : '#cbd5e1'}; cursor: pointer;">
+              ⚠️ Line Move (${lineMoveCount})
+            </button>
+            ${floorMoveCount > 0 ? `
+              <button type="button" class="btn-scan-filter-pill ${scannedListFilter === 'FLOOR_MISMATCH' ? 'active' : ''}" data-filter="FLOOR_MISMATCH" style="flex-shrink: 0; font-size: 11px; font-weight: 700; padding: 4px 10px; border-radius: 14px; border: 1px solid ${scannedListFilter === 'FLOOR_MISMATCH' ? '#fbbf24' : 'rgba(255,255,255,0.15)'}; background: ${scannedListFilter === 'FLOOR_MISMATCH' ? 'rgba(251,191,36,0.2)' : 'rgba(255,255,255,0.04)'}; color: ${scannedListFilter === 'FLOOR_MISMATCH' ? '#fbbf24' : '#cbd5e1'}; cursor: pointer;">
+                ⏳ Inter-Floor (${floorMoveCount})
+              </button>
+            ` : ''}
+          </div>
+
         </div>
+
+        <!-- Scanned Items List -->
+        <div id="relocate-scanned-items-container" class="relocate-scanned-list">
+          ${renderScannedItemsList(session)}
+        </div>
+
       </div>
+
+    </div>
+  `;
+}
 
     </div>
   `;
@@ -723,6 +884,79 @@ function renderConfirmationModal() {
             <button type="button" id="btn-cancel-confirm-scan" class="btn btn-secondary" style="flex: 1; min-height: 44px; font-weight: 700;">Cancel</button>
             <button type="submit" id="btn-submit-confirm-scan" class="btn btn-primary" style="flex: 2; min-height: 44px; font-weight: 800; font-size: 14px; background: linear-gradient(135deg, #0284c7 0%, #0369a1 100%); border-color: #38bdf8;">
               ✓ Confirm &amp; Add Machine
+            </button>
+          </div>
+
+        </form>
+
+      </div>
+    </div>
+  `;
+}
+
+// ─────────────────────────────────────────────────────────────
+// 3b. EDIT SCANNED MACHINE MODAL (Mobile Bottom Sheet)
+// ─────────────────────────────────────────────────────────────
+function renderEditScanModal(session) {
+  if (!editingScanItem || !session) return '';
+
+  const lines = masterDataService.getLines(session.floorId);
+  const currentTargetLineId = editingScanItem.scannedLineId || '';
+
+  return `
+    <div class="modal-overlay" id="modal-edit-scan-overlay" style="z-index: 10045;">
+      <div class="modal-dialog" style="max-width: 480px; width: 95%;">
+        
+        <!-- Drag Handle for Mobile Sheet Affordance -->
+        <div style="width: 40px; height: 4px; background: rgba(255,255,255,0.25); border-radius: 2px; margin: 8px auto 0 auto;"></div>
+
+        <div class="modal-header" style="padding: 12px 16px; border-bottom: 1px solid rgba(255,255,255,0.1);">
+          <div class="modal-title" style="display: flex; align-items: center; gap: 8px;">
+            <span>✏️ Edit Scanned Machine</span>
+          </div>
+          <button type="button" id="btn-close-edit-scan-modal" class="btn btn-ghost btn-sm" style="font-size: 16px; width: 36px; height: 36px; border-radius: 50%;">✕</button>
+        </div>
+
+        <form id="form-edit-scan-machine" class="modal-body" style="display: flex; flex-direction: column; gap: 12px; padding: 14px 16px;">
+          
+          <!-- Machine Header Info -->
+          <div style="background: rgba(0,0,0,0.35); border: 1px solid rgba(56,189,248,0.25); border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 4px;">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <span style="font-family: var(--font-mono); font-size: 16px; font-weight: 900; color: #38bdf8;">${editingScanItem.serialNumber}</span>
+              <span class="badge ${editingScanItem.evalResult?.badgeClass || 'badge-idle'}" style="font-size: 10px;">${editingScanItem.evalResult?.label || editingScanItem.matchType}</span>
+            </div>
+            <div style="font-size: 13.5px; font-weight: 700; color: #fff;">${editingScanItem.machineNameStr}</div>
+            <div style="font-size: 11.5px; color: var(--text-secondary);">${editingScanItem.brandStr || ''} &bull; ${editingScanItem.modelStr || ''}</div>
+            <div style="font-size: 11px; color: var(--text-muted); border-top: 1px solid rgba(255,255,255,0.06); padding-top: 4px; margin-top: 2px;">
+              Original Location: <strong style="color: #cbd5e1;">${editingScanItem.previousFloorStr} / ${editingScanItem.previousLineStr}</strong>
+            </div>
+          </div>
+
+          <!-- Target Line Dropdown -->
+          <div class="form-group">
+            <label class="form-label" style="font-weight: 700; font-size: 12px; color: #38bdf8;">Assigned Physical Line: <span class="req">*</span></label>
+            <select id="edit-scanned-line" class="form-control" required style="font-weight: 700; font-size: 15px; min-height: 44px;">
+              ${lines.map(l => `<option value="${l.id}" ${l.id === currentTargetLineId ? 'selected' : ''}>${l.name}</option>`).join('')}
+            </select>
+          </div>
+
+          <!-- Needle Quantity -->
+          <div class="form-group">
+            <label class="form-label" style="font-weight: 700; font-size: 12px; color: #38bdf8;">Needle Quantity:</label>
+            <input type="number" id="edit-needle-quantity" class="form-control" min="0" value="${editingScanItem.needleQuantity || ''}" placeholder="e.g. 1, 2, 4" style="font-size: 16px; min-height: 44px;" />
+          </div>
+
+          <!-- Remarks -->
+          <div class="form-group">
+            <label class="form-label" style="font-size: 11.5px; color: var(--text-muted);">Remarks / Verification Notes:</label>
+            <input type="text" id="edit-scan-remarks" class="form-control" value="${editingScanItem.remarks || ''}" placeholder="e.g. Needle threader aligned, Line re-allocated" style="font-size: 15px;" />
+          </div>
+
+          <!-- Footer Actions -->
+          <div class="modal-footer" style="padding: 0; margin-top: 6px; display: flex; gap: 8px;">
+            <button type="button" id="btn-cancel-edit-scan" class="btn btn-secondary" style="flex: 1; min-height: 44px; font-weight: 700;">Cancel</button>
+            <button type="submit" id="btn-submit-edit-scan" class="btn btn-primary" style="flex: 2; min-height: 44px; font-weight: 800; font-size: 14px; background: linear-gradient(135deg, #0284c7 0%, #0369a1 100%); border-color: #38bdf8;">
+              💾 Save Changes
             </button>
           </div>
 
@@ -1392,6 +1626,132 @@ export function initRelocateViewEvents() {
       } catch (err) {
         notificationService.notifyError('Scan Failed', 'Error recording scan: ' + (err.message || err));
       }
+    });
+  }
+
+  // 7b. Edit Scanned Machine Modal Events
+  const editCloseBtn = root.querySelector('#btn-close-edit-scan-modal');
+  const editCancelBtn = root.querySelector('#btn-cancel-edit-scan');
+  const editOverlay = root.querySelector('#modal-edit-scan-overlay');
+  const editForm = root.querySelector('#form-edit-scan-machine');
+
+  const closeEditModal = () => {
+    editingScanItem = null;
+    refreshView();
+  };
+
+  if (editCloseBtn) editCloseBtn.addEventListener('click', closeEditModal);
+  if (editCancelBtn) editCancelBtn.addEventListener('click', closeEditModal);
+  if (editOverlay) {
+    editOverlay.addEventListener('click', (e) => {
+      if (e.target === editOverlay) closeEditModal();
+    });
+  }
+
+  if (editForm) {
+    editForm.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const session = relocateService.getActiveSession();
+      if (!session || !editingScanItem) return;
+
+      const scannedLineId = root.querySelector('#edit-scanned-line')?.value;
+      const needleQuantity = root.querySelector('#edit-needle-quantity')?.value;
+      const remarks = root.querySelector('#edit-scan-remarks')?.value;
+
+      try {
+        const result = relocateService.updateScan(session.id, editingScanItem.scanId, {
+          scannedLineId,
+          needleQuantity,
+          remarks
+        });
+
+        const sn = result.updatedScan.serialNumber;
+        editingScanItem = null;
+        notificationService.notifySuccess('Scan Updated', `Updated verification details for [${sn}].`);
+        refreshView();
+      } catch (err) {
+        notificationService.notifyError('Update Failed', 'Error updating scan: ' + (err.message || err));
+      }
+    });
+  }
+
+  // Helper to bind Edit & Delete action buttons on each scanned machine card
+  const attachCardActionListeners = () => {
+    root.querySelectorAll('.btn-edit-scan').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const scanId = btn.getAttribute('data-scan-id');
+        const session = relocateService.getActiveSession();
+        if (!session) return;
+        const item = session.scanned.find(s => s.scanId === scanId);
+        if (item) {
+          editingScanItem = item;
+          refreshView();
+        }
+      });
+    });
+
+    root.querySelectorAll('.btn-delete-scan').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const scanId = btn.getAttribute('data-scan-id');
+        const serial = btn.getAttribute('data-serial');
+        const session = relocateService.getActiveSession();
+        if (!session) return;
+
+        const confirmed = confirm(`Are you sure you want to remove machine [${serial}] from this session?\nIt will be restored to unscanned / idle status.`);
+        if (!confirmed) return;
+
+        try {
+          relocateService.removeScan(session.id, scanId);
+          notificationService.notifyWarning('Scan Removed', `Machine [${serial}] removed from session.`);
+          refreshView();
+        } catch (err) {
+          notificationService.notifyError('Remove Failed', 'Error removing scan: ' + (err.message || err));
+        }
+      });
+    });
+  };
+
+  attachCardActionListeners();
+
+  // 7c. Scanned Feed Live Filter & Search Events
+  const inpScannedFilter = root.querySelector('#inp-scanned-filter-query');
+  if (inpScannedFilter) {
+    inpScannedFilter.addEventListener('input', (e) => {
+      scannedListSearch = e.target.value;
+      const container = root.querySelector('#relocate-scanned-items-container');
+      const session = relocateService.getActiveSession();
+      if (container && session) {
+        container.innerHTML = renderScannedItemsList(session);
+        attachCardActionListeners();
+      }
+    });
+  }
+
+  const btnClearFilter = root.querySelector('#btn-clear-scanned-filter');
+  if (btnClearFilter) {
+    btnClearFilter.addEventListener('click', () => {
+      scannedListSearch = '';
+      refreshView();
+    });
+  }
+
+  root.querySelectorAll('.btn-scan-filter-pill').forEach(btn => {
+    btn.addEventListener('click', () => {
+      scannedListFilter = btn.getAttribute('data-filter') || 'ALL';
+      refreshView();
+    });
+  });
+
+  const btnFeedQuickScan = root.querySelector('#btn-feed-quick-scan');
+  if (btnFeedQuickScan) {
+    btnFeedQuickScan.addEventListener('click', openCameraScanner);
+  }
+
+  const btnToggleKpiMobile = root.querySelector('#btn-toggle-kpi-mobile');
+  if (btnToggleKpiMobile) {
+    btnToggleKpiMobile.addEventListener('click', () => {
+      kpisCollapsedOnMobile = !kpisCollapsedOnMobile;
+      refreshView();
     });
   }
 
