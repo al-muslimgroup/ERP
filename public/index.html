@@ -14,11 +14,11 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600;700&display=swap" rel="stylesheet">
 
-  <!-- Core ERP Stylesheets -->
-  <link rel="stylesheet" href="css/app.css?v=3.8.5">
-  <link rel="stylesheet" href="css/grid.css?v=3.3.0">
-  <link rel="stylesheet" href="css/components.css?v=3.8.9">
-  <link rel="stylesheet" href="css/print.css?v=2.1">
+  <!-- Core ERP Stylesheets (Cache-Busted v4.6.0) -->
+  <link rel="stylesheet" href="css/app.css?v=4.6.0">
+  <link rel="stylesheet" href="css/grid.css?v=4.6.0">
+  <link rel="stylesheet" href="css/components.css?v=4.6.0">
+  <link rel="stylesheet" href="css/print.css?v=4.6.0">
 
   <!-- SheetJS (XLSX) Library for Excel Import & Export (Local Offline + CDN Fallback) -->
   <script src="lib/xlsx.full.min.js"></script>
@@ -153,16 +153,20 @@
     };
 
     // Auto cache flush on new deployment build version
-    var CURRENT_BUILD = '4.4.5';
+    var CURRENT_BUILD = '4.6.0';
     if (localStorage.getItem('al_muslim_build_ver') !== CURRENT_BUILD) {
-      try { localStorage.clear(); } catch(_) {}
-      try { sessionStorage.clear(); } catch(_) {}
+      try { localStorage.removeItem('al_muslim_build_ver'); } catch(_) {}
       localStorage.setItem('al_muslim_build_ver', CURRENT_BUILD);
+      if (caches && caches.keys) {
+        caches.keys().then(function(names) {
+          names.forEach(function(n) { caches.delete(n); });
+        });
+      }
     }
   </script>
 
-  <!-- Main ES Module Application Entrypoint (Cache-Busted v4.4.5) -->
-  <script type="module" src="js/app.js?v=4.4.5"></script>
+  <!-- Main ES Module Application Entrypoint (Cache-Busted v4.6.0) -->
+  <script type="module" src="js/app.js?v=4.6.0"></script>
 
   <style>
     @keyframes spin {

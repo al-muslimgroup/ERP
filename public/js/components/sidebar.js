@@ -204,15 +204,19 @@ export function renderSidebar() {
   let html = `
     <aside class="app-sidebar" id="app-sidebar-root">
       <!-- Fixed Sidebar Brand Header -->
-      <div class="sidebar-header">
-        <div class="sidebar-brand-wrapper">
-          <div class="brand-logo-badge" title="Al-Muslim Group Maintenance Department ERP">🔧</div>
-          <div class="brand-text-container">
-            <div class="brand-title-row">
-              <span class="brand-text-title">AL-MUSLIM GROUP</span>
-              <span class="brand-status-pill" title="Production System Active"><span class="brand-status-dot"></span>PROD</span>
+      <div class="sidebar-header" style="padding: 14px 16px 12px 16px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid rgba(255, 255, 255, 0.07); background: rgba(9, 14, 26, 0.95); flex-shrink: 0; box-sizing: border-box; width: 100%;">
+        <div class="sidebar-brand-wrapper" style="display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1; overflow: visible;">
+          <div class="brand-logo-badge" title="Al-Muslim Group Maintenance Department ERP" style="width: 38px; height: 38px; border-radius: 10px; background: linear-gradient(135deg, #0284c7 0%, #0369a1 50%, #1e3a8a 100%); display: flex; align-items: center; justify-content: center; font-size: 19px; flex-shrink: 0; box-shadow: 0 0 16px rgba(2, 132, 199, 0.4); border: 1px solid rgba(56, 189, 248, 0.4);">🔧</div>
+          <div class="brand-text-container" style="min-width: 0; flex: 1; display: flex; flex-direction: column; justify-content: center; overflow: visible;">
+            <div class="brand-title-row" style="display: flex; align-items: center; justify-content: space-between; gap: 6px; min-width: 0; width: 100%;">
+              <span class="brand-text-title" style="font-weight: 800; font-size: 13.5px; letter-spacing: 0.5px; color: #ffffff; line-height: 1.2; text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6); white-space: nowrap;">AL-MUSLIM GROUP</span>
+              <span class="brand-status-pill" title="Production System Active" style="display: inline-flex; align-items: center; gap: 4px; background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.4); border-radius: 9999px; padding: 1.5px 7px; font-size: 8.5px; font-weight: 700; color: #34d399; letter-spacing: 0.5px; flex-shrink: 0; white-space: nowrap;">
+                <span class="brand-status-dot" style="width: 5px; height: 5px; border-radius: 50%; background: #10b981; box-shadow: 0 0 6px #10b981; display: inline-block;"></span>PROD
+              </span>
             </div>
-            <div class="brand-text-sub">Maintenance Department ERP</div>
+            <div class="brand-text-sub" style="font-size: 8.5px; color: #38bdf8; font-weight: 700; text-transform: uppercase; letter-spacing: 0.6px; margin-top: 3px; line-height: 1.2; white-space: nowrap;" title="Maintenance Department ERP">
+              MAINTENANCE DEPARTMENT ERP
+            </div>
           </div>
         </div>
         <button id="btn-sidebar-mobile-close" class="btn-sidebar-mobile-close" aria-label="Close navigation" title="Close navigation menu">✕</button>
