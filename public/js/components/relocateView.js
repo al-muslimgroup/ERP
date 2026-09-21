@@ -1173,7 +1173,12 @@ function renderIdleMachinesTab(idleMachines) {
 // 7. PENDING APPROVALS TAB
 // ─────────────────────────────────────────────────────────────
 function renderApprovalsTab(pendingApprovals) {
-  const isAdmin = authService.isAdmin() || authService.hasPermission('RELOCATE_APPROVE');
+  const canApprove = authService.isSuperAdmin() || 
+                     authService.isAdmin() || 
+                     authService.hasAccess('relocate', 'APPROVE') || 
+                     authService.hasPermission('relocate', 'APPROVE') || 
+                     authService.hasPermission('RELOCATE_APPROVE') ||
+                     authService.hasAccess('transfers', 'APPROVE');
 
   return `
     <div style="background: var(--bg-card); border: 1px solid var(--border-color); border-radius: var(--radius-md); padding: 12px 16px; display: flex; flex-direction: column; gap: 10px; flex: 1; min-height: 0;">
@@ -1216,7 +1221,7 @@ function renderApprovalsTab(pendingApprovals) {
                 </div>
               </div>
 
-              ${isAdmin ? `
+              ${canApprove ? `
                 <div style="display: flex; gap: 6px; width: 100%; justify-content: flex-end;">
                   <button type="button" class="btn btn-danger btn-sm btn-reject-relocation" data-id="${a.id}" style="min-height: 38px; font-size: 11.5px; padding: 6px 14px; flex: 1;">
                     ✕ Reject

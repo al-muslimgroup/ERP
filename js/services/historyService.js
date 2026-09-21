@@ -90,6 +90,38 @@ class HistoryService {
   }
 
   /**
+   * Shorthand helper to log a machine lifecycle or activity record
+   * Backwards compatible for services invoking historyService.logAction(machineId, actionType, details, meta)
+   */
+  logAction(machineId, actionType = 'TRANSFER', details = '', meta = {}) {
+    try {
+      let mSerial = meta.serialNumber;
+      if (!mSerial && machineId && machineId !== 'global') {
+        const m = storage.getItem(TABLE_NAMES.MACHINES, machineId);
+        if (m) mSerial = m.serialNumber;
+      }
+
+      return this.recordActivity({
+        machineId: machineId || 'global',
+        serialNumber: mSerial || 'N/A',
+        actionType: actionType || 'TRANSFER',
+        title: meta.title || ACTIVITY_TYPES[actionType]?.label || 'Relocation / Verification Activity',
+        details: details || '',
+        performedBy: meta.performedBy || authService.getCurrentUser()?.id || 'admin',
+        performedByName: meta.verifiedBy || meta.movedBy || meta.approvedBy || authService.getCurrentUser()?.name || 'Administrator',
+        fromLocation: meta.previousLocation || meta.fromLocation || null,
+        toLocation: meta.newFloor && meta.newLine ? `${meta.newFloor} / ${meta.newLine}` : (meta.toLocation || null),
+        previousValue: meta.previousStatus || meta.previousValue || null,
+        newValue: meta.newStatus || meta.newValue || null,
+        remarks: meta.remarks || details || ''
+      });
+    } catch (err) {
+      console.warn('historyService.logAction notice:', err);
+      return null;
+    }
+  }
+
+  /**
    * Find machine using Machine Serial Number only (Case-insensitive, whitespace trimmed)
    */
   findMachineBySerialOnly(serialNumber) {

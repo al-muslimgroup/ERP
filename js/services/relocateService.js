@@ -498,17 +498,21 @@ class RelocateService {
           ? `${machine.remarks} | Verified Idle (${session.id})`
           : `Verified Idle during physical scan session ${session.id}`;
 
-        historyService.logAction(
-          machine.id,
-          'STATUS_CHANGE',
-          `Automated reconciliation: Machine marked as IDLE because it was not found in active running lines during session ${session.id}.`,
-          {
-            previousStatus: idleSnap.status,
-            newStatus: 'IDLE',
-            sessionId: session.id,
-            verifiedBy: user.name
+        try {
+          if (typeof historyService.logAction === 'function') {
+            historyService.logAction(
+              machine.id,
+              'STATUS_CHANGE',
+              `Automated reconciliation: Machine marked as IDLE because it was not found in active running lines during session ${session.id}.`,
+              {
+                previousStatus: idleSnap.status,
+                newStatus: 'IDLE',
+                sessionId: session.id,
+                verifiedBy: user.name
+              }
+            );
           }
-        );
+        } catch (_) {}
 
         idleClassified++;
         machinesUpdated++;
@@ -549,12 +553,16 @@ class RelocateService {
         };
         storage.insert(TABLE_NAMES.RELOCATION_HISTORY, relHistRecord);
 
-        historyService.logAction(
-          machine.id,
-          'TRANSFER',
-          `Line relocated on same floor during session ${session.id} to Line ${move.scannedLineId}`,
-          { sessionId: session.id, movedBy: user.name }
-        );
+        try {
+          if (typeof historyService.logAction === 'function') {
+            historyService.logAction(
+              machine.id,
+              'TRANSFER',
+              `Line relocated on same floor during session ${session.id} to Line ${move.scannedLineId}`,
+              { sessionId: session.id, movedBy: user.name }
+            );
+          }
+        } catch (_) {}
 
         lineMovesCount++;
         machinesUpdated++;
@@ -679,8 +687,15 @@ class RelocateService {
   }
 
   approveRelocation(approvalId, reviewerNotes = '') {
-    if (!authService.isAdmin() && !authService.hasPermission('RELOCATE_APPROVE')) {
-      throw new Error('Unauthorized. Only Admins or authorized managers can approve inter-floor relocations.');
+    const canApprove = authService.isSuperAdmin() || 
+                       authService.isAdmin() || 
+                       authService.hasAccess('relocate', 'APPROVE') || 
+                       authService.hasPermission('relocate', 'APPROVE') || 
+                       authService.hasPermission('RELOCATE_APPROVE') ||
+                       authService.hasAccess('transfers', 'APPROVE');
+
+    if (!canApprove) {
+      throw new Error('Unauthorized. Only Super Admin, Admin, or authorized managers with Relocate Approval permission can approve inter-floor relocations.');
     }
 
     const approvals = storage.getTable(TABLE_NAMES.RELOCATION_APPROVALS) || [];
@@ -726,12 +741,29 @@ class RelocateService {
     };
     storage.insert(TABLE_NAMES.RELOCATION_HISTORY, relHistRecord);
 
-    historyService.logAction(
-      machine.id,
-      'TRANSFER',
-      `Inter-floor relocation approved from ${prevLocationStr} to ${app.destFloorId} / ${app.destLineId}. Approved by ${user.name}.`,
-      { previousLocation: prevLocationStr, newFloor: app.destFloorId, newLine: app.destLineId }
-    );
+    try {
+      if (typeof historyService.logAction === 'function') {
+        historyService.logAction(
+          machine.id,
+          'TRANSFER',
+          `Inter-floor relocation approved from ${prevLocationStr} to ${app.destFloorId} / ${app.destLineId}. Approved by ${user.name}.`,
+          { previousLocation: prevLocationStr, newFloor: app.destFloorId, newLine: app.destLineId, approvedBy: user.name }
+        );
+      } else if (typeof historyService.recordActivity === 'function') {
+        historyService.recordActivity({
+          machineId: machine.id,
+          serialNumber: machine.serialNumber,
+          actionType: 'TRANSFER',
+          title: 'Inter-Floor Relocation Approved',
+          details: `Inter-floor relocation approved from ${prevLocationStr} to ${app.destFloorId} / ${app.destLineId}. Approved by ${user.name}.`,
+          fromLocation: prevLocationStr,
+          toLocation: `${app.destFloorId} / ${app.destLineId}`,
+          performedByName: user.name
+        });
+      }
+    } catch (histErr) {
+      console.warn('History logging non-critical notice:', histErr);
+    }
 
     // Update approval status
     app.status = 'APPROVED';
@@ -747,8 +779,15 @@ class RelocateService {
   }
 
   rejectRelocation(approvalId, reason = '') {
-    if (!authService.isAdmin() && !authService.hasPermission('RELOCATE_APPROVE')) {
-      throw new Error('Unauthorized. Only Admins or authorized managers can reject relocations.');
+    const canReject = authService.isSuperAdmin() || 
+                      authService.isAdmin() || 
+                      authService.hasAccess('relocate', 'APPROVE') || 
+                      authService.hasPermission('relocate', 'APPROVE') || 
+                      authService.hasPermission('RELOCATE_APPROVE') ||
+                      authService.hasAccess('transfers', 'APPROVE');
+
+    if (!canReject) {
+      throw new Error('Unauthorized. Only Super Admin, Admin, or authorized managers with Relocate Approval permission can reject relocations.');
     }
 
     const approvals = storage.getTable(TABLE_NAMES.RELOCATION_APPROVALS) || [];
