@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Al-Muslim Group Garments Factory Maintenance Machine ERP
  * Machine Inventory -> Relocate View Component
  * Mobile-First Physical Verification, QR Scan, Auto-Idle Identification & Reconciliation System
@@ -2582,13 +2582,13 @@ export function initRelocateViewEvents() {
 
       if (!unitId) {
         notificationService.notifyWarning('Factory Unit Required', 'Please select a Factory Unit before starting the session.');
-        root.querySelector('#relocate-sel-unit')?.focus();
+        root.querySelector('#relocate-sel-unit')?.focus({ preventScroll: true });
         return;
       }
 
       if (!floorId) {
         notificationService.notifyWarning('Production Floor Required', 'Please select a Production Floor before starting the session.');
-        root.querySelector('#relocate-sel-floor')?.focus();
+        root.querySelector('#relocate-sel-floor')?.focus({ preventScroll: true });
         return;
       }
 
@@ -3045,7 +3045,7 @@ export function initRelocateViewEvents() {
       refreshView();
       const newInp = document.getElementById('inp-history-search');
       if (newInp) {
-        newInp.focus();
+        newInp.focus({ preventScroll: true });
         newInp.setSelectionRange(newInp.value.length, newInp.value.length);
       }
     });

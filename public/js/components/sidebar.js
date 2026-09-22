@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Al-Muslim Group Garments Factory Maintenance Machine ERP
  * Ultra-Modern Enterprise Navigation Sidebar Component
  * 
@@ -517,7 +517,7 @@ export function initSidebarEvents() {
       searchClearBtn.addEventListener('click', () => {
         searchInput.value = '';
         searchInput.dispatchEvent(new Event('input'));
-        searchInput.focus();
+        searchInput.focus({ preventScroll: true });
       });
     }
 
@@ -525,7 +525,7 @@ export function initSidebarEvents() {
     const handleSearchHotkeys = (e) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
-        searchInput.focus();
+        searchInput.focus({ preventScroll: true });
         searchInput.select();
       } else if (e.key === 'Escape' && document.activeElement === searchInput) {
         searchInput.value = '';

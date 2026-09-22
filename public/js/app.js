@@ -436,6 +436,9 @@ class ERPApplication {
         modalLayer.innerHTML = this.getActiveModalHtml();
         this.initModalEvents();
       }
+      // Root Cause 5 fix: lock background scroll while any modal is open
+      const hasModal = !!(state.get('activeModal'));
+      document.body.classList.toggle('modal-open', hasModal);
     } catch (err) {
       console.error('Error rendering modals:', err);
     }

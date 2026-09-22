@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Al-Muslim Group Garments Factory Maintenance Machine ERP
  * 🔧 ENT Lab Management — Action-Focused Single Page Interface
  * 
@@ -1439,7 +1439,7 @@ function setupManpowerTechAutocomplete({
     if (badgeEl) badgeEl.style.display = 'none';
     if (clearBtnEl) clearBtnEl.style.display = 'none';
     dropdownEl.style.display = 'none';
-    inputEl.focus();
+    inputEl.focus({ preventScroll: true });
   };
 
   if (clearBtnEl) {
@@ -1880,7 +1880,7 @@ export function initEtLabEvents() {
         dropdownResults.style.display = 'none';
         refreshEntLab();
         setTimeout(() => {
-          document.getElementById('ent-live-search-input')?.focus();
+          document.getElementById('ent-live-search-input')?.focus({ preventScroll: true });
         }, 50);
       });
     }
@@ -1948,7 +1948,7 @@ export function initEtLabEvents() {
       openActionModal(board);
     } else {
       notificationService.info('Please search and select a board first to add an action.');
-      document.getElementById('ent-live-search-input')?.focus();
+      document.getElementById('ent-live-search-input')?.focus({ preventScroll: true });
     }
   });
 
@@ -2009,7 +2009,7 @@ export function initEtLabEvents() {
       openPrintPassportModal(board);
     } else {
       notificationService.info('Please search and select a board first to print its passport.');
-      document.getElementById('ent-live-search-input')?.focus();
+      document.getElementById('ent-live-search-input')?.focus({ preventScroll: true });
     }
   });
 
@@ -2508,7 +2508,7 @@ function openActionModal(board, initialActionType = null) {
       const sBox = document.getElementById(`${targetId}-search`);
       if (sBox) {
         sBox.value = '';
-        sBox.focus();
+        sBox.focus({ preventScroll: true });
       }
     });
   });

@@ -373,7 +373,7 @@ export function initMachineModalEvents() {
       if (generated) {
         serialInp.value = generated;
         serialInp.dispatchEvent(new Event('input'));
-        serialInp.focus();
+        serialInp.focus({ preventScroll: true });
       }
     });
   }

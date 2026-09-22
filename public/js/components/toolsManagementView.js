@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Al-Muslim Group Garments Factory Maintenance Machine ERP
  * Tools, Equipment & Accessories Management System Component
  * 
@@ -189,7 +189,7 @@ export function openAdminSecurityModal({ title, description, onAuthorized }) {
 
   const inputPass = document.getElementById('inp-admin-passcode');
   const errBox = document.getElementById('admin-auth-error');
-  if (inputPass) inputPass.focus();
+  if (inputPass) inputPass.focus({ preventScroll: true });
 
   function verifyAndProceed() {
     const entered = (inputPass?.value || '').trim();
@@ -2998,7 +2998,7 @@ export function initToolsManagementEvents() {
             container.innerHTML = renderActiveTab('tools-add');
             initToolsManagementEvents();
             // Focus quantity field for rapid data entry
-            document.getElementById('input-item-qty')?.focus();
+            document.getElementById('input-item-qty')?.focus({ preventScroll: true });
             document.getElementById('input-item-qty')?.select();
           }
         }
@@ -3240,7 +3240,7 @@ export function initToolsManagementEvents() {
 
       if (!item) {
         alert('Please select a tool, accessory, or spare part first.');
-        document.getElementById('input-tool-smart-search')?.focus();
+        document.getElementById('input-tool-smart-search')?.focus({ preventScroll: true });
         return;
       }
 
@@ -4502,7 +4502,7 @@ export function initToolsManagementEvents() {
         initToolsManagementEvents();
         const inputAfter = document.getElementById('db-search-input');
         if (inputAfter) {
-          inputAfter.focus();
+          inputAfter.focus({ preventScroll: true });
           inputAfter.setSelectionRange(inputAfter.value.length, inputAfter.value.length);
         }
       }
@@ -6523,7 +6523,7 @@ export function openBatchToolsAllocationModal() {
         // Restore focus to end of search input
         const refreshed = document.getElementById('inp-batch-search');
         if (refreshed) {
-          refreshed.focus();
+          refreshed.focus({ preventScroll: true });
           refreshed.setSelectionRange(refreshed.value.length, refreshed.value.length);
         }
       };

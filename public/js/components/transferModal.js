@@ -352,7 +352,7 @@ export function initTransferModalEvents() {
       const updatedInp = document.getElementById('inp-transfer-search-serial');
       if (updatedInp) {
         if (!foundMachine) {
-          updatedInp.focus();
+          updatedInp.focus({ preventScroll: true });
         }
       }
     }
@@ -369,7 +369,7 @@ export function initTransferModalEvents() {
     const q = (rawVal || '').trim().toLowerCase();
     if (!q) {
       notificationService.warning('Please enter a Machine Serial Number first.');
-      if (inpSerial) inpSerial.focus();
+      if (inpSerial) inpSerial.focus({ preventScroll: true });
       return;
     }
 
@@ -403,7 +403,10 @@ export function initTransferModalEvents() {
 
   if (inpSerial) {
     if (!state.get('activeMachineId')) {
-      setTimeout(() => inpSerial.focus(), 50);
+      // Only autofocus on desktop — on mobile this triggers keyboard-slam jitter
+      if (window.innerWidth > 768) {
+        setTimeout(() => inpSerial.focus({ preventScroll: true }), 50);
+      }
     }
 
     if (suggestionsBox) {
@@ -655,7 +658,7 @@ export function initTransferModalEvents() {
         if (submitBtn) { submitBtn.disabled = false; submitBtn.innerHTML = originalBtnText; }
         notificationService.warning('Please enter or select a valid Machine Serial Number first.');
         const inpS = document.getElementById('inp-transfer-search-serial');
-        if (inpS) inpS.focus();
+        if (inpS) inpS.focus({ preventScroll: true });
         return;
       }
 

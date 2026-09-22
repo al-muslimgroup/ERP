@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Al-Muslim Group Garments Factory Maintenance Machine ERP
  * Master Data Storage, Quality Gate Studio & Custom Schema Builder
  * 
@@ -2084,7 +2084,7 @@ function rebindContentEvents() {
         rebindContentEvents();
         const newInp = container.querySelector('#inp-storage-search');
         if (newInp) {
-          newInp.focus();
+          newInp.focus({ preventScroll: true });
           newInp.setSelectionRange(newInp.value.length, newInp.value.length);
         }
       }
@@ -2700,7 +2700,7 @@ function initModalInteractions() {
         e.preventDefault();
         boxInline.style.display = boxInline.style.display === 'none' ? 'flex' : 'none';
         if (boxInline.style.display === 'flex' && inpInline) {
-          inpInline.focus();
+          inpInline.focus({ preventScroll: true });
         }
       });
     }
@@ -2934,12 +2934,12 @@ function initModalInteractions() {
       const targetMachine = selMachine ? selMachine.value.trim() : '';
       if (!targetMachine) {
         alert('Please select a Machine Name from the dropdown.');
-        if (selMachine) selMachine.focus();
+        if (selMachine) selMachine.focus({ preventScroll: true });
         return;
       }
       if (!currentParsed.records || currentParsed.records.length === 0) {
         alert('Please enter at least one Model Number in Box 2.');
-        if (txtModel) txtModel.focus();
+        if (txtModel) txtModel.focus({ preventScroll: true });
         return;
       }
 

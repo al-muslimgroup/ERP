@@ -10,15 +10,16 @@
   left: 0 !important;
   right: 0 !important;
   bottom: 0 !important;
-  background-color: rgba(5, 8, 16, 0.8) !important;
+  background-color: rgba(5, 8, 16, 0.82) !important;
   backdrop-filter: blur(4px);
   display: flex !important;
-  align-items: center;
-  justify-content: center;
+  align-items: center !important;
+  justify-content: center !important;
   z-index: 10000 !important;
-  padding: 24px 16px !important;
-  overflow-y: auto !important;
-  -webkit-overflow-scrolling: touch;
+  padding: 16px !important;
+  /* ANTI-JITTER: overlay must NOT scroll — only .modal-body scrolls */
+  overflow: hidden !important;
+  overscroll-behavior: contain;
   animation: fadeIn 0.15s ease;
 }
 
@@ -37,7 +38,10 @@
   min-height: 0 !important;
   overflow: hidden;
   margin: auto;
-  animation: scaleUp 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  /* Use translateY-only animation — scale causes layout-thrash & scroll-jitter */
+  animation: modalSlideIn 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+  will-change: transform, opacity;
+  transform: translateZ(0);
   box-sizing: border-box;
 }
 
@@ -477,6 +481,12 @@
 @keyframes scaleUp {
   from { transform: scale(0.96); opacity: 0; }
   to { transform: scale(1); opacity: 1; }
+}
+
+/* Anti-jitter modal entrance: translateY only, NO scale (scale triggers layout recalc) */
+@keyframes modalSlideIn {
+  from { transform: translateZ(0) translateY(12px); opacity: 0; }
+  to   { transform: translateZ(0) translateY(0);    opacity: 1; }
 }
 
 @keyframes slideDrawer {
@@ -1431,10 +1441,14 @@ td.td-actions-active {
 }
 
 @media (max-width: 768px) {
-  /* Modals as mobile sheet */
+  /* ANTI-JITTER: centered modal (NOT flex-end sheet) prevents keyboard-slam bounce */
   .modal-overlay {
-    padding: 8px !important;
-    align-items: flex-end !important;
+    padding: 10px !important;
+    align-items: center !important;
+    /* Disable heavy backdrop-filter on mobile — kills GPU jitter */
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    background-color: rgba(6, 10, 20, 0.90) !important;
   }
 
   .modal-dialog,
@@ -1442,9 +1456,10 @@ td.td-actions-active {
   .modal-overlay > div {
     max-width: 100% !important;
     width: 100% !important;
-    max-height: 94vh !important;
-    margin: 0 !important;
-    border-radius: var(--radius-lg) var(--radius-lg) 0 0 !important;
+    /* dvh units: correct for iOS soft-keyboard viewport resize */
+    max-height: calc(100dvh - 20px) !important;
+    margin: auto !important;
+    border-radius: var(--radius-lg) !important;
   }
 
   .modal-header {
@@ -1547,6 +1562,99 @@ td.td-actions-active {
     width: 100%;
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
+  }
+
+  /* ── UNIVERSAL INLINE MULTI-COLUMN GRID COLLAPSE ── */
+  /* Collapses all hardcoded inline grid definitions to 1 column on mobile */
+  /* Covers: transfersView, settingsView, emailConfigView, homepageView,    */
+  /* homepageManagerView, employeeModal, userManagement without per-file edits */
+  div[style*="grid-template-columns: repeat(4"],
+  div[style*="grid-template-columns: repeat(3"],
+  div[style*="grid-template-columns: repeat(2"],
+  div[style*="grid-template-columns: 1fr 1fr"],
+  div[style*="grid-template-columns: 2fr 1fr"],
+  div[style*="grid-template-columns: 1fr 2fr"],
+  div[style*="grid-template-columns: 3fr 1fr"],
+  div[style*="grid-template-columns: 1fr 3fr"],
+  div[style*="grid-template-columns: 2fr 2fr"],
+  div[style*="grid-template-columns: 1fr 1fr 1fr"] {
+    grid-template-columns: 1fr !important;
+    gap: 12px !important;
+  }
+
+  /* ── TRANSFERS TABLE: force horizontal scroll, never squish ── */
+  .transfers-table {
+    min-width: 860px !important;
+    table-layout: auto !important;
+    width: max-content !important;
+  }
+
+  /* ── USER PERMISSIONS MATRIX: expose hidden columns ── */
+  .permissions-matrix-scroll-wrap {
+    overflow-x: auto !important;
+    overflow-y: auto !important;
+    -webkit-overflow-scrolling: touch !important;
+  }
+
+  /* ── PM TABS BAR: swipeable instead of wrapping ── */
+  .pm-tabs-bar {
+    overflow-x: auto !important;
+    flex-wrap: nowrap !important;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 4px;
+    scrollbar-width: none;
+  }
+  .pm-tabs-bar::-webkit-scrollbar { display: none; }
+
+  /* ── TOOLS TAB NAVBAR: swipeable 44px bar instead of 250px wrap ── */
+  .tools-tab-navbar {
+    overflow-x: auto !important;
+    flex-wrap: nowrap !important;
+    -webkit-overflow-scrolling: touch !important;
+    padding-bottom: 4px !important;
+    scrollbar-width: none;
+  }
+  .tools-tab-navbar::-webkit-scrollbar { display: none; }
+
+  /* ── PM PRINTABLE / STICKER CARD: prevent overflow on 360px screens ── */
+  .pm-printable-card,
+  [class*="pm-printable"],
+  [class*="sticker-modal"] {
+    max-width: 100% !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+  }
+
+  /* ── RESOURCE LIBRARY DATA TABLE: force horizontal scroll ── */
+  .data-table-container {
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch;
+  }
+  .data-table-container .data-table {
+    min-width: 600px;
+  }
+
+  /* ── INVENTORY ACTION BAR: allow scroll on mobile ── */
+  .inv-action-bar,
+  .top-action-bar {
+    flex-wrap: wrap !important;
+    gap: 6px !important;
+  }
+
+  /* ── MANPOWER ACTION BAR: avoid off-screen buttons ── */
+  .mp-top-bar,
+  .mp-header {
+    flex-wrap: wrap !important;
+    gap: 8px !important;
+  }
+
+  /* ── MASTER DATA TABS: enable swipe ── */
+  .master-data-tabs,
+  .master-tab-bar {
+    overflow-x: auto !important;
+    flex-wrap: nowrap !important;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
   }
 }
 
@@ -3151,14 +3259,13 @@ td.td-actions-active {
 }
 
 .transfers-table {
-  width: 100% !important;
-  min-width: 0 !important;
-  max-width: 100% !important;
+  width: 100%;
+  min-width: 860px; /* always wide enough to show all 9 columns */
   border-collapse: separate;
   border-spacing: 0;
   font-size: 11.5px;
   color: var(--text-primary);
-  table-layout: fixed;
+  table-layout: auto;
   margin: 0;
 }
 
