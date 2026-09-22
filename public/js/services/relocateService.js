@@ -3,7 +3,7 @@
  * Machine Relocation, Physical Verification, Idle Identification & Reconciliation Service
  */
 
-import { storage } from '../db/storage.js';
+import { storage, CloudSaveError } from '../db/storage.js';
 import { TABLE_NAMES, MACHINE_STATUSES } from '../db/schema.js';
 import { authService } from './authService.js';
 import { masterDataService } from './masterDataService.js';
@@ -114,7 +114,11 @@ class RelocateService {
       reconciliation: null
     };
 
-    storage.insert(TABLE_NAMES.RELOCATE_SESSIONS, newSession);
+    // CONFIRMED WRITE: await Firebase HTTP 200 before success
+    const ok = await storage.saveTable(TABLE_NAMES.RELOCATE_SESSIONS,
+      [...(storage.getTable(TABLE_NAMES.RELOCATE_SESSIONS) || []), newSession]
+    );
+    if (!ok) throw new CloudSaveError('❌ Cloud Save Failed: Relocation session could not be saved to the cloud.');
     auditService.log(
       'RELOCATE_SESSION_STARTED',
       'RELOCATE',
@@ -469,7 +473,7 @@ class RelocateService {
    * 2. Same-Floor Line Moves -> Updated directly and logged to History
    * 3. Inter-Floor Mismatches -> Sent to Relocation Approval queue
    */
-  completeSession(sessionId, finalNotes = '') {
+  async completeSession(sessionId, finalNotes = '') {
     const session = this.getSessionById(sessionId);
     if (!session) throw new Error('Relocation session not found.');
     if (session.status !== 'IN_PROGRESS') throw new Error('Session is already finalized.');
@@ -617,8 +621,9 @@ class RelocateService {
       }
     });
 
-    // Save updated machines table
-    storage.saveTable(TABLE_NAMES.MACHINES);
+    // Save updated machines table — CONFIRMED WRITE
+    const machinesOk = await storage.saveTable(TABLE_NAMES.MACHINES);
+    if (!machinesOk) throw new CloudSaveError('❌ Cloud Save Failed: Machine location updates during relocation session were not confirmed by the cloud.');
 
     // Finalize session
     const reconciliationSummary = {
@@ -638,7 +643,11 @@ class RelocateService {
       session.notes = session.notes ? `${session.notes}\n${finalNotes}` : finalNotes;
     }
 
-    storage.update(TABLE_NAMES.RELOCATE_SESSIONS, session.id, session);
+    // CONFIRMED WRITE: session finalization
+    const sessionOk = await storage.writeAndConfirm(TABLE_NAMES.RELOCATE_SESSIONS, (tbl) => {
+      const idx = tbl.findIndex(s => s.id === session.id);
+      if (idx !== -1) tbl[idx] = session;
+    });
 
     auditService.log(
       'RELOCATE_SESSION_COMPLETED',
@@ -719,7 +728,11 @@ class RelocateService {
     if (app.needleQuantity) {
       machine.needleQuantity = app.needleQuantity;
     }
-    storage.update(TABLE_NAMES.MACHINES, machine.id, machine);
+    // CONFIRMED WRITE: Update machine location
+    await storage.writeAndConfirm(TABLE_NAMES.MACHINES, (tbl) => {
+      const idx = tbl.findIndex(m => m.id === machine.id);
+      if (idx !== -1) tbl[idx] = machine;
+    });
 
     // Record in History
     const relHistRecord = {
@@ -739,7 +752,8 @@ class RelocateService {
       approvalType: 'INTER_FLOOR_ADMIN',
       notes: reviewerNotes || app.remarks || 'Inter-floor relocation approved'
     };
-    storage.insert(TABLE_NAMES.RELOCATION_HISTORY, relHistRecord);
+    // CONFIRMED WRITE: Save relocation history
+    await storage.writeAndConfirm(TABLE_NAMES.RELOCATION_HISTORY, (tbl) => { tbl.push(relHistRecord); });
 
     try {
       if (typeof historyService.logAction === 'function') {
@@ -765,12 +779,15 @@ class RelocateService {
       console.warn('History logging non-critical notice:', histErr);
     }
 
-    // Update approval status
+    // Update approval status — CONFIRMED WRITE
     app.status = 'APPROVED';
     app.reviewedBy = user.name;
     app.reviewedAt = nowIso;
     app.reviewNotes = reviewerNotes;
-    storage.update(TABLE_NAMES.RELOCATION_APPROVALS, app.id, app);
+    await storage.writeAndConfirm(TABLE_NAMES.RELOCATION_APPROVALS, (tbl) => {
+      const idx = tbl.findIndex(a => a.id === app.id);
+      if (idx !== -1) tbl[idx] = app;
+    });
 
     auditService.log('RELOCATION_APPROVED', 'RELOCATE', app.id, `Relocation approved for Machine ${app.serialNumber} to Floor ${app.destFloorId}`);
     this._broadcastChange();
@@ -778,7 +795,7 @@ class RelocateService {
     return app;
   }
 
-  rejectRelocation(approvalId, reason = '') {
+  async rejectRelocation(approvalId, reason = '') {
     const canReject = authService.isSuperAdmin() || 
                       authService.isAdmin() || 
                       authService.hasAccess('relocate', 'APPROVE') || 
@@ -802,9 +819,13 @@ class RelocateService {
     app.reviewedBy = user.name;
     app.reviewedAt = nowIso;
     app.reviewNotes = reason || 'Rejected by reviewer';
-    storage.update(TABLE_NAMES.RELOCATION_APPROVALS, app.id, app);
+    // CONFIRMED WRITE: await Firebase HTTP 200
+    await storage.writeAndConfirm(TABLE_NAMES.RELOCATION_APPROVALS, (tbl) => {
+      const idx = tbl.findIndex(a => a.id === app.id);
+      if (idx !== -1) tbl[idx] = app;
+    });
 
-    // Record in History
+    // Record in History — CONFIRMED WRITE
     const relHistRecord = {
       id: `RH-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
       machineId: app.machineId,
@@ -822,7 +843,7 @@ class RelocateService {
       approvalType: 'INTER_FLOOR_REJECTED',
       notes: reason || 'Relocation rejected by reviewer; location unchanged'
     };
-    storage.insert(TABLE_NAMES.RELOCATION_HISTORY, relHistRecord);
+    await storage.writeAndConfirm(TABLE_NAMES.RELOCATION_HISTORY, (tbl) => { tbl.push(relHistRecord); });
 
     auditService.log('RELOCATION_REJECTED', 'RELOCATE', app.id, `Relocation rejected for Machine ${app.serialNumber}. Reason: ${reason}`);
     this._broadcastChange();

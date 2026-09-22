@@ -4,7 +4,7 @@
  * Handles File Previews, Downloads, URL Navigation, Folder Hierarchy, and Role-Based Access Control
  */
 
-import { storage } from '../db/storage.js';
+import { storage, CloudSaveError } from '../db/storage.js';
 import { TABLE_NAMES } from '../db/schema.js';
 import { authService } from './authService.js';
 import { auditService } from './auditService.js';
@@ -461,7 +461,7 @@ class ResourceLibraryService {
     return { success: true };
   }
 
-  addResource(resourceData) {
+  async addResource(resourceData) {
     this.ensureInitialized();
     const id = `res-${Date.now()}`;
     const user = authService.getCurrentUser();
@@ -484,38 +484,40 @@ class ResourceLibraryService {
       createdById: user?.id || 'usr-1'
     };
 
-    storage.data[TABLE_NAMES.DOCUMENTS].push(newRes);
-    storage.saveTable(TABLE_NAMES.DOCUMENTS);
+    // CONFIRMED WRITE: await Firebase HTTP 200
+    await storage.writeAndConfirm(TABLE_NAMES.DOCUMENTS, (tbl) => { tbl.push(newRes); });
     auditService.log('ADD_RESOURCE', `Added new resource '${newRes.name}' (${newRes.type})`);
     return newRes;
   }
 
-  updateResource(id, updateData) {
+  async updateResource(id, updateData) {
     this.ensureInitialized();
-    const list = storage.getTable(TABLE_NAMES.DOCUMENTS) || [];
-    const idx = list.findIndex(r => r.id === id);
-    if (idx === -1) return null;
-
-    list[idx] = {
-      ...list[idx],
-      ...updateData,
-      updatedAt: new Date().toISOString()
-    };
-
-    storage.saveTable(TABLE_NAMES.DOCUMENTS);
-    auditService.log('UPDATE_RESOURCE', `Updated resource '${list[idx].name}'`);
-    return list[idx];
+    // CONFIRMED WRITE: await Firebase HTTP 200
+    let updated;
+    await storage.writeAndConfirm(TABLE_NAMES.DOCUMENTS, (tbl) => {
+      const idx = tbl.findIndex(r => r.id === id);
+      if (idx !== -1) {
+        tbl[idx] = { ...tbl[idx], ...updateData, updatedAt: new Date().toISOString() };
+        updated = tbl[idx];
+      }
+    });
+    if (!updated) return null;
+    auditService.log('UPDATE_RESOURCE', `Updated resource '${updated.name}'`);
+    return updated;
   }
 
-  deleteResource(id) {
+  async deleteResource(id) {
     this.ensureInitialized();
     const list = storage.getTable(TABLE_NAMES.DOCUMENTS) || [];
     const target = list.find(r => r.id === id);
     if (!target) return false;
 
-    // Delete item and any recursive child items if it's a folder
-    storage.data[TABLE_NAMES.DOCUMENTS] = list.filter(r => r.id !== id && r.parentId !== id);
-    storage.saveTable(TABLE_NAMES.DOCUMENTS);
+    // Delete item and any recursive child items if it's a folder — CONFIRMED WRITE
+    await storage.writeAndConfirm(TABLE_NAMES.DOCUMENTS, (tbl) => {
+      const indices = [];
+      tbl.forEach((r, i) => { if (r.id === id || r.parentId === id) indices.unshift(i); });
+      indices.forEach(i => tbl.splice(i, 1));
+    });
     auditService.log('DELETE_RESOURCE', `Deleted resource '${target.name}'`);
     return true;
   }

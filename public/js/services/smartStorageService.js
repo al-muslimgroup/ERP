@@ -10,7 +10,7 @@
  * 5. Excel/CSV & Bulk Multiline Text Importer & Template Generator
  */
 
-import { storage } from '../db/storage.js';
+import { storage, CloudSaveError } from '../db/storage.js';
 import { TABLE_NAMES } from '../db/schema.js';
 import { auditService } from './auditService.js';
 import { notificationService } from './notificationService.js';
@@ -36,7 +36,7 @@ class SmartStorageService {
     return storage.getItem(TABLE_NAMES.STORAGE_MASTER, id);
   }
 
-  addStorageItem(item) {
+  async addStorageItem(item) {
     if (!item.id) {
       item.id = 'sm-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
     }
@@ -45,12 +45,13 @@ class SmartStorageService {
     item.status = item.status || 'ACTIVE';
     item.aliases = Array.isArray(item.aliases) ? item.aliases : this.generateAutoAliases(item);
 
-    storage.insert(TABLE_NAMES.STORAGE_MASTER, item);
+    // CONFIRMED WRITE: await Firebase HTTP 200
+    await storage.writeAndConfirm(TABLE_NAMES.STORAGE_MASTER, (tbl) => { tbl.push(item); });
     this._broadcastStorageChange();
     return item;
   }
 
-  updateStorageItem(id, updates) {
+  async updateStorageItem(id, updates) {
     const existing = this.getStorageItem(id);
     if (!existing) throw new Error('Storage record not found');
     const updated = {
@@ -58,17 +59,26 @@ class SmartStorageService {
       ...updates,
       updatedAt: new Date().toISOString()
     };
-    storage.update(TABLE_NAMES.STORAGE_MASTER, id, updated);
+    // CONFIRMED WRITE: await Firebase HTTP 200
+    await storage.writeAndConfirm(TABLE_NAMES.STORAGE_MASTER, (tbl) => {
+      const idx = tbl.findIndex(it => it.id === id);
+      if (idx !== -1) tbl[idx] = updated;
+    });
     this._broadcastStorageChange();
     return updated;
   }
 
   async deleteStorageItem(id) {
-    storage.delete(TABLE_NAMES.STORAGE_MASTER, id);
-    storage.delete(TABLE_NAMES.MODELS, id);
-    if (typeof storage.persistToServerDatabase === 'function') {
-      try { await storage.persistToServerDatabase(); } catch (_) {}
-    }
+    // CONFIRMED WRITE: await Firebase HTTP 200
+    await storage.writeAndConfirm(TABLE_NAMES.STORAGE_MASTER, (tbl) => {
+      const idx = tbl.findIndex(it => it.id === id);
+      if (idx !== -1) tbl.splice(idx, 1);
+    });
+    // Also remove from MODELS if duplicated there
+    try { await storage.writeAndConfirm(TABLE_NAMES.MODELS, (tbl) => {
+      const idx = tbl.findIndex(it => it.id === id);
+      if (idx !== -1) tbl.splice(idx, 1);
+    }); } catch (_) {}
     this._broadcastStorageChange();
     return true;
   }
@@ -76,16 +86,22 @@ class SmartStorageService {
   async deleteStorageItemsBatch(ids) {
     if (!Array.isArray(ids) || ids.length === 0) return 0;
     let count = 0;
-    ids.forEach(id => {
-      try {
-        storage.delete(TABLE_NAMES.STORAGE_MASTER, id);
-        storage.delete(TABLE_NAMES.MODELS, id);
-        count++;
-      } catch (_) {}
+    // CONFIRMED WRITE: remove from STORAGE_MASTER
+    await storage.writeAndConfirm(TABLE_NAMES.STORAGE_MASTER, (tbl) => {
+      ids.forEach(id => {
+        const idx = tbl.findIndex(it => it.id === id);
+        if (idx !== -1) { tbl.splice(idx, 1); count++; }
+      });
     });
-    if (typeof storage.persistToServerDatabase === 'function') {
-      try { await storage.persistToServerDatabase(); } catch (_) {}
-    }
+    // Also remove from MODELS
+    try {
+      await storage.writeAndConfirm(TABLE_NAMES.MODELS, (tbl) => {
+        ids.forEach(id => {
+          const idx = tbl.findIndex(it => it.id === id);
+          if (idx !== -1) tbl.splice(idx, 1);
+        });
+      });
+    } catch (_) {}
     this._broadcastStorageChange();
     auditService.log('STORAGE_BATCH_DELETE', `Bulk deleted ${count} storage records`, { deletedCount: count });
     return count;
