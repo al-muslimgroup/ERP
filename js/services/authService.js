@@ -4,6 +4,7 @@
  */
 
 import { storage } from '../db/storage.js';
+import { CloudSaveError } from '../db/storage.js';
 import { TABLE_NAMES, ROLES, ACTIONS, MODULES, DEFAULT_PERMISSION_TEMPLATES, PERMISSION_MODULES, DEFAULT_PERMISSION_PRESETS } from '../db/schema.js';
 import { auditService } from './auditService.js';
 import { cryptoService } from './cryptoService.js';
@@ -1059,7 +1060,7 @@ class AuthService {
   // User Management by Super Admin
   // ==========================================
 
-  createUser({ name, username, password, confirmPassword, email, phone, employeeId, department, designation, role = 'USER', roleId, presetId, status = 'ACTIVE', mustChangePassword = false, assignedScope, permissions }) {
+  async createUser({ name, username, password, confirmPassword, email, phone, employeeId, department, designation, role = 'USER', roleId, presetId, status = 'ACTIVE', mustChangePassword = false, assignedScope, permissions }) {
     if (!this.canManageUsers()) {
       throw new Error('Access Denied: You do not have permission to create user accounts.');
     }
@@ -1145,6 +1146,13 @@ class AuthService {
 
     storage.insert(TABLE_NAMES.USERS, newUser);
 
+    // Confirmed cloud write
+    const ok = await storage.saveTable(TABLE_NAMES.USERS, true);
+    if (!ok) {
+      storage.delete(TABLE_NAMES.USERS, newUser.id);
+      throw new CloudSaveError('❌ Cloud Save Failed: User account creation was not confirmed by the cloud.');
+    }
+
     auditService.log(
       'USER_CREATED',
       'USER',
@@ -1157,12 +1165,8 @@ class AuthService {
         window.notificationService.notify({
           title: '👤 New User Created',
           message: `${newUser.name} has been added as a ${newUser.presetName || newUser.role}.`,
-          type: 'SUCCESS',
-          module: 'user_management',
-          action: 'VIEW',
-          entityType: 'USER',
-          entityId: newUser.id,
-          targetUrl: '#users',
+          type: 'SUCCESS', module: 'user_management', action: 'VIEW',
+          entityType: 'USER', entityId: newUser.id, targetUrl: '#users',
           targetRoles: ['ADMIN', 'SUPER_ADMIN']
         });
       }
@@ -1171,7 +1175,7 @@ class AuthService {
     return newUser;
   }
 
-  updateUser(userId, updates) {
+  async updateUser(userId, updates) {
     if (!this.canManageUsers()) {
       throw new Error('Access Denied: You do not have permission to update user accounts.');
     }
@@ -1248,6 +1252,10 @@ class AuthService {
       updatedAt: new Date().toISOString()
     });
 
+    // Confirmed cloud write
+    const ok = await storage.saveTable(TABLE_NAMES.USERS, true);
+    if (!ok) throw new CloudSaveError('❌ Cloud Save Failed: User profile update was not confirmed by the cloud.');
+
     if (this.currentUser?.id === userId) {
       this.currentUser = updated;
       localStorage.setItem('al_muslim_active_user_id', updated.id);
@@ -1256,13 +1264,7 @@ class AuthService {
       }
     }
 
-    auditService.log(
-      'USER_UPDATED',
-      'USER',
-      userId,
-      `Updated user profile for '${user.name}' (@${updated.username}).`
-    );
-
+    auditService.log('USER_UPDATED', 'USER', userId, `Updated user profile for '${user.name}' (@${updated.username}).`);
     return updated;
   }
 
@@ -1412,85 +1414,50 @@ class AuthService {
     return { success: true };
   }
 
-  updateUserPermissions(userId, permissions, presetId = 'CUSTOM', presetName = 'Custom User') {
+  async updateUserPermissions(userId, permissions, presetId = 'CUSTOM', presetName = 'Custom User') {
     if (!this.canManageRoles()) {
       throw new Error('Access Denied: Only Administrator can override individual user permissions.');
     }
-
     const user = storage.getItem(TABLE_NAMES.USERS, userId);
     if (!user) throw new Error('User not found.');
-
     const updated = storage.update(TABLE_NAMES.USERS, userId, {
-      permissions: permissions,
-      presetId: presetId,
-      presetName: presetName,
-      updatedAt: new Date().toISOString()
+      permissions, presetId, presetName, updatedAt: new Date().toISOString()
     });
-
-    if (this.currentUser?.id === userId) {
-      this.currentUser = updated;
-    }
-
-    auditService.log(
-      'USER_PERMISSIONS_OVERRIDDEN',
-      'ADMIN',
-      userId,
-      `Administrator customized individual permissions for '${user.name}' (${user.username}) [Profile: ${presetName}].`
-    );
-
+    const ok = await storage.saveTable(TABLE_NAMES.USERS, true);
+    if (!ok) throw new CloudSaveError('❌ Cloud Save Failed: Permission update was not confirmed by the cloud.');
+    if (this.currentUser?.id === userId) this.currentUser = updated;
+    auditService.log('USER_PERMISSIONS_OVERRIDDEN', 'ADMIN', userId, `Administrator customized individual permissions for '${user.name}' (${user.username}) [Profile: ${presetName}].`);
     return updated;
   }
 
-  deleteUser(userId) {
-    if (!this.canManageUsers()) {
-      throw new Error('Access Denied: You do not have permission to delete users.');
-    }
-
+  async deleteUser(userId) {
+    if (!this.canManageUsers()) throw new Error('Access Denied: You do not have permission to delete users.');
     const user = storage.getItem(TABLE_NAMES.USERS, userId);
     if (!user) throw new Error('User record not found.');
-
-    if (this.currentUser?.id === userId) {
-      throw new Error('Security Notice: You cannot delete your own active user account.');
-    }
-
+    if (this.currentUser?.id === userId) throw new Error('Security Notice: You cannot delete your own active user account.');
     if (user.role === 'SUPER_ADMIN' || user.roleId === 'role-super-admin' || user.username === 'superadmin') {
       throw new Error('Security Notice: The master Super Admin account cannot be deleted.');
     }
-
     storage.delete(TABLE_NAMES.USERS, userId);
-
-    auditService.log(
-      'USER_DELETED',
-      'USER',
-      userId,
-      `Permanently deleted user account '${user.name}' (${user.email || user.username}).`
-    );
-
+    const ok = await storage.saveTable(TABLE_NAMES.USERS, true);
+    if (!ok) {
+      storage.insert(TABLE_NAMES.USERS, user); // Rollback
+      throw new CloudSaveError('❌ Cloud Save Failed: User deletion was not confirmed by the cloud.');
+    }
+    auditService.log('USER_DELETED', 'USER', userId, `Permanently deleted user account '${user.name}' (${user.email || user.username}).`);
     return true;
   }
 
-  toggleUserStatus(userId) {
-    if (!this.canManageUsers()) {
-      throw new Error('Access Denied: You do not have permission to deactivate users.');
-    }
-
+  async toggleUserStatus(userId) {
+    if (!this.canManageUsers()) throw new Error('Access Denied: You do not have permission to deactivate users.');
     const user = storage.getItem(TABLE_NAMES.USERS, userId);
     if (!user) throw new Error('User not found.');
-
-    if (user.role === 'SUPER_ADMIN' || user.username === 'superadmin') {
-      throw new Error('Super Admin account cannot be deactivated.');
-    }
-
+    if (user.role === 'SUPER_ADMIN' || user.username === 'superadmin') throw new Error('Super Admin account cannot be deactivated.');
     const newStatus = user.status === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE';
     storage.update(TABLE_NAMES.USERS, userId, { status: newStatus });
-
-    auditService.log(
-      'USER_STATUS_TOGGLED',
-      'USER',
-      userId,
-      `Set user account '${user.name}' (${user.email || user.username}) status to ${newStatus}.`
-    );
-
+    const ok = await storage.saveTable(TABLE_NAMES.USERS, true);
+    if (!ok) throw new CloudSaveError('❌ Cloud Save Failed: User status change was not confirmed by the cloud.');
+    auditService.log('USER_STATUS_TOGGLED', 'USER', userId, `Set user account '${user.name}' (${user.email || user.username}) status to ${newStatus}.`);
     return newStatus;
   }
 

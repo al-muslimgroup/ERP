@@ -1619,7 +1619,7 @@ function renderPrintStickerModal() {
         <div style="padding: 24px; text-align: center; background: #090d16;">
           
           <!-- Physical Sticker Card (Matches Al-Muslim Group physical card) -->
-          <div id="pm-printable-sticker-container" class="pm-printable-card" style="width: 440px; margin: 0 auto; background: #ffffff; color: #0f172a; border: 2.5px solid #1e3a8a; border-radius: 6px; display: flex; box-shadow: 0 10px 25px rgba(0,0,0,0.5); text-align: left; font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; overflow: hidden; position: relative;">
+          <div id="pm-printable-sticker-container" class="pm-printable-card" style="max-width: 440px; width: 100%; box-sizing: border-box; margin: 0 auto; background: #ffffff; color: #0f172a; border: 2.5px solid #1e3a8a; border-radius: 6px; display: flex; box-shadow: 0 10px 25px rgba(0,0,0,0.5); text-align: left; font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; overflow: hidden; position: relative;">
             
             <!-- LEFT BLUE VERTICAL STRIP -->
             <div style="width: 95px; background: #1e3a8a; color: #fff; padding: 14px 6px; display: flex; flex-direction: column; align-items: center; justify-content: space-between; border-right: 2px solid #172554;">
@@ -2446,7 +2446,7 @@ export function initPreventiveMaintenanceEvents() {
       rerenderView();
       const refocused = document.getElementById('pm-config-search-input');
       if (refocused) {
-        refocused.focus();
+        refocused.focus({ preventScroll: true });
         refocused.setSelectionRange(refocused.value.length, refocused.value.length);
       }
     });
@@ -2582,7 +2582,7 @@ function bindModalEvents() {
         `;
 
         const editInput = row.querySelector('.pm-edit-item-input');
-        editInput?.focus();
+        editInput?.focus({ preventScroll: true });
 
         row.querySelector('.btn-pm-save-edit-item')?.addEventListener('click', () => {
           const newText = editInput?.value?.trim();
@@ -2626,7 +2626,7 @@ function bindModalEvents() {
     addInlineBox.style.display = isHidden ? 'block' : 'none';
     if (isHidden && newChecklistInput) {
       newChecklistInput.value = '';
-      newChecklistInput.focus();
+      newChecklistInput.focus({ preventScroll: true });
     }
   });
 
@@ -2639,7 +2639,7 @@ function bindModalEvents() {
     const newText = newChecklistInput?.value?.trim();
     if (!newText) {
       alert('Please enter text for the new checklist item.');
-      newChecklistInput?.focus();
+      newChecklistInput?.focus({ preventScroll: true });
       return;
     }
     const currentItems = getCurrentChecklistItems();
@@ -2890,7 +2890,7 @@ function bindModalEvents() {
       alert('Please search and select a machine first.');
       const searchInput = document.getElementById('pm-modal-machine-search');
       if (searchInput) {
-        searchInput.focus();
+        searchInput.focus({ preventScroll: true });
         updateMachineDropdown('');
       }
       return;
@@ -2903,13 +2903,13 @@ function bindModalEvents() {
 
     if (!sticker) {
       alert('Please enter the physical sticker serial number (e.g. 238168 or 245231) from the machine.');
-      document.getElementById('pm-input-sticker-serial')?.focus();
+      document.getElementById('pm-input-sticker-serial')?.focus({ preventScroll: true });
       return;
     }
     const mpName = document.getElementById('pm-manpower-name')?.value?.trim() || document.getElementById('pm-input-manpower-search')?.value?.trim();
     if (!mpName) {
       alert('Please enter the technician name or card number who performed the service.');
-      document.getElementById('pm-input-manpower-search')?.focus();
+      document.getElementById('pm-input-manpower-search')?.focus({ preventScroll: true });
       return;
     }
     const mpCard = document.getElementById('pm-manpower-card')?.value?.trim() || '';
@@ -3049,7 +3049,7 @@ function bindModalEvents() {
     const reason = document.getElementById('pm-replace-reason')?.value || 'Sticker replacement';
     if (!newSerial) {
       alert('Please enter the new physical sticker serial number (e.g. 238168 or 245231).');
-      document.getElementById('pm-replace-new-serial')?.focus();
+      document.getElementById('pm-replace-new-serial')?.focus({ preventScroll: true });
       return;
     }
     if (!modalMachineContext) return;

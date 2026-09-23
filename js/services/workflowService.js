@@ -4,7 +4,7 @@
  * Configurable multi-level routing, location-based scoping rules & permission evaluator
  */
 
-import { storage } from '../db/storage.js';
+import { storage, CloudSaveError } from '../db/storage.js';
 import { TABLE_NAMES, APPROVER_TYPES, ROLES } from '../db/schema.js';
 import { authService } from './authService.js';
 import { auditService } from './auditService.js';
@@ -359,7 +359,7 @@ class WorkflowService {
   /**
    * Save or update a workflow configuration
    */
-  saveWorkflow(workflowData) {
+  async saveWorkflow(workflowData) {
     if (!authService.isAdmin()) {
       throw new Error('Unauthorized: Only Admin can configure transfer approval workflows.');
     }
@@ -387,27 +387,34 @@ class WorkflowService {
     }));
 
     if (workflowData.id) {
-      // Update existing
+      // Update existing — CONFIRMED WRITE
       const existing = workflows.find(w => w.id === workflowData.id);
       if (!existing) throw new Error('Workflow not found.');
 
-      const updated = storage.update(TABLE_NAMES.TRANSFER_WORKFLOWS, workflowData.id, {
-        name: workflowData.name.trim(),
-        description: workflowData.description || '',
-        scope: workflowData.scope || {},
-        requireDocument: Boolean(workflowData.requireDocument),
-        sequential: workflowData.sequential !== false,
-        isDefault: Boolean(workflowData.isDefault),
-        status: workflowData.status || 'ACTIVE',
-        levels: normalizedLevels,
-        updatedBy: user.id,
-        updatedAt: new Date().toISOString()
+      let updated;
+      await storage.writeAndConfirm(TABLE_NAMES.TRANSFER_WORKFLOWS, (tbl) => {
+        const idx = tbl.findIndex(w => w.id === workflowData.id);
+        if (idx !== -1) {
+          tbl[idx] = { ...tbl[idx],
+            name: workflowData.name.trim(),
+            description: workflowData.description || '',
+            scope: workflowData.scope || {},
+            requireDocument: Boolean(workflowData.requireDocument),
+            sequential: workflowData.sequential !== false,
+            isDefault: Boolean(workflowData.isDefault),
+            status: workflowData.status || 'ACTIVE',
+            levels: normalizedLevels,
+            updatedBy: user.id,
+            updatedAt: new Date().toISOString()
+          };
+          updated = tbl[idx];
+        }
       });
 
-      auditService.log('WORKFLOW_UPDATED', 'TRANSFER_WORKFLOW', updated.name, `Updated transfer workflow '${updated.name}' with ${normalizedLevels.length} levels.`);
+      auditService.log('WORKFLOW_UPDATED', 'TRANSFER_WORKFLOW', updated?.name, `Updated transfer workflow '${updated?.name}' with ${normalizedLevels.length} levels.`);
       return updated;
     } else {
-      // Create new
+      // Create new — CONFIRMED WRITE
       const newWorkflow = {
         id: `wf-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
         name: workflowData.name.trim(),
@@ -424,13 +431,13 @@ class WorkflowService {
         updatedAt: new Date().toISOString()
       };
 
-      const created = storage.insert(TABLE_NAMES.TRANSFER_WORKFLOWS, newWorkflow);
-      auditService.log('WORKFLOW_CREATED', 'TRANSFER_WORKFLOW', created.name, `Created transfer workflow '${created.name}' with ${normalizedLevels.length} levels.`);
-      return created;
+      await storage.writeAndConfirm(TABLE_NAMES.TRANSFER_WORKFLOWS, (tbl) => { tbl.push(newWorkflow); });
+      auditService.log('WORKFLOW_CREATED', 'TRANSFER_WORKFLOW', newWorkflow.name, `Created transfer workflow '${newWorkflow.name}' with ${normalizedLevels.length} levels.`);
+      return newWorkflow;
     }
   }
 
-  deleteWorkflow(workflowId) {
+  async deleteWorkflow(workflowId) {
     if (!authService.isAdmin()) {
       throw new Error('Unauthorized to delete workflow.');
     }
@@ -438,7 +445,11 @@ class WorkflowService {
     if (wf?.isDefault) {
       throw new Error('Cannot delete the system default workflow.');
     }
-    storage.delete(TABLE_NAMES.TRANSFER_WORKFLOWS, workflowId);
+    // CONFIRMED WRITE: await Firebase HTTP 200
+    await storage.writeAndConfirm(TABLE_NAMES.TRANSFER_WORKFLOWS, (tbl) => {
+      const idx = tbl.findIndex(w => w.id === workflowId);
+      if (idx !== -1) tbl.splice(idx, 1);
+    });
     auditService.log('WORKFLOW_DELETED', 'TRANSFER_WORKFLOW', workflowId, `Deleted workflow ${wf?.name || workflowId}`);
     return true;
   }

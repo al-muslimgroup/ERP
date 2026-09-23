@@ -13,6 +13,7 @@ import { authService } from '../services/authService.js';
 import { notificationService } from '../services/notificationService.js';
 import { smartStorageService } from '../services/smartStorageService.js';
 import { formatDisplayLine } from '../services/excelService.js';
+import { CloudSaveError } from '../db/storage.js';
 import { state } from '../state.js';
 
 export function renderMachineModal() {
@@ -372,7 +373,7 @@ export function initMachineModalEvents() {
       if (generated) {
         serialInp.value = generated;
         serialInp.dispatchEvent(new Event('input'));
-        serialInp.focus();
+        serialInp.focus({ preventScroll: true });
       }
     });
   }
@@ -407,18 +408,27 @@ export function initMachineModalEvents() {
     });
   }
 
-  // Form Submit
+  // Form Submit — Async, confirmed cloud write before closing modal
   const form = document.getElementById('form-machine');
   if (form) {
-    form.addEventListener('submit', (e) => {
+    form.addEventListener('submit', async (e) => {
       e.preventDefault();
+
+      const saveBtn = document.getElementById('btn-save-machine');
+      const originalBtnText = saveBtn ? saveBtn.innerHTML : '';
+
+      // 1. Disable button + show saving spinner (prevents double-submit)
+      if (saveBtn) {
+        saveBtn.disabled = true;
+        saveBtn.innerHTML = '<span style="display:inline-flex;align-items:center;gap:6px;"><span style="display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,0.3);border-top-color:#fff;border-radius:50%;animation:spin 0.7s linear infinite;"></span>Saving to Cloud...</span>';
+      }
 
       const existingMachine = isEdit ? storage.getItem(TABLE_NAMES.MACHINES, machineId) : null;
       const serialNumber = document.getElementById('modal-field-serial-number').value.trim();
       const machineNameId = document.getElementById('modal-field-machine-name').value;
       const brandId = document.getElementById('modal-field-brand').value;
       const modelId = document.getElementById('modal-field-model').value;
-      
+
       const groupId = document.getElementById('modal-field-group')?.value || existingMachine?.groupId || 'grp-1';
       const unitId = document.getElementById('modal-field-unit')?.value || existingMachine?.unitId || 'unt-1';
       const floorId = document.getElementById('modal-field-floor')?.value || existingMachine?.floorId || 'flr-4';
@@ -453,16 +463,17 @@ export function initMachineModalEvents() {
 
       try {
         if (isEdit) {
-          const res = machineService.updateMachine(machineId, machineData);
+          // 2. Await confirmed cloud write (throws CloudSaveError if Firestore write fails)
+          const res = await machineService.updateMachine(machineId, machineData);
           if (res.pendingApproval) {
             notificationService.info(`Edit submitted for Admin Approval (Approval ID: ${res.requestId})`, 'Pending Approval');
           } else {
-            notificationService.success(`Machine record #${serialNumber} updated successfully.`);
+            notificationService.success(`✅ Machine record #${serialNumber} updated and saved to cloud.`);
           }
         } else {
-          machineService.addMachine(machineData);
-          notificationService.success(`Machine #${serialNumber} registered successfully.`);
-          // Reset pagination & restrictive search and sort by latest update so the new machine is displayed right at the top
+          await machineService.addMachine(machineData);
+          notificationService.success(`✅ Machine #${serialNumber} registered and saved to cloud.`);
+          // Reset pagination & restrictive search and sort by latest update
           state.updateFilters({
             search: '',
             page: 1,
@@ -471,11 +482,25 @@ export function initMachineModalEvents() {
           });
         }
 
+        // 3. Only close modal and update UI AFTER cloud confirmation
         closeModal();
         state.set('currentView', 'inventory');
         state.emit('inventory:updated');
+
       } catch (err) {
-        notificationService.error(err.message || 'Failed to save machine record.');
+        // 4. Keep modal open on failure — re-enable button, show error
+        if (saveBtn) {
+          saveBtn.disabled = false;
+          saveBtn.innerHTML = originalBtnText;
+        }
+
+        if (err.name === 'CloudSaveError') {
+          // Distinct cloud save failure — data was not persisted to Firebase
+          notificationService.error(err.message || '❌ Cloud Save Failed: Firebase write was not confirmed.');
+        } else {
+          // Validation errors, duplicate serial, permission errors etc.
+          notificationService.error(err.message || 'Failed to save machine record.');
+        }
       }
     });
   }

@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Al-Muslim Group Garments Factory Maintenance Machine ERP
  * System Settings, Approval Policies & JSON Backup/Restore Component
  */
@@ -339,7 +339,7 @@ export function initSettingsEvents() {
     reindexSignatureSlots();
 
     const nameInput = newCard.querySelector('.sig-slot-name');
-    if (nameInput) nameInput.focus();
+    if (nameInput) nameInput.focus({ preventScroll: true });
   }
 
   const btnAddTop = document.getElementById('btn-add-signature-slot');

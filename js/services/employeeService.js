@@ -5,7 +5,7 @@
  * Employee Relocations/Transfers, Leave Management, Multi-Filter Engine & Analytics
  */
 
-import { storage } from '../db/storage.js';
+import { storage, CloudSaveError } from '../db/storage.js';
 import { TABLE_NAMES } from '../db/schema.js';
 import { auditService } from './auditService.js';
 import { masterDataService } from './masterDataService.js';
@@ -733,7 +733,7 @@ class EmployeeService {
   // CRUD OPERATIONS
   // =========================================================================
 
-  createEmployee(data) {
+  async createEmployee(data) {
     const name = (data.name || '').trim();
     const cardNumber = (data.cardNumber || '').trim();
 
@@ -764,7 +764,14 @@ class EmployeeService {
 
     const table = storage.getTable(TABLE_NAMES.EMPLOYEES) || [];
     table.unshift(newEmp);
-    storage.saveTable(TABLE_NAMES.EMPLOYEES, table);
+    // CONFIRMED WRITE: await Firebase HTTP 200 before success
+    const ok = await storage.saveTable(TABLE_NAMES.EMPLOYEES, table);
+    if (!ok) {
+      // Rollback local state
+      const rollback = table.filter(e => e.id !== newEmp.id);
+      try { storage.data[TABLE_NAMES.EMPLOYEES] = rollback; } catch(_) {}
+      throw new CloudSaveError('❌ Cloud Save Failed: Employee record was not confirmed by the cloud.');
+    }
 
     auditService.log(
       'MANPOWER_EMPLOYEE_CREATED',
@@ -776,7 +783,7 @@ class EmployeeService {
     return this.enrichEmployee(newEmp);
   }
 
-  updateEmployee(id, updates) {
+  async updateEmployee(id, updates) {
     const existing = this.getEmployeeById(id);
     if (!existing) throw new Error('Employee record not found.');
 
@@ -797,7 +804,16 @@ class EmployeeService {
       updatedAt: new Date().toISOString()
     };
 
+    // Snapshot for rollback
+    const snapshot = JSON.parse(JSON.stringify(existing));
     const updated = storage.update(TABLE_NAMES.EMPLOYEES, id, payload);
+    // CONFIRMED WRITE: await Firebase HTTP 200
+    const ok = await storage.saveTable(TABLE_NAMES.EMPLOYEES);
+    if (!ok) {
+      // Rollback
+      storage.update(TABLE_NAMES.EMPLOYEES, id, snapshot);
+      throw new CloudSaveError('❌ Cloud Save Failed: Employee update was not confirmed by the cloud.');
+    }
 
     auditService.log(
       'MANPOWER_EMPLOYEE_UPDATED',
@@ -809,11 +825,22 @@ class EmployeeService {
     return this.enrichEmployee(updated);
   }
 
-  deleteEmployee(id) {
+  async deleteEmployee(id) {
     const existing = this.getEmployeeById(id);
     if (!existing) throw new Error('Employee not found.');
 
+    // Snapshot for rollback
+    const snapshot = JSON.parse(JSON.stringify(existing));
     storage.delete(TABLE_NAMES.EMPLOYEES, id);
+    // CONFIRMED WRITE: await Firebase HTTP 200
+    const ok = await storage.saveTable(TABLE_NAMES.EMPLOYEES);
+    if (!ok) {
+      // Rollback — re-add deleted record
+      const table = storage.getTable(TABLE_NAMES.EMPLOYEES) || [];
+      table.unshift(snapshot);
+      await storage.saveTable(TABLE_NAMES.EMPLOYEES, table);
+      throw new CloudSaveError('❌ Cloud Save Failed: Employee deletion was not confirmed by the cloud.');
+    }
 
     auditService.log(
       'MANPOWER_EMPLOYEE_DELETED',
@@ -836,7 +863,7 @@ class EmployeeService {
   // EMPLOYEE TRANSFER (RELOCATION)
   // =========================================================================
 
-  transferEmployee({
+  async transferEmployee({
     employeeId,
     toGroupId,
     toUnitId,
@@ -892,13 +919,14 @@ class EmployeeService {
       timestamp: new Date().toISOString()
     };
 
-    // Save transfer in storage
+    // Save transfer in storage — CONFIRMED WRITE
     const transferTable = storage.getTable(TABLE_NAMES.EMPLOYEE_TRANSFERS) || [];
     transferTable.unshift(transferRecord);
-    storage.saveTable(TABLE_NAMES.EMPLOYEE_TRANSFERS, transferTable);
+    const trOk = await storage.saveTable(TABLE_NAMES.EMPLOYEE_TRANSFERS, transferTable);
+    if (!trOk) throw new CloudSaveError('❌ Cloud Save Failed: Employee transfer record was not confirmed by the cloud.');
 
-    // Update employee profile with new location
-    this.updateEmployee(emp.id, {
+    // Update employee profile with new location — CONFIRMED WRITE
+    await this.updateEmployee(emp.id, {
       groupId: toGroupId || emp.groupId,
       unitId: toUnitId || emp.unitId,
       floorId: toFloorId || emp.floorId,
@@ -930,7 +958,7 @@ class EmployeeService {
   // LEAVE MANAGEMENT
   // =========================================================================
 
-  addLeave({
+  async addLeave({
     employeeId,
     leaveType = 'CASUAL',
     startDate = '',
@@ -962,12 +990,16 @@ class EmployeeService {
 
     const leaves = storage.getTable(TABLE_NAMES.EMPLOYEE_LEAVES) || [];
     leaves.unshift(leaveRecord);
-    storage.saveTable(TABLE_NAMES.EMPLOYEE_LEAVES, leaves);
+    // CONFIRMED WRITE: await Firebase HTTP 200
+    const ok = await storage.saveTable(TABLE_NAMES.EMPLOYEE_LEAVES, leaves);
+    if (!ok) {
+      throw new CloudSaveError('❌ Cloud Save Failed: Leave record was not confirmed by the cloud.');
+    }
 
     // If approved and active today, mark employee ON_LEAVE
     const today = new Date().toISOString().split('T')[0];
     if (status === 'APPROVED' && start <= today && today <= end) {
-      this.updateEmployee(emp.id, { status: 'ON_LEAVE' });
+      await this.updateEmployee(emp.id, { status: 'ON_LEAVE' });
     }
 
     auditService.log(
@@ -980,39 +1012,57 @@ class EmployeeService {
     return leaveRecord;
   }
 
-  updateLeaveStatus(leaveId, newStatus) {
+  async updateLeaveStatus(leaveId, newStatus) {
     const leaves = storage.getTable(TABLE_NAMES.EMPLOYEE_LEAVES) || [];
     const leave = leaves.find(l => l.id === leaveId);
     if (!leave) throw new Error('Leave record not found.');
 
+    const oldStatus = leave.status;
     leave.status = newStatus;
     leave.updatedAt = new Date().toISOString();
-    storage.saveTable(TABLE_NAMES.EMPLOYEE_LEAVES, leaves);
+    // CONFIRMED WRITE: await Firebase HTTP 200
+    const ok = await storage.saveTable(TABLE_NAMES.EMPLOYEE_LEAVES, leaves);
+    if (!ok) {
+      // Rollback
+      leave.status = oldStatus;
+      delete leave.updatedAt;
+      throw new CloudSaveError('❌ Cloud Save Failed: Leave status update was not confirmed by the cloud.');
+    }
 
     // Update employee status if relevant
     const today = new Date().toISOString().split('T')[0];
     if (newStatus === 'APPROVED' && leave.startDate <= today && today <= leave.endDate) {
-      this.updateEmployee(leave.employeeId, { status: 'ON_LEAVE' });
+      await this.updateEmployee(leave.employeeId, { status: 'ON_LEAVE' });
     } else if (newStatus === 'REJECTED' || newStatus === 'COMPLETED') {
       const emp = this.getEmployeeById(leave.employeeId);
       if (emp && emp.status === 'ON_LEAVE') {
-        this.updateEmployee(leave.employeeId, { status: 'ACTIVE' });
+        await this.updateEmployee(leave.employeeId, { status: 'ACTIVE' });
       }
     }
 
     return leave;
   }
 
-  deleteLeave(leaveId) {
+  async deleteLeave(leaveId) {
     const leaves = storage.getTable(TABLE_NAMES.EMPLOYEE_LEAVES) || [];
     const leave = leaves.find(l => l.id === leaveId);
     if (!leave) return false;
 
+    const leaveSnapshot = JSON.parse(JSON.stringify(leave));
     storage.delete(TABLE_NAMES.EMPLOYEE_LEAVES, leaveId);
+    // CONFIRMED WRITE: await Firebase HTTP 200
+    const ok = await storage.saveTable(TABLE_NAMES.EMPLOYEE_LEAVES);
+    if (!ok) {
+      // Rollback — re-add leave
+      const fresh = storage.getTable(TABLE_NAMES.EMPLOYEE_LEAVES) || [];
+      fresh.unshift(leaveSnapshot);
+      await storage.saveTable(TABLE_NAMES.EMPLOYEE_LEAVES, fresh);
+      throw new CloudSaveError('❌ Cloud Save Failed: Leave deletion was not confirmed by the cloud.');
+    }
 
     const emp = this.getEmployeeById(leave.employeeId);
     if (emp && emp.status === 'ON_LEAVE') {
-      this.updateEmployee(leave.employeeId, { status: 'ACTIVE' });
+      await this.updateEmployee(leave.employeeId, { status: 'ACTIVE' });
     }
 
     return true;

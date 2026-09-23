@@ -6,7 +6,7 @@
  * In-House & External Company Repairs, Duplicate-Billing Prevention, and Board Lifecycles.
  */
 
-import { storage } from '../db/storage.js';
+import { storage, CloudSaveError } from '../db/storage.js';
 import { TABLE_NAMES, ET_BOARD_STATUSES, ET_ACTIONS } from '../db/schema.js';
 import { authService } from './authService.js';
 import { auditService } from './auditService.js';
@@ -112,7 +112,7 @@ class EtLabService {
     return `BRD-${String(maxNum + 1).padStart(5, '0')}`;
   }
 
-  createBoard(boardData) {
+  async createBoard(boardData) {
     const user = authService.getCurrentUser();
     const boardSerial = (boardData.boardSerial || this.generateNextBoardSerial()).trim().toUpperCase();
 
@@ -146,7 +146,8 @@ class EtLabService {
       createdBy: user?.name || 'System Admin'
     };
 
-    storage.insert(TABLE_NAMES.ET_BOARDS, newBoard);
+    // CONFIRMED WRITE: use writeAndConfirm for atomic insert + cloud confirmation
+    await storage.writeAndConfirm(TABLE_NAMES.ET_BOARDS, (tbl) => { tbl.push(newBoard); });
 
     // Record initial creation history
     this.addHistoryRecord({
@@ -163,7 +164,7 @@ class EtLabService {
     return newBoard;
   }
 
-  updateBoard(id, updates) {
+  async updateBoard(id, updates) {
     const existing = storage.getItem(TABLE_NAMES.ET_BOARDS, id);
     if (!existing) throw new Error('Board record not found.');
 
@@ -181,7 +182,11 @@ class EtLabService {
       updatedAt: new Date().toISOString()
     };
 
-    storage.update(TABLE_NAMES.ET_BOARDS, id, updated);
+    // CONFIRMED WRITE: await Firebase HTTP 200 before success
+    await storage.writeAndConfirm(TABLE_NAMES.ET_BOARDS, (tbl) => {
+      const idx = tbl.findIndex(b => b.id === id);
+      if (idx !== -1) tbl[idx] = updated;
+    });
 
     this.addHistoryRecord({
       boardSerial: updated.boardSerial,
@@ -197,7 +202,7 @@ class EtLabService {
     return updated;
   }
 
-  deleteBoard(id) {
+  async deleteBoard(id) {
     const existing = storage.getItem(TABLE_NAMES.ET_BOARDS, id);
     if (!existing) throw new Error('Board not found.');
 
@@ -205,7 +210,11 @@ class EtLabService {
       throw new Error(`Cannot delete board [${existing.boardSerial}] because it is currently installed on machine ${existing.currentMachineSerial}. Please remove it first.`);
     }
 
-    storage.delete(TABLE_NAMES.ET_BOARDS, id);
+    // CONFIRMED WRITE: await Firebase HTTP 200 before success
+    await storage.writeAndConfirm(TABLE_NAMES.ET_BOARDS, (tbl) => {
+      const idx = tbl.findIndex(b => b.id === id);
+      if (idx !== -1) tbl.splice(idx, 1);
+    });
     auditService.log('DELETE', 'ET_LAB', id, `Deleted ENT Lab Board [${existing.boardSerial}]`);
     window.dispatchEvent(new CustomEvent('erp:et-lab-updated', { detail: { deletedId: id } }));
     return true;
@@ -1111,8 +1120,7 @@ class EtLabService {
     return storage.getTable(TABLE_NAMES.ET_COMPANIES) || [];
   }
 
-  addCompany(companyData, contactPerson = '', phone = '') {
-    const list = this.getCompanies();
+  async addCompany(companyData, contactPerson = '', phone = '') {
     const name = typeof companyData === 'string' ? companyData : companyData.name;
     const contact = typeof companyData === 'string' ? contactPerson : (companyData.contactPerson || '');
     const ph = typeof companyData === 'string' ? phone : (companyData.phone || '');
@@ -1122,26 +1130,29 @@ class EtLabService {
       contactPerson: contact,
       phone: ph,
       email: typeof companyData === 'object' ? (companyData.email || '') : '',
-      email: typeof companyData === 'object' ? (companyData.email || '') : (companyData?.email || ''),
-      address: typeof companyData === 'object' ? (companyData.address || '') : (companyData?.address || ''),
+      address: typeof companyData === 'object' ? (companyData.address || '') : '',
       status: 'ACTIVE'
     };
     if (typeof companyData === 'object' && companyData.email) newComp.email = companyData.email;
     if (typeof companyData === 'object' && companyData.address) newComp.address = companyData.address;
-    list.push(newComp);
-    storage.saveTable(TABLE_NAMES.ET_COMPANIES);
+    // CONFIRMED WRITE
+    await storage.writeAndConfirm(TABLE_NAMES.ET_COMPANIES, (tbl) => { tbl.push(newComp); });
     auditService.log('CONFIG', 'ET_LAB', newComp.id, `Added external repair company: ${newComp.name}`);
     return newComp;
   }
 
-  updateCompany(id, updates) {
+  async updateCompany(id, updates) {
     const list = this.getCompanies();
     const idx = list.findIndex(c => c.id === id);
     if (idx === -1) throw new Error('Company not found.');
-    list[idx] = { ...list[idx], ...updates };
-    storage.saveTable(TABLE_NAMES.ET_COMPANIES);
-    auditService.log('CONFIG', 'ET_LAB', id, `Updated external repair company: ${list[idx].name}`);
-    return list[idx];
+    // CONFIRMED WRITE
+    let updated;
+    await storage.writeAndConfirm(TABLE_NAMES.ET_COMPANIES, (tbl) => {
+      const i = tbl.findIndex(c => c.id === id);
+      if (i !== -1) { tbl[i] = { ...tbl[i], ...updates }; updated = tbl[i]; }
+    });
+    auditService.log('CONFIG', 'ET_LAB', id, `Updated external repair company: ${updated?.name || id}`);
+    return updated;
   }
 
   deleteCompany(id) {
@@ -1159,8 +1170,7 @@ class EtLabService {
     return storage.getTable(TABLE_NAMES.ET_CATEGORIES) || [];
   }
 
-  addCategory(categoryData) {
-    const list = this.getCategories();
+  async addCategory(categoryData) {
     const name = typeof categoryData === 'string' ? categoryData : categoryData.name;
     const newCat = {
       id: `etcat-${Date.now()}`,
@@ -1169,20 +1179,23 @@ class EtLabService {
       description: typeof categoryData === 'object' ? (categoryData.description || '') : '',
       status: 'ACTIVE'
     };
-    list.push(newCat);
-    storage.saveTable(TABLE_NAMES.ET_CATEGORIES);
+    // CONFIRMED WRITE
+    await storage.writeAndConfirm(TABLE_NAMES.ET_CATEGORIES, (tbl) => { tbl.push(newCat); });
     auditService.log('CONFIG', 'ET_LAB', newCat.id, `Added category: ${newCat.name}`);
     return newCat;
   }
 
-  updateCategory(id, updates) {
-    const list = this.getCategories();
-    const idx = list.findIndex(c => c.id === id);
-    if (idx === -1) throw new Error('Category not found.');
-    list[idx] = { ...list[idx], ...updates };
-    storage.saveTable(TABLE_NAMES.ET_CATEGORIES);
-    auditService.log('CONFIG', 'ET_LAB', id, `Updated category: ${list[idx].name}`);
-    return list[idx];
+  async updateCategory(id, updates) {
+    let updated;
+    // CONFIRMED WRITE
+    await storage.writeAndConfirm(TABLE_NAMES.ET_CATEGORIES, (tbl) => {
+      const idx = tbl.findIndex(c => c.id === id);
+      if (idx === -1) throw new Error('Category not found.');
+      tbl[idx] = { ...tbl[idx], ...updates };
+      updated = tbl[idx];
+    });
+    auditService.log('CONFIG', 'ET_LAB', id, `Updated category: ${updated?.name || id}`);
+    return updated;
   }
 
   deleteCategory(id) {
@@ -1257,7 +1270,7 @@ class EtLabService {
     return cleaned;
   }
 
-  addTechnician(data) {
+  async addTechnician(data) {
     const list = this.getTechnicians();
     const name = (typeof data === 'string' ? data : data.name || '').trim();
     if (!name) {
@@ -1265,7 +1278,7 @@ class EtLabService {
     }
 
     const erpEmployees = storage.getTable(TABLE_NAMES.EMPLOYEES) || [];
-    const empMatch = erpEmployees.find(e => 
+    const empMatch = erpEmployees.find(e =>
       (e.name && e.name.trim().toLowerCase() === name.toLowerCase()) ||
       (data.cardNumber && e.cardNumber && e.cardNumber.toString().trim() === data.cardNumber.toString().trim())
     );
@@ -1274,7 +1287,7 @@ class EtLabService {
     const resolvedPhone = data.phone || empMatch?.phone || '';
 
     // Check for duplicate
-    const exists = list.some(t => 
+    const exists = list.some(t =>
       (resolvedCard && t.cardNumber && t.cardNumber.toString().trim() === resolvedCard.toString().trim()) ||
       t.name.trim().toLowerCase() === name.toLowerCase()
     );
@@ -1291,8 +1304,8 @@ class EtLabService {
       phone: resolvedPhone,
       status: 'ACTIVE'
     };
-    list.push(newTech);
-    storage.saveTable(TABLE_NAMES.ET_TECHNICIANS);
+    // CONFIRMED WRITE
+    await storage.writeAndConfirm(TABLE_NAMES.ET_TECHNICIANS, (tbl) => { tbl.push(newTech); });
     auditService.log('CONFIG', 'ET_LAB', newTech.id, `Added ENT Lab technician: ${newTech.name}`);
     return newTech;
   }

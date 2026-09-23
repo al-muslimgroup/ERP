@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Al-Muslim Group Garments Factory Maintenance Machine ERP
  * Machine Complete History & Spare Parts Tracking Dashboard
  * Search by Machine Serial Number Only (No Model or Asset ID Required)
@@ -1108,7 +1108,7 @@ export function initMachineHistoryEvents() {
     const val = input.value.trim();
     if (!val) {
       alert('Please enter a Machine Serial Number.');
-      input.focus();
+      input.focus({ preventScroll: true });
       return;
     }
     searchedSerial = val;
@@ -1131,7 +1131,7 @@ export function initMachineHistoryEvents() {
     const input = document.getElementById('history-serial-search-input');
     if (input) {
       input.value = '';
-      input.focus();
+      input.focus({ preventScroll: true });
     }
     window.dispatchEvent(new CustomEvent('erp:master-data-updated'));
   });
@@ -1536,7 +1536,7 @@ function bindTechnicianSearchEvents({ idPrefix, onSelected = null }) {
       searchInp.value = '';
       hiddenInp.value = '';
       updateSelectedCard(null);
-      searchInp.focus();
+      searchInp.focus({ preventScroll: true });
     });
   };
 
@@ -1786,7 +1786,7 @@ function openLogServiceModal() {
           if (it) {
             svcPartNameInp.value = it.name;
             svcPartAutoBox.style.display = 'none';
-            if (svcPartQtyInp) svcPartQtyInp.focus();
+            if (svcPartQtyInp) svcPartQtyInp.focus({ preventScroll: true });
           }
         });
         el.addEventListener('mouseenter', () => el.style.background = 'rgba(2, 132, 199, 0.25)');
@@ -2104,9 +2104,9 @@ function openAddSparePartModal() {
 
     // Flow: focus serial number if empty, else focus quantity
     if (partSnInp && !partSnInp.value) {
-      partSnInp.focus();
+      partSnInp.focus({ preventScroll: true });
     } else if (qtyInp) {
-      qtyInp.focus();
+      qtyInp.focus({ preventScroll: true });
       qtyInp.select();
     }
   };

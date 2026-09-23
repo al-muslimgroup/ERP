@@ -4,7 +4,7 @@
  * Handles Automatic Activity Tracking, Location Audits, Service & Repair Logs, Spare Parts & Passport Generation
  */
 
-import { storage } from '../db/storage.js';
+import { storage, CloudSaveError } from '../db/storage.js';
 import { TABLE_NAMES, ACTIVITY_TYPES, SERVICE_TYPES } from '../db/schema.js';
 import { INITIAL_DATA } from '../db/initialData.js';
 import { auditService } from './auditService.js';
@@ -67,7 +67,8 @@ class HistoryService {
 
       const historyTable = storage.getTable(TABLE_NAMES.MACHINE_HISTORY) || [];
       historyTable.unshift(historyRecord);
-      storage.saveTable(TABLE_NAMES.MACHINE_HISTORY);
+      // CONFIRMED WRITE: fire-and-forget but still async for cloud sync
+      storage.saveTable(TABLE_NAMES.MACHINE_HISTORY).catch(e => console.warn('[HistoryService] Cloud sync notice:', e));
 
       // Also record in system audit log
       auditService.log(
@@ -521,7 +522,7 @@ class HistoryService {
   /**
    * Manually log a Spare Part Replacement
    */
-  addSparePartReplacement({
+  async addSparePartReplacement({
     machineId = null,
     serialNumber,
     partName,
@@ -588,7 +589,9 @@ class HistoryService {
 
     const partsTable = storage.getTable(TABLE_NAMES.SPARE_PARTS) || [];
     partsTable.unshift(partRecord);
-    storage.saveTable(TABLE_NAMES.SPARE_PARTS);
+    // CONFIRMED WRITE: await Firebase HTTP 200
+    const ok = await storage.saveTable(TABLE_NAMES.SPARE_PARTS);
+    if (!ok) throw new CloudSaveError('❌ Cloud Save Failed: Spare part replacement was not confirmed by the cloud.');
 
     // Build rich details text with Old Part vs New Part
     let detailsText = `${rDate} — ${partRecord.floorLocation} — Replaced ${partRecord.quantity}x ${partRecord.partName} ${partRecord.partSerialNumber ? `(S/N: ${partRecord.partSerialNumber})` : ''} by ${partRecord.technician}.`;

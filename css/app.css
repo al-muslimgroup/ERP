@@ -92,6 +92,13 @@ body {
   transition: background-color 0.2s ease, color 0.2s ease;
 }
 
+/* Background scroll lock when any modal is open (prevents touch-bleed jitter) */
+body.modal-open {
+  overflow: hidden !important;
+  touch-action: none;
+  overscroll-behavior: none;
+}
+
 /* Single Page Application Shell Root */
 #app-root {
   height: 100vh;

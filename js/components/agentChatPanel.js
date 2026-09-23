@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Al-Muslim Group Garments Factory Maintenance Machine ERP
  * Agent Chat Panel Component
  * 
@@ -400,7 +400,7 @@ export function initAgentChatPanelEvents() {
 
     // Focus input
     if (input) {
-      setTimeout(() => input.focus(), 100);
+      setTimeout(() => input.focus({ preventScroll: true }), 100);
       
       // Auto-resize textarea
       input.addEventListener('input', () => {

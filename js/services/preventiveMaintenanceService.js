@@ -13,7 +13,7 @@
  * 8. Summary Dashboard Metrics (8 KPI Cards)
  */
 
-import { storage } from '../db/storage.js';
+import { storage, CloudSaveError } from '../db/storage.js';
 import { TABLE_NAMES } from '../db/schema.js';
 import { authService } from './authService.js';
 import { machineService } from './machineService.js';
@@ -306,7 +306,7 @@ class PreventiveMaintenanceService {
     };
   }
 
-  saveConfig(configData) {
+  async saveConfig(configData) {
     const user = authService.getCurrentUser();
     const canonicalName = this.getCanonicalMachineType(configData.machineType);
     const id = configData.id || `pm-cfg-${canonicalName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
@@ -344,15 +344,19 @@ class PreventiveMaintenanceService {
       auditService.log('CONFIG', 'PREVENTIVE_MAINTENANCE', id, `Created Preventive Schedule Config for ${record.machineType}`);
     }
 
-    storage.setTable(TABLE_NAMES.PREVENTIVE_CONFIG, existingConfigs);
-    storage.saveTable(TABLE_NAMES.PREVENTIVE_CONFIG);
+    // CONFIRMED WRITE: await Firebase HTTP 200
+    const ok = await storage.saveTable(TABLE_NAMES.PREVENTIVE_CONFIG, existingConfigs);
+    if (!ok) throw new CloudSaveError('❌ Cloud Save Failed: PM config was not confirmed by the cloud.');
     window.dispatchEvent(new CustomEvent('erp:preventive-maintenance-updated'));
     return record;
   }
 
-  deleteConfig(id) {
-    storage.delete(TABLE_NAMES.PREVENTIVE_CONFIG, id);
-    storage.saveTable(TABLE_NAMES.PREVENTIVE_CONFIG);
+  async deleteConfig(id) {
+    // CONFIRMED WRITE: await Firebase HTTP 200
+    await storage.writeAndConfirm(TABLE_NAMES.PREVENTIVE_CONFIG, (tbl) => {
+      const idx = tbl.findIndex(c => c.id === id);
+      if (idx !== -1) tbl.splice(idx, 1);
+    });
     auditService.log('CONFIG', 'PREVENTIVE_MAINTENANCE', id, `Deleted Preventive Schedule Config [${id}]`);
     window.dispatchEvent(new CustomEvent('erp:preventive-maintenance-updated'));
     return true;
@@ -366,7 +370,7 @@ class PreventiveMaintenanceService {
    * @param {Array<string>} updatedChecklist - Array of checklist item strings
    * @returns {Object} Updated configuration record
    */
-  updateChecklistForMachineType(machineTypeOrName, updatedChecklist) {
+  async updateChecklistForMachineType(machineTypeOrName, updatedChecklist) {
     if (!machineTypeOrName) throw new Error('Machine type is required to update checklist');
     if (!Array.isArray(updatedChecklist)) throw new Error('Checklist must be an array of strings');
 
@@ -408,8 +412,9 @@ class PreventiveMaintenanceService {
       configs.push(config);
     }
 
-    storage.setTable(TABLE_NAMES.PREVENTIVE_CONFIG, configs);
-    storage.saveTable(TABLE_NAMES.PREVENTIVE_CONFIG);
+    // CONFIRMED WRITE: await Firebase HTTP 200
+    const ok = await storage.saveTable(TABLE_NAMES.PREVENTIVE_CONFIG, configs);
+    if (!ok) throw new CloudSaveError('❌ Cloud Save Failed: Checklist update was not confirmed by the cloud.');
     auditService.log('CONFIG', 'PREVENTIVE_MAINTENANCE', config.id, `Admin updated inspection checklist (${cleanItems.length} items) for ${config.machineType}`);
     window.dispatchEvent(new CustomEvent('erp:preventive-maintenance-updated'));
     return config;
@@ -1180,7 +1185,7 @@ class PreventiveMaintenanceService {
     return '245232';
   }
 
-  createServiceEntry(payload) {
+  async createServiceEntry(payload) {
     const user = authService.getCurrentUser();
     if (!payload.machineId && !payload.serialNumber) {
       throw new Error('Machine selection is required for preventive service entry.');
@@ -1245,9 +1250,14 @@ class PreventiveMaintenanceService {
       loggedBy: user?.username || 'admin'
     };
 
-    // 1. Save in PREVENTIVE_MAINTENANCE table
-    storage.insert(TABLE_NAMES.PREVENTIVE_MAINTENANCE, newRecord);
-    storage.saveTable(TABLE_NAMES.PREVENTIVE_MAINTENANCE);
+    // 1. Save in PREVENTIVE_MAINTENANCE table — CONFIRMED WRITE
+    const ok = await storage.saveTable(TABLE_NAMES.PREVENTIVE_MAINTENANCE,
+      [...(storage.getTable(TABLE_NAMES.PREVENTIVE_MAINTENANCE) || []), newRecord]
+    );
+    if (!ok) throw new CloudSaveError('❌ Cloud Save Failed: PM service entry was not confirmed by the cloud.');
+    // Also update in-memory so getTable is consistent
+    if (!storage.data[TABLE_NAMES.PREVENTIVE_MAINTENANCE]) storage.data[TABLE_NAMES.PREVENTIVE_MAINTENANCE] = [];
+    // The saveTable call above already set the data
 
     // 2. Synchronize seamlessly into Machine Lifetime History (MACHINE_HISTORY)
     try {
@@ -1297,7 +1307,7 @@ class PreventiveMaintenanceService {
     return newRecord;
   }
 
-  updateServiceEntry(recordId, updateData) {
+  async updateServiceEntry(recordId, updateData) {
     const existing = storage.getItem(TABLE_NAMES.PREVENTIVE_MAINTENANCE, recordId);
     if (!existing) throw new Error('Service record not found.');
 
@@ -1307,19 +1317,25 @@ class PreventiveMaintenanceService {
       updatedAt: new Date().toISOString()
     };
 
-    storage.update(TABLE_NAMES.PREVENTIVE_MAINTENANCE, recordId, updated);
-    storage.saveTable(TABLE_NAMES.PREVENTIVE_MAINTENANCE);
+    // CONFIRMED WRITE: await Firebase HTTP 200
+    await storage.writeAndConfirm(TABLE_NAMES.PREVENTIVE_MAINTENANCE, (tbl) => {
+      const idx = tbl.findIndex(r => r.id === recordId);
+      if (idx !== -1) tbl[idx] = updated;
+    });
     auditService.log('EDIT', 'PREVENTIVE_MAINTENANCE', recordId, `Updated Preventive Service Record for ${updated.serialNumber}`);
     window.dispatchEvent(new CustomEvent('erp:preventive-maintenance-updated', { detail: updated }));
     return updated;
   }
 
-  deleteServiceEntry(recordId) {
+  async deleteServiceEntry(recordId) {
     const existing = storage.getItem(TABLE_NAMES.PREVENTIVE_MAINTENANCE, recordId);
     if (!existing) return false;
 
-    storage.delete(TABLE_NAMES.PREVENTIVE_MAINTENANCE, recordId);
-    storage.saveTable(TABLE_NAMES.PREVENTIVE_MAINTENANCE);
+    // CONFIRMED WRITE: await Firebase HTTP 200
+    await storage.writeAndConfirm(TABLE_NAMES.PREVENTIVE_MAINTENANCE, (tbl) => {
+      const idx = tbl.findIndex(r => r.id === recordId);
+      if (idx !== -1) tbl.splice(idx, 1);
+    });
     auditService.log('DELETE', 'PREVENTIVE_MAINTENANCE', recordId, `Deleted Service Record for ${existing.serialNumber}`);
     window.dispatchEvent(new CustomEvent('erp:preventive-maintenance-updated'));
     return true;
@@ -1329,7 +1345,7 @@ class PreventiveMaintenanceService {
   // 6. SERVICE STICKER SERIAL MANAGEMENT (EDIT / REPLACE / DELETE)
   // =========================================================================
 
-  updateStickerSerial(recordId, newStickerSerial) {
+  async updateStickerSerial(recordId, newStickerSerial) {
     const cleanSerial = (newStickerSerial || '').trim().toUpperCase();
     if (!cleanSerial) throw new Error('Sticker serial number cannot be blank.');
 
@@ -1337,15 +1353,17 @@ class PreventiveMaintenanceService {
     if (!record) throw new Error('Maintenance record not found.');
 
     const oldSerial = record.serviceStickerSerial;
-    record.serviceStickerSerial = cleanSerial;
-    record.updatedAt = new Date().toISOString();
+    const updatedRecord = { ...record, serviceStickerSerial: cleanSerial, updatedAt: new Date().toISOString() };
 
-    storage.update(TABLE_NAMES.PREVENTIVE_MAINTENANCE, recordId, record);
-    storage.saveTable(TABLE_NAMES.PREVENTIVE_MAINTENANCE);
+    // CONFIRMED WRITE: await Firebase HTTP 200
+    await storage.writeAndConfirm(TABLE_NAMES.PREVENTIVE_MAINTENANCE, (tbl) => {
+      const idx = tbl.findIndex(r => r.id === recordId);
+      if (idx !== -1) tbl[idx] = updatedRecord;
+    });
 
     auditService.log('EDIT', 'PREVENTIVE_MAINTENANCE', recordId, `Updated Sticker Serial from [${oldSerial}] to [${cleanSerial}] for ${record.serialNumber}`);
     window.dispatchEvent(new CustomEvent('erp:preventive-maintenance-updated'));
-    return record;
+    return updatedRecord;
   }
 
   /**

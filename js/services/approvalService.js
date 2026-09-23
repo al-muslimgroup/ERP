@@ -4,6 +4,7 @@
  */
 
 import { storage } from '../db/storage.js';
+import { CloudSaveError } from '../db/storage.js';
 import { TABLE_NAMES, APPROVAL_STATUSES } from '../db/schema.js';
 import { authService } from './authService.js';
 import { auditService } from './auditService.js';
@@ -138,7 +139,7 @@ class ApprovalService {
     return req;
   }
 
-  approveRequest(requestId, adminRemarks = '') {
+  async approveRequest(requestId, adminRemarks = '') {
     if (!authService.isAdmin() && !authService.hasPermission('APPROVE')) {
       throw new Error('Unauthorized to approve workflow requests.');
     }
@@ -177,6 +178,13 @@ class ApprovalService {
       adminRemarks: adminRemarks
     });
 
+    // Confirmed cloud writes
+    const [approvalOk, machinesOk] = await Promise.all([
+      storage.saveTable(TABLE_NAMES.APPROVAL_REQUESTS, true),
+      machine ? storage.saveTable(TABLE_NAMES.MACHINES, true) : Promise.resolve(true)
+    ]);
+    if (!approvalOk || !machinesOk) throw new CloudSaveError('❌ Cloud Save Failed: Approval could not be confirmed by the cloud.');
+
     notificationService.notify(
       'Approval Request Approved',
       `Changes for Machine ${req.machineInfo.serialNumber} have been officially approved by ${user.name}.`,
@@ -188,7 +196,7 @@ class ApprovalService {
     return updated;
   }
 
-  rejectRequest(requestId, adminRemarks = '') {
+  async rejectRequest(requestId, adminRemarks = '') {
     if (!authService.isAdmin() && !authService.hasPermission('APPROVE')) {
       throw new Error('Unauthorized to reject workflow requests.');
     }
@@ -215,6 +223,13 @@ class ApprovalService {
       adminRemarks: adminRemarks
     });
 
+    // Confirmed cloud writes
+    const [approvalOk, machinesOk] = await Promise.all([
+      storage.saveTable(TABLE_NAMES.APPROVAL_REQUESTS, true),
+      machine ? storage.saveTable(TABLE_NAMES.MACHINES, true) : Promise.resolve(true)
+    ]);
+    if (!approvalOk || !machinesOk) throw new CloudSaveError('❌ Cloud Save Failed: Rejection could not be confirmed by the cloud.');
+
     notificationService.notify(
       'Approval Request Rejected',
       `Request for Machine ${req.machineInfo.serialNumber} was rejected by ${user.name}. Reason: ${adminRemarks || 'None given'}`,
@@ -226,7 +241,7 @@ class ApprovalService {
     return updated;
   }
 
-  requestRevision(requestId, adminRemarks = '') {
+  async requestRevision(requestId, adminRemarks = '') {
     if (!authService.isAdmin() && !authService.hasPermission('APPROVE')) {
       throw new Error('Unauthorized to request revision.');
     }
@@ -242,6 +257,10 @@ class ApprovalService {
       reviewedAt: new Date().toISOString(),
       adminRemarks: adminRemarks
     });
+
+    // Confirmed cloud write
+    const ok = await storage.saveTable(TABLE_NAMES.APPROVAL_REQUESTS, true);
+    if (!ok) throw new CloudSaveError('❌ Cloud Save Failed: Revision request could not be confirmed by the cloud.');
 
     notificationService.notify(
       'Revision Requested',
