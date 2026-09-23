@@ -2571,7 +2571,7 @@ export function initRelocateViewEvents() {
   // 3. Start Session Submit
   const formStart = root.querySelector('#form-start-relocate-session');
   if (formStart) {
-    formStart.addEventListener('submit', (e) => {
+    formStart.addEventListener('submit', async (e) => {
       e.preventDefault();
       const unitId = root.querySelector('#relocate-sel-unit')?.value;
       const floorId = root.querySelector('#relocate-sel-floor')?.value;
@@ -2582,13 +2582,13 @@ export function initRelocateViewEvents() {
 
       if (!unitId) {
         notificationService.notifyWarning('Factory Unit Required', 'Please select a Factory Unit before starting the session.');
-        root.querySelector('#relocate-sel-unit')?.focus();
+        root.querySelector('#relocate-sel-unit')?.focus({ preventScroll: true });
         return;
       }
 
       if (!floorId) {
         notificationService.notifyWarning('Production Floor Required', 'Please select a Production Floor before starting the session.');
-        root.querySelector('#relocate-sel-floor')?.focus();
+        root.querySelector('#relocate-sel-floor')?.focus({ preventScroll: true });
         return;
       }
 
@@ -2598,7 +2598,7 @@ export function initRelocateViewEvents() {
       }
 
       try {
-        relocateService.startSession({
+        await relocateService.startSession({
           unitId,
           floorId,
           lineIds,
@@ -3000,10 +3000,10 @@ export function initRelocateViewEvents() {
 
   // 9. Relocation Approval / Reject Buttons
   root.querySelectorAll('.btn-approve-relocation').forEach(btn => {
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', async () => {
       const id = btn.getAttribute('data-id');
       try {
-        relocateService.approveRelocation(id);
+        await relocateService.approveRelocation(id);
         notificationService.notifySuccess('Relocation Approved', 'Machine inventory location updated!');
         refreshView();
       } catch (err) {
@@ -3013,12 +3013,12 @@ export function initRelocateViewEvents() {
   });
 
   root.querySelectorAll('.btn-reject-relocation').forEach(btn => {
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', async () => {
       const id = btn.getAttribute('data-id');
       const reason = prompt('Please enter rejection reason:', 'Physical move not approved');
       if (!reason) return;
       try {
-        relocateService.rejectRelocation(id, reason);
+        await relocateService.rejectRelocation(id, reason);
         notificationService.notifyWarning('Relocation Rejected', 'Machine location kept at original.');
         refreshView();
       } catch (err) {
@@ -3045,7 +3045,7 @@ export function initRelocateViewEvents() {
       refreshView();
       const newInp = document.getElementById('inp-history-search');
       if (newInp) {
-        newInp.focus();
+        newInp.focus({ preventScroll: true });
         newInp.setSelectionRange(newInp.value.length, newInp.value.length);
       }
     });

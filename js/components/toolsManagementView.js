@@ -189,7 +189,7 @@ export function openAdminSecurityModal({ title, description, onAuthorized }) {
 
   const inputPass = document.getElementById('inp-admin-passcode');
   const errBox = document.getElementById('admin-auth-error');
-  if (inputPass) inputPass.focus();
+  if (inputPass) inputPass.focus({ preventScroll: true });
 
   function verifyAndProceed() {
     const entered = (inputPass?.value || '').trim();
@@ -2998,7 +2998,7 @@ export function initToolsManagementEvents() {
             container.innerHTML = renderActiveTab('tools-add');
             initToolsManagementEvents();
             // Focus quantity field for rapid data entry
-            document.getElementById('input-item-qty')?.focus();
+            document.getElementById('input-item-qty')?.focus({ preventScroll: true });
             document.getElementById('input-item-qty')?.select();
           }
         }
@@ -3240,7 +3240,7 @@ export function initToolsManagementEvents() {
 
       if (!item) {
         alert('Please select a tool, accessory, or spare part first.');
-        document.getElementById('input-tool-smart-search')?.focus();
+        document.getElementById('input-tool-smart-search')?.focus({ preventScroll: true });
         return;
       }
 
@@ -3338,7 +3338,7 @@ export function initToolsManagementEvents() {
   // 17. Big 3D SAVE Button (Commit to Database)
   const btnSaveBatch = document.getElementById('btn-save-allocation-batch');
   if (btnSaveBatch) {
-    btnSaveBatch.onclick = () => {
+    btnSaveBatch.onclick = async () => {
       try {
         const regNo = document.getElementById('input-tab-reg-no')?.value.trim() || currentRegNo;
         const userId = document.getElementById('input-add-user-id')?.value.trim() || activeUserForm.userId;
@@ -3352,14 +3352,14 @@ export function initToolsManagementEvents() {
         if (liveAllocationQueue.length === 0) throw new Error('Please add tools to the table before saving.');
 
         // Delete existing items for this regNo first to prevent duplicate stacking on updates
-        toolService.deleteRegistrationBatch(regNo);
+        await toolService.deleteRegistrationBatch(regNo);
 
         const reqNo = document.getElementById('input-add-requisition-no')?.value.trim() || activeUserForm.requisitionNo || '';
         liveAllocationQueue.forEach(item => {
           if (!item.requisitionNo && reqNo) item.requisitionNo = reqNo;
         });
 
-        const result = toolService.saveAllocationBatch({
+        const result = await toolService.saveAllocationBatch({
           regNo,
           issueDate,
           user: { userId, userName, jobTitle, workingArea, requisitionNo: reqNo },
@@ -4502,7 +4502,7 @@ export function initToolsManagementEvents() {
         initToolsManagementEvents();
         const inputAfter = document.getElementById('db-search-input');
         if (inputAfter) {
-          inputAfter.focus();
+          inputAfter.focus({ preventScroll: true });
           inputAfter.setSelectionRange(inputAfter.value.length, inputAfter.value.length);
         }
       }
@@ -6523,7 +6523,7 @@ export function openBatchToolsAllocationModal() {
         // Restore focus to end of search input
         const refreshed = document.getElementById('inp-batch-search');
         if (refreshed) {
-          refreshed.focus();
+          refreshed.focus({ preventScroll: true });
           refreshed.setSelectionRange(refreshed.value.length, refreshed.value.length);
         }
       };

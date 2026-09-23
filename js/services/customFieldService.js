@@ -3,7 +3,7 @@
  * Dynamic Custom Fields Engine - Admin Full Control & Global Synchronization
  */
 
-import { storage } from '../db/storage.js';
+import { storage, CloudSaveError } from '../db/storage.js';
 import { TABLE_NAMES, FIELD_TYPES } from '../db/schema.js';
 import { authService } from './authService.js';
 import { auditService } from './auditService.js';
@@ -30,7 +30,7 @@ class CustomFieldService {
     return FIELD_TYPES;
   }
 
-  createField(fieldData) {
+  async createField(fieldData) {
     if (!authService.canManageFields()) {
       throw new Error('Only authorized administrators can create custom fields.');
     }
@@ -58,7 +58,9 @@ class CustomFieldService {
     fieldData.showInFilter = fieldData.showInFilter !== undefined ? fieldData.showInFilter : true;
     fieldData.required = Boolean(fieldData.required);
 
-    const created = storage.insert(TABLE_NAMES.CUSTOM_FIELDS, fieldData);
+    // CONFIRMED WRITE: await Firebase HTTP 200
+    await storage.writeAndConfirm(TABLE_NAMES.CUSTOM_FIELDS, (tbl) => { tbl.push(fieldData); });
+    const created = fieldData;
     
     // Auto-update Excel structure with new column
     this._syncFieldToExcelStructure(created);
@@ -68,7 +70,7 @@ class CustomFieldService {
     return created;
   }
 
-  updateField(id, updates) {
+  async updateField(id, updates) {
     if (!authService.canManageFields()) {
       throw new Error('Only authorized administrators can modify custom fields.');
     }
@@ -80,7 +82,12 @@ class CustomFieldService {
       updates.options = updates.options.map(o => String(o).trim()).filter(Boolean);
     }
 
-    const updated = storage.update(TABLE_NAMES.CUSTOM_FIELDS, id, updates);
+    // CONFIRMED WRITE: await Firebase HTTP 200
+    let updated;
+    await storage.writeAndConfirm(TABLE_NAMES.CUSTOM_FIELDS, (tbl) => {
+      const idx = tbl.findIndex(f => f.id === id);
+      if (idx !== -1) { tbl[idx] = { ...tbl[idx], ...updates, updatedAt: new Date().toISOString() }; updated = tbl[idx]; }
+    });
 
     // If code or label changed, update Excel structures
     if (updates.label || updates.code) {
@@ -124,7 +131,7 @@ class CustomFieldService {
     return updated;
   }
 
-  deleteField(id) {
+  async deleteField(id) {
     if (!authService.canManageFields()) {
       throw new Error('Only administrators can delete custom fields.');
     }
@@ -135,7 +142,11 @@ class CustomFieldService {
     // Remove from Excel structures
     this._removeExcelStructureColumn(field.code);
 
-    storage.delete(TABLE_NAMES.CUSTOM_FIELDS, id);
+    // CONFIRMED WRITE: await Firebase HTTP 200
+    await storage.writeAndConfirm(TABLE_NAMES.CUSTOM_FIELDS, (tbl) => {
+      const idx = tbl.findIndex(f => f.id === id);
+      if (idx !== -1) tbl.splice(idx, 1);
+    });
     auditService.log('CUSTOM_FIELD_DELETED', 'CUSTOM_FIELD', id, `Deleted custom field: ${field.label}`);
     window.dispatchEvent(new CustomEvent('erp:fields-updated'));
     return true;
