@@ -281,13 +281,14 @@ class NotificationService {
     const { module, action } = this.resolveModuleAndAction(notif);
     if (module && typeof authService !== 'undefined') {
       // User MUST be allowed to view the module
-      if (!authService.isModuleAllowed(module)) {
+      if (!authService.isModuleAllowed(module, activeUser)) {
         return false;
       }
 
       // If notification requires specific non-view action (e.g. APPROVE)
       if (action && action !== 'VIEW') {
-        if (!authService.hasAccess(module, action)) {
+        const canPerformAction = authService.hasAccess(module, action, activeUser) || (action === 'APPROVE' && (authService.isManager(activeUser) || authService.isAdmin(activeUser)));
+        if (!canPerformAction) {
           return false;
         }
       }
@@ -296,7 +297,7 @@ class NotificationService {
     // 5. Factory Location Scope Check
     if (notif.locationScope && typeof authService !== 'undefined') {
       const { unitId, floorId, lineId } = notif.locationScope;
-      if (!authService.isLocationAllowed(unitId, floorId, lineId)) {
+      if (!authService.isLocationAllowed(unitId, floorId, lineId, activeUser)) {
         return false;
       }
     }

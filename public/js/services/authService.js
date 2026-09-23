@@ -444,21 +444,22 @@ class AuthService {
    * @param {string} rawModuleKey - e.g. 'machines', 'transfers', 'spare_parts', 'manpower', 'reports', 'user_management', etc.
    * @param {string} actionKey - Generic action ('READ' / 'VIEW', 'ADD', 'EDIT', 'DELETE', 'IMPORT', 'EXPORT', 'APPROVE')
    */
-  hasAccess(rawModuleKey, actionKey = 'VIEW') {
-    if (!this.currentUser || this.currentUser.status !== 'ACTIVE') return false;
+  hasAccess(rawModuleKey, actionKey = 'VIEW', user = null) {
+    const activeUser = user || this.currentUser;
+    if (!activeUser || activeUser.status !== 'ACTIVE') return false;
     
     // 1. SUPER ADMIN ALWAYS HAS 100% UNRESTRICTED SYSTEM ACCESS
-    if (this.isSuperAdmin()) return true;
+    if (this.isSuperAdmin(activeUser)) return true;
 
     let action = (actionKey || 'VIEW').toUpperCase().trim();
     if (action === 'READ') action = 'VIEW';
     const normKey = this.normalizeModuleKey(rawModuleKey);
 
     // 2. Resolve Effective Permissions: User Overrides > Role Template
-    let perms = this.currentUser.permissions;
+    let perms = activeUser.permissions;
 
-    if ((!perms || Object.keys(perms).length === 0) && this.currentUser.roleId) {
-      const role = storage.getItem(TABLE_NAMES.ROLES, this.currentUser.roleId);
+    if ((!perms || Object.keys(perms).length === 0) && activeUser.roleId) {
+      const role = storage.getItem(TABLE_NAMES.ROLES, activeUser.roleId);
       if (role && role.permissions) {
         perms = role.permissions;
       }
@@ -504,15 +505,16 @@ class AuthService {
   /**
    * Check if user is allowed to view/navigate to a module
    */
-  isModuleAllowed(rawModuleKey) {
-    if (!this.currentUser || this.currentUser.status !== 'ACTIVE') return false;
-    if (this.isSuperAdmin()) return true;
+  isModuleAllowed(rawModuleKey, user = null) {
+    const activeUser = user || this.currentUser;
+    if (!activeUser || activeUser.status !== 'ACTIVE') return false;
+    if (this.isSuperAdmin(activeUser)) return true;
 
     const normKey = this.normalizeModuleKey(rawModuleKey);
 
-    let perms = this.currentUser.permissions;
-    if ((!perms || Object.keys(perms).length === 0) && this.currentUser.roleId) {
-      const role = storage.getItem(TABLE_NAMES.ROLES, this.currentUser.roleId);
+    let perms = activeUser.permissions;
+    if ((!perms || Object.keys(perms).length === 0) && activeUser.roleId) {
+      const role = storage.getItem(TABLE_NAMES.ROLES, activeUser.roleId);
       if (role && role.permissions) {
         perms = role.permissions;
       }
@@ -539,32 +541,37 @@ class AuthService {
   /**
    * Role hierarchy checks
    */
-  isSuperAdmin() {
-    if (!this.currentUser) return false;
-    return this.currentUser.role === 'SUPER_ADMIN' ||
-           this.currentUser.roleId === 'role-super-admin' ||
-           this.currentUser.username?.toLowerCase() === 'superadmin' ||
-           this.currentUser.username?.toLowerCase() === 'admin' && this.currentUser.role === 'SUPER_ADMIN';
+  isSuperAdmin(user = null) {
+    const u = user || this.currentUser;
+    if (!u) return false;
+    return u.role === 'SUPER_ADMIN' ||
+           u.roleId === 'role-super-admin' ||
+           u.username?.toLowerCase() === 'superadmin' ||
+           (u.username?.toLowerCase() === 'admin' && u.role === 'SUPER_ADMIN');
   }
 
-  isAdmin() {
-    if (this.isSuperAdmin()) return true;
+  isAdmin(user = null) {
+    const u = user || this.currentUser;
+    if (this.isSuperAdmin(u)) return true;
     // Only check actual role/roleId — not permission checks which could elevate non-admins
-    return this.currentUser?.role === 'ADMIN' ||
-           this.currentUser?.roleId === 'role-admin';
+    return u?.role === 'ADMIN' ||
+           u?.roleId === 'role-admin';
   }
 
-  isManager() {
-    if (this.isAdmin()) return true;
-    return this.currentUser?.role === 'MANAGER' || this.currentUser?.roleId === 'role-manager';
+  isManager(user = null) {
+    const u = user || this.currentUser;
+    if (this.isAdmin(u)) return true;
+    return u?.role === 'MANAGER' || u?.roleId === 'role-manager' || u?.designation?.toLowerCase().includes('manager');
   }
 
-  isUser() {
-    return !this.isAdmin() && !this.isSuperAdmin();
+  isUser(user = null) {
+    const u = user || this.currentUser;
+    return !this.isAdmin(u) && !this.isSuperAdmin(u);
   }
 
-  isViewer() {
-    return this.currentUser?.role === 'VIEWER' || this.currentUser?.roleId === 'role-viewer';
+  isViewer(user = null) {
+    const u = user || this.currentUser;
+    return u?.role === 'VIEWER' || u?.roleId === 'role-viewer';
   }
 
   // ==========================================
@@ -579,7 +586,7 @@ class AuthService {
   canExportMachineExcel() { return this.hasAccess('machines', 'EXPORT') || this.hasAccess('excel_import', 'MACHINE_EXPORT'); }
 
   canViewTransfers() { return this.hasAccess('transfers', 'VIEW'); }
-  canRequestTransfer() { return this.hasAccess('transfers', 'CREATE_REQUEST') || this.hasAccess('transfers', 'ADD') || true; }
+  canRequestTransfer() { return this.isSuperAdmin() || this.isAdmin() || this.hasAccess('transfers', 'CREATE_REQUEST') || this.hasAccess('transfers', 'ADD'); }
   canApproveTransfer() { return this.hasAccess('transfers', 'APPROVE'); }
   canDirectTransfer() { return this.hasAccess('transfers', 'DIRECT_TRANSFER'); }
   canExportTransfers() { return this.hasAccess('transfers', 'EXPORT') || this.hasAccess('excel_import', 'TRANSFER_EXPORT'); }
@@ -1596,13 +1603,13 @@ class AuthService {
     return true;
   }
 
-  isLocationAllowed(unitId, floorId = null, lineId = null) {
-    const user = this.getCurrentUser();
-    if (!user) return false;
+  isLocationAllowed(unitId, floorId = null, lineId = null, user = null) {
+    const u = user || this.getCurrentUser();
+    if (!u) return false;
     // Super Admin has global bypass
-    if (this.isSuperAdmin()) return true;
+    if (this.isSuperAdmin(u)) return true;
 
-    const scope = user.assignedScope;
+    const scope = u.assignedScope;
     if (!scope || scope.allGroups) return true;
 
     if (unitId && Array.isArray(scope.unitIds) && scope.unitIds.length > 0) {
