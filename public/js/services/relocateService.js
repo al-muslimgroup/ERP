@@ -57,7 +57,7 @@ class RelocateService {
    * Starts a new physical verification and relocation session.
    * Takes an instant PREVIOUS INVENTORY SNAPSHOT of the target floor/lines.
    */
-  startSession({ unitId, floorId, lineIds = [], isFullFloor = false, notes = '' }) {
+  async startSession({ unitId, floorId, lineIds = [], isFullFloor = false, notes = '' }) {
     if (!unitId || !floorId) {
       throw new Error('Unit and Floor are required to start a relocation scan session.');
     }
@@ -695,7 +695,7 @@ class RelocateService {
     return [...list].sort((a, b) => new Date(b.requestedAt || 0) - new Date(a.requestedAt || 0));
   }
 
-  approveRelocation(approvalId, reviewerNotes = '') {
+  async approveRelocation(approvalId, reviewerNotes = '') {
     const canApprove = authService.isSuperAdmin() || 
                        authService.isAdmin() || 
                        authService.hasAccess('relocate', 'APPROVE') || 

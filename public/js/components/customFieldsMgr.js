@@ -96,7 +96,7 @@ export function renderCustomFieldsMgr() {
 export function initCustomFieldsEvents() {
   const btnCreate = document.getElementById('btn-open-create-cf-modal');
   if (btnCreate) {
-    btnCreate.addEventListener('click', () => {
+    btnCreate.addEventListener('click', async () => {
       const label = prompt('Enter Field Label (e.g. Motor Brand, Lubricant Type, Needle System):');
       if (!label || !label.trim()) return;
 
@@ -108,7 +108,7 @@ export function initCustomFieldsEvents() {
       }
 
       try {
-        customFieldService.createField({
+        await customFieldService.createField({
           label: label.trim(),
           type: (type || 'TEXT').toUpperCase().trim(),
           required: false,
@@ -126,7 +126,7 @@ export function initCustomFieldsEvents() {
 
   // Edit / Rename Parameter
   document.querySelectorAll('.btn-edit-cf').forEach(btn => {
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', async () => {
       const id = btn.getAttribute('data-id');
       const field = customFieldService.getAllFields().find(f => f.id === id);
       if (!field) return;
@@ -143,7 +143,7 @@ export function initCustomFieldsEvents() {
       }
 
       try {
-        customFieldService.updateField(id, {
+        await customFieldService.updateField(id, {
           label: newLabel.trim(),
           options: newOptions
         });
@@ -209,11 +209,15 @@ export function initCustomFieldsEvents() {
   });
 
   document.querySelectorAll('.btn-delete-cf').forEach(btn => {
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', async () => {
       const id = btn.getAttribute('data-id');
       if (confirm('Delete this dynamic custom field?')) {
-        customFieldService.deleteField(id);
-        state.emit('inventory:updated');
+        try {
+          await customFieldService.deleteField(id);
+          state.emit('inventory:updated');
+        } catch (err) {
+          alert('Error: ' + err.message);
+        }
       }
     });
   });

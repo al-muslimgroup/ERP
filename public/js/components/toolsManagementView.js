@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Al-Muslim Group Garments Factory Maintenance Machine ERP
  * Tools, Equipment & Accessories Management System Component
  * 
@@ -3338,7 +3338,7 @@ export function initToolsManagementEvents() {
   // 17. Big 3D SAVE Button (Commit to Database)
   const btnSaveBatch = document.getElementById('btn-save-allocation-batch');
   if (btnSaveBatch) {
-    btnSaveBatch.onclick = () => {
+    btnSaveBatch.onclick = async () => {
       try {
         const regNo = document.getElementById('input-tab-reg-no')?.value.trim() || currentRegNo;
         const userId = document.getElementById('input-add-user-id')?.value.trim() || activeUserForm.userId;
@@ -3352,14 +3352,14 @@ export function initToolsManagementEvents() {
         if (liveAllocationQueue.length === 0) throw new Error('Please add tools to the table before saving.');
 
         // Delete existing items for this regNo first to prevent duplicate stacking on updates
-        toolService.deleteRegistrationBatch(regNo);
+        await toolService.deleteRegistrationBatch(regNo);
 
         const reqNo = document.getElementById('input-add-requisition-no')?.value.trim() || activeUserForm.requisitionNo || '';
         liveAllocationQueue.forEach(item => {
           if (!item.requisitionNo && reqNo) item.requisitionNo = reqNo;
         });
 
-        const result = toolService.saveAllocationBatch({
+        const result = await toolService.saveAllocationBatch({
           regNo,
           issueDate,
           user: { userId, userName, jobTitle, workingArea, requisitionNo: reqNo },

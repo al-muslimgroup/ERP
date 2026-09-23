@@ -732,7 +732,7 @@ class ToolService {
     });
   }
 
-  saveAllocationBatch({ regNo, issueDate, user, items, forceNextRegIfDuplicate = false }) {
+  async saveAllocationBatch({ regNo, issueDate, user, items, forceNextRegIfDuplicate = false }) {
     if (!regNo) throw new Error('Registration number is required.');
     if (!user || !user.userId) throw new Error('User / Employee Information is required.');
     if (!items || items.length === 0) throw new Error('Please add at least one tool or accessory to allocate.');

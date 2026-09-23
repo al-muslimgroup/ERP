@@ -30,7 +30,7 @@ class CustomFieldService {
     return FIELD_TYPES;
   }
 
-  createField(fieldData) {
+  async createField(fieldData) {
     if (!authService.canManageFields()) {
       throw new Error('Only authorized administrators can create custom fields.');
     }
@@ -70,7 +70,7 @@ class CustomFieldService {
     return created;
   }
 
-  updateField(id, updates) {
+  async updateField(id, updates) {
     if (!authService.canManageFields()) {
       throw new Error('Only authorized administrators can modify custom fields.');
     }
@@ -131,7 +131,7 @@ class CustomFieldService {
     return updated;
   }
 
-  deleteField(id) {
+  async deleteField(id) {
     if (!authService.canManageFields()) {
       throw new Error('Only administrators can delete custom fields.');
     }

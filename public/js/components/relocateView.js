@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Al-Muslim Group Garments Factory Maintenance Machine ERP
  * Machine Inventory -> Relocate View Component
  * Mobile-First Physical Verification, QR Scan, Auto-Idle Identification & Reconciliation System
@@ -2571,7 +2571,7 @@ export function initRelocateViewEvents() {
   // 3. Start Session Submit
   const formStart = root.querySelector('#form-start-relocate-session');
   if (formStart) {
-    formStart.addEventListener('submit', (e) => {
+    formStart.addEventListener('submit', async (e) => {
       e.preventDefault();
       const unitId = root.querySelector('#relocate-sel-unit')?.value;
       const floorId = root.querySelector('#relocate-sel-floor')?.value;
@@ -2598,7 +2598,7 @@ export function initRelocateViewEvents() {
       }
 
       try {
-        relocateService.startSession({
+        await relocateService.startSession({
           unitId,
           floorId,
           lineIds,
@@ -3000,10 +3000,10 @@ export function initRelocateViewEvents() {
 
   // 9. Relocation Approval / Reject Buttons
   root.querySelectorAll('.btn-approve-relocation').forEach(btn => {
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', async () => {
       const id = btn.getAttribute('data-id');
       try {
-        relocateService.approveRelocation(id);
+        await relocateService.approveRelocation(id);
         notificationService.notifySuccess('Relocation Approved', 'Machine inventory location updated!');
         refreshView();
       } catch (err) {
@@ -3013,12 +3013,12 @@ export function initRelocateViewEvents() {
   });
 
   root.querySelectorAll('.btn-reject-relocation').forEach(btn => {
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', async () => {
       const id = btn.getAttribute('data-id');
       const reason = prompt('Please enter rejection reason:', 'Physical move not approved');
       if (!reason) return;
       try {
-        relocateService.rejectRelocation(id, reason);
+        await relocateService.rejectRelocation(id, reason);
         notificationService.notifyWarning('Relocation Rejected', 'Machine location kept at original.');
         refreshView();
       } catch (err) {
