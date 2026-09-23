@@ -14,11 +14,11 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600;700&display=swap" rel="stylesheet">
 
-  <!-- Core ERP Stylesheets (Cache-Busted v4.7.0) -->
-  <link rel="stylesheet" href="css/app.css?v=4.7.0">
-  <link rel="stylesheet" href="css/grid.css?v=4.7.0">
-  <link rel="stylesheet" href="css/components.css?v=4.7.0">
-  <link rel="stylesheet" href="css/print.css?v=4.7.0">
+  <!-- Core ERP Stylesheets (Cache-Busted v4.7.4) -->
+  <link rel="stylesheet" href="css/app.css?v=4.7.4">
+  <link rel="stylesheet" href="css/grid.css?v=4.7.4">
+  <link rel="stylesheet" href="css/components.css?v=4.7.4">
+  <link rel="stylesheet" href="css/print.css?v=4.7.4">
 
   <!-- SheetJS (XLSX) Library for Excel Import & Export (Local Offline + CDN Fallback) -->
   <script src="lib/xlsx.full.min.js"></script>
@@ -131,12 +131,29 @@
       } catch(_) {}
     };
 
-    // Safe 4.5-second watchdog timer
+    // Progressive Loading Feedback & Safety Watchdog
     setTimeout(function() {
-      if (!window.__appLoaded && !window.app) {
+      if (!window.__appLoaded) {
+        var statusEl = document.getElementById('loading-status-text');
+        if (statusEl) statusEl.textContent = 'Connecting to Cloud Database & Loading Data...';
+      }
+    }, 2000);
+
+    setTimeout(function() {
+      if (!window.__appLoaded) {
+        var statusEl = document.getElementById('loading-status-text');
+        if (statusEl) statusEl.textContent = 'Preparing Factory ERP Modules...';
+      }
+    }, 5000);
+
+    setTimeout(function() {
+      if (!window.__appLoaded) {
+        if (window.app && typeof window.app.init === 'function') {
+          try { window.app.init(); return; } catch(_) {}
+        }
         window.__showStartupError('Startup Timeout Notice', 'The application took longer than expected to launch. Click Retry to reload.');
       }
-    }, 4500);
+    }, 15000);
 
     window.__forceFreshReload = function() {
       try {
@@ -153,7 +170,7 @@
     };
 
     // Auto cache flush on new deployment build version
-    var CURRENT_BUILD = '4.7.3';
+    var CURRENT_BUILD = '4.7.4';
     if (localStorage.getItem('al_muslim_build_ver') !== CURRENT_BUILD) {
       try { localStorage.removeItem('al_muslim_build_ver'); } catch(_) {}
       try { localStorage.removeItem('erp_last_active_tab'); } catch(_) {}
@@ -161,8 +178,8 @@
     }
   </script>
 
-  <!-- Main ES Module Application Entrypoint (Cache-Busted v4.7.3) -->
-  <script type="module" src="js/app.js?v=4.7.3"></script>
+  <!-- Main ES Module Application Entrypoint (Cache-Busted v4.7.4) -->
+  <script type="module" src="js/app.js?v=4.7.4"></script>
 
   <style>
     @keyframes spin {

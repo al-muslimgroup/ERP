@@ -436,6 +436,9 @@ class ERPApplication {
         modalLayer.innerHTML = this.getActiveModalHtml();
         this.initModalEvents();
       }
+      // Root Cause 5 fix: lock background scroll while any modal is open
+      const hasModal = !!(state.get('activeModal'));
+      document.body.classList.toggle('modal-open', hasModal);
     } catch (err) {
       console.error('Error rendering modals:', err);
     }
@@ -825,6 +828,14 @@ export const app = new ERPApplication();
 if (typeof window !== 'undefined') {
   window.app = app;
 }
-document.addEventListener('DOMContentLoaded', () => {
-  app.init();
-});
+
+if (typeof document !== 'undefined') {
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => {
+      app.init();
+    });
+  } else {
+    // DOMContentLoaded already fired; initialize immediately
+    app.init();
+  }
+}

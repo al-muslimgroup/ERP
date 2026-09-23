@@ -828,6 +828,14 @@ export const app = new ERPApplication();
 if (typeof window !== 'undefined') {
   window.app = app;
 }
-document.addEventListener('DOMContentLoaded', () => {
-  app.init();
-});
+
+if (typeof document !== 'undefined') {
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => {
+      app.init();
+    });
+  } else {
+    // DOMContentLoaded already fired; initialize immediately
+    app.init();
+  }
+}
