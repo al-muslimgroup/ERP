@@ -72,20 +72,24 @@ function fromFirestoreValue(val) {
  */
 export async function updateSyncManifest(tableName, updateTime, timeoutMs = 4000) {
   try {
-    const url = `${BASE_URL}/${encodeURIComponent(SYNC_MANIFEST_DOC)}?updateMask.fieldPaths=${encodeURIComponent(tableName)}`;
+    const nowIso = updateTime || new Date().toISOString();
+    const url = `${BASE_URL}/${encodeURIComponent(SYNC_MANIFEST_DOC)}?updateMask.fieldPaths=${encodeURIComponent(tableName)}&updateMask.fieldPaths=lastModifiedTable&updateMask.fieldPaths=updatedAt`;
     const payload = {
       fields: {
-        [tableName]: { stringValue: updateTime || new Date().toISOString() }
+        [tableName]: { stringValue: nowIso },
+        lastModifiedTable: { stringValue: tableName },
+        updatedAt: { stringValue: nowIso }
       }
     };
-    await fetchWithTimeout(url, {
+    const res = await fetchWithTimeout(url, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     }, timeoutMs);
+    return res && res.ok;
   } catch (err) {
-    // Non-critical: manifest update failure should not block the main write confirmation
     console.warn('[Firebase Sync] sync_manifest update note:', err.message);
+    return false;
   }
 }
 
@@ -134,15 +138,6 @@ export async function saveTableToFirestore(tableName, records, timeoutMs = 8000)
   try {
     if (!tableName) return { success: false, updateTime: null };
 
-    // Safety check: block mock machine records from corrupting factory dataset
-    if (tableName === 'machines' && Array.isArray(records)) {
-      const hasMock = records.some(m => m && m.serialNumber && String(m.serialNumber).startsWith('JK-PM-'));
-      if (hasMock) {
-        console.warn('[Firebase Sync] 🚫 Blocked attempt to write mock machines dataset to Firestore.');
-        return { success: false, updateTime: null };
-      }
-    }
-
     const cleanRecords = JSON.parse(JSON.stringify(records ?? []));
     const jsonStr = JSON.stringify(cleanRecords);
     const sizeBytes = new Blob([jsonStr]).size;
@@ -170,13 +165,13 @@ export async function saveTableToFirestore(tableName, records, timeoutMs = 8000)
       if (res.ok) {
         const docResponse = await res.json().catch(() => ({}));
         const serverUpdateTime = docResponse?.updateTime || nowIso;
-        // Update sync_manifest asynchronously (non-blocking)
-        updateSyncManifest(tableName, serverUpdateTime, 4000).catch(() => {});
+        // Update sync_manifest with confirmed write so other devices are notified immediately
+        await updateSyncManifest(tableName, serverUpdateTime, 4000);
         return { success: true, updateTime: serverUpdateTime };
       } else {
         const errText = await res.text().catch(() => '');
         console.warn(`[Firebase Sync] Failed saving ${tableName} (HTTP ${res.status}):`, errText);
-        return { success: false, updateTime: null };
+        return { success: false, updateTime: null, error: `HTTP ${res.status}: ${errText}` };
       }
     }
 
@@ -249,8 +244,8 @@ export async function saveTableToFirestore(tableName, records, timeoutMs = 8000)
       if (manifestRes.ok) {
         const docResponse = await manifestRes.json().catch(() => ({}));
         const serverUpdateTime = docResponse?.updateTime || nowIso;
-        // Update sync_manifest asynchronously (non-blocking)
-        updateSyncManifest(tableName, serverUpdateTime, 4000).catch(() => {});
+        // Update sync_manifest with confirmed write so other devices are notified immediately
+        await updateSyncManifest(tableName, serverUpdateTime, 4000);
         return { success: true, updateTime: serverUpdateTime };
       }
 
@@ -340,6 +335,7 @@ export async function fetchAllFromFirestore(timeoutMs = 12000) {
   try {
     const rawDocs = new Map();
     let pageToken = '';
+    let anyRequestSucceeded = false;
 
     // Paginate until all documents across the collection are retrieved
     do {
@@ -349,6 +345,7 @@ export async function fetchAllFromFirestore(timeoutMs = 12000) {
         console.warn(`[Firebase Sync] Collection list failed (HTTP ${res.status})`);
         break;
       }
+      anyRequestSucceeded = true;
 
       const data = await res.json();
       if (Array.isArray(data.documents)) {
@@ -361,7 +358,10 @@ export async function fetchAllFromFirestore(timeoutMs = 12000) {
     } while (pageToken);
 
     if (rawDocs.size === 0) {
-      console.log('[Firebase Sync] Firestore database collection is currently empty.');
+      if (anyRequestSucceeded) {
+        console.log('[Firebase Sync] Firestore database collection is currently empty.');
+        return { _isEmpty: true };
+      }
       return null;
     }
 

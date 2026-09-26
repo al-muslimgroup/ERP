@@ -16,7 +16,7 @@ class HistoryService {
   /**
    * Automatically record any machine activity/lifecycle event
    */
-  recordActivity({
+  async recordActivity({
     machineId,
     serialNumber,
     actionType,
@@ -67,8 +67,8 @@ class HistoryService {
 
       const historyTable = storage.getTable(TABLE_NAMES.MACHINE_HISTORY) || [];
       historyTable.unshift(historyRecord);
-      // CONFIRMED WRITE: fire-and-forget but still async for cloud sync
-      storage.saveTable(TABLE_NAMES.MACHINE_HISTORY).catch(e => console.warn('[HistoryService] Cloud sync notice:', e));
+      // CONFIRMED WRITE: await Firestore write confirmation
+      await storage.saveTable(TABLE_NAMES.MACHINE_HISTORY, true).catch(e => console.warn('[HistoryService] Cloud sync notice:', e));
 
       // Also record in system audit log
       auditService.log(
@@ -998,10 +998,6 @@ class HistoryService {
    */
   searchSparePartsMaster(query = '') {
     let rawMaster = storage.getTable(TABLE_NAMES.SPARE_PARTS_MASTER) || [];
-    if (rawMaster.length === 0) {
-      rawMaster = JSON.parse(JSON.stringify(INITIAL_DATA.spare_parts_master || []));
-      storage.saveTable(TABLE_NAMES.SPARE_PARTS_MASTER, rawMaster);
-    }
 
     const q = (query || '').trim().toLowerCase();
 
@@ -1116,10 +1112,6 @@ class HistoryService {
    */
   getSparePartsMaster(filters = {}) {
     let master = storage.getTable(TABLE_NAMES.SPARE_PARTS_MASTER) || [];
-    if (master.length === 0) {
-      master = JSON.parse(JSON.stringify(INITIAL_DATA.spare_parts_master || []));
-      storage.saveTable(TABLE_NAMES.SPARE_PARTS_MASTER, master);
-    }
     
     if (filters.category && filters.category !== 'ALL') {
       master = master.filter(m => m.category?.toUpperCase() === filters.category.toUpperCase());

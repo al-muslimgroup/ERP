@@ -83,20 +83,12 @@ class StorageEngine {
       this._suppressServerPersist = true;
       this.loadFromStorage();
 
-      // If localStorage is missing or contains stale/incomplete master data or machines, auto-heal from INITIAL_DATA
-      const needsHeal = !this.data[TABLE_NAMES.MACHINES] || 
-                        this.data[TABLE_NAMES.MACHINES].length < 500 ||
-                        !this.data[TABLE_NAMES.MACHINE_NAMES] || 
-                        this.data[TABLE_NAMES.MACHINE_NAMES].length < 70 ||
-                        !this.data[TABLE_NAMES.MODELS] || 
-                        this.data[TABLE_NAMES.MODELS].length < 35 ||
-                        !this.data[TABLE_NAMES.FLOORS] || 
-                        this.data[TABLE_NAMES.FLOORS].length < 12 ||
-                        !this.data[TABLE_NAMES.LINES] || 
-                        this.data[TABLE_NAMES.LINES].length < 70;
+      // Only seed initial factory data if local cache has no records at all (brand new browser storage)
+      const isCompletelyEmpty = (!this.data[TABLE_NAMES.MACHINES] || this.data[TABLE_NAMES.MACHINES].length === 0) &&
+                                (!this.data[TABLE_NAMES.USERS] || this.data[TABLE_NAMES.USERS].length === 0);
 
-      if (needsHeal) {
-        console.log('[Database Store] 🔄 Local cache incomplete or stale. Auto-healing to full authoritative factory dataset...');
+      if (isCompletelyEmpty) {
+        console.log('[Database Store] 🔄 Local cache empty. Seeding initial factory dataset...');
         this.resetToInitialData(false);
       }
 
@@ -122,12 +114,24 @@ class StorageEngine {
             this.checkAndSyncRemoteChanges();
           }
         });
+        window.addEventListener('erp:modal-closed', () => {
+          if (this._pendingRemoteManifest && !this.isUserTyping()) {
+            const pending = this._pendingRemoteManifest;
+            this._pendingRemoteManifest = null;
+            this.handleRemoteManifestUpdate(pending);
+          }
+        });
         // 1. Start official Google Cloud Firestore onSnapshot real-time listener
         this.initRealtimeSyncListener();
 
         // 2. Multi-device sync backup heartbeat (polls every 8s as fallback if WebSocket sleeps)
         if (!this._remoteSyncTimer) {
           this._remoteSyncTimer = setInterval(() => {
+            if (this._pendingRemoteManifest && !this.isUserTyping()) {
+              const pending = this._pendingRemoteManifest;
+              this._pendingRemoteManifest = null;
+              this.handleRemoteManifestUpdate(pending);
+            }
             if (!this.isUserTyping()) {
               this.checkAndSyncRemoteChanges();
             }
@@ -231,30 +235,7 @@ class StorageEngine {
       this.data[TABLE_NAMES.SETTINGS] = JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
     }
 
-    if (!this.data[TABLE_NAMES.EXCEL_STRUCTURES] || this.data[TABLE_NAMES.EXCEL_STRUCTURES].length === 0) {
-      this.data[TABLE_NAMES.EXCEL_STRUCTURES] = JSON.parse(JSON.stringify(INITIAL_DATA.excel_structures || []));
-      this.saveTable(TABLE_NAMES.EXCEL_STRUCTURES);
-    }
-
-    if (!this.data[TABLE_NAMES.MACHINE_HISTORY] || this.data[TABLE_NAMES.MACHINE_HISTORY].length === 0) {
-      this.data[TABLE_NAMES.MACHINE_HISTORY] = INITIAL_DATA.generateInitialHistory ? INITIAL_DATA.generateInitialHistory() : [];
-      this.saveTable(TABLE_NAMES.MACHINE_HISTORY);
-    }
-
-    if (!this.data[TABLE_NAMES.SPARE_PARTS] || this.data[TABLE_NAMES.SPARE_PARTS].length === 0) {
-      this.data[TABLE_NAMES.SPARE_PARTS] = INITIAL_DATA.generateInitialSpareParts ? INITIAL_DATA.generateInitialSpareParts() : [];
-      this.saveTable(TABLE_NAMES.SPARE_PARTS);
-    }
-
-    if (!this.data[TABLE_NAMES.STORAGE_MASTER] || this.data[TABLE_NAMES.STORAGE_MASTER].length === 0) {
-      this.data[TABLE_NAMES.STORAGE_MASTER] = JSON.parse(JSON.stringify(INITIAL_DATA.storage_master || []));
-      this.saveTable(TABLE_NAMES.STORAGE_MASTER);
-    }
-
-    if (!this.data[TABLE_NAMES.STORAGE_CORRECTION_RULES] || this.data[TABLE_NAMES.STORAGE_CORRECTION_RULES].length === 0) {
-      this.data[TABLE_NAMES.STORAGE_CORRECTION_RULES] = JSON.parse(JSON.stringify(INITIAL_DATA.storage_correction_rules || []));
-      this.saveTable(TABLE_NAMES.STORAGE_CORRECTION_RULES);
-    } else {
+    if (Array.isArray(this.data[TABLE_NAMES.EXCEL_STRUCTURES]) && this.data[TABLE_NAMES.EXCEL_STRUCTURES].length > 0) {
       // Normalize and sanitize field keys, stripping legacy assetId and sl (Sl. No. is purely automatic in software)
       this.data[TABLE_NAMES.EXCEL_STRUCTURES].forEach(struct => {
         if (struct.columns) {
@@ -277,94 +258,6 @@ class StorageEngine {
           });
         }
       });
-      this.saveTable(TABLE_NAMES.EXCEL_STRUCTURES);
-    }
-
-    if (!this.data[TABLE_NAMES.TRANSFER_WORKFLOWS] || this.data[TABLE_NAMES.TRANSFER_WORKFLOWS].length === 0) {
-      this.data[TABLE_NAMES.TRANSFER_WORKFLOWS] = JSON.parse(JSON.stringify(INITIAL_DATA.transfer_workflows || []));
-      this.saveTable(TABLE_NAMES.TRANSFER_WORKFLOWS);
-    }
-
-    if (!this.data[TABLE_NAMES.TRANSFER_REQUESTS] || this.data[TABLE_NAMES.TRANSFER_REQUESTS].length === 0) {
-      this.data[TABLE_NAMES.TRANSFER_REQUESTS] = JSON.parse(JSON.stringify(INITIAL_DATA.transfer_requests || []));
-      this.saveTable(TABLE_NAMES.TRANSFER_REQUESTS);
-    }
-
-    if (!this.data[TABLE_NAMES.IMPORT_HISTORY] || this.data[TABLE_NAMES.IMPORT_HISTORY].length === 0) {
-      this.data[TABLE_NAMES.IMPORT_HISTORY] = JSON.parse(JSON.stringify(INITIAL_DATA.import_history || []));
-      this.saveTable(TABLE_NAMES.IMPORT_HISTORY);
-    }
-
-    if (!this.data[TABLE_NAMES.ROLES] || this.data[TABLE_NAMES.ROLES].length === 0) {
-      this.data[TABLE_NAMES.ROLES] = JSON.parse(JSON.stringify(INITIAL_DATA.roles || []));
-      this.saveTable(TABLE_NAMES.ROLES);
-    }
-
-    if (!this.data[TABLE_NAMES.SPARE_PARTS_MASTER] || this.data[TABLE_NAMES.SPARE_PARTS_MASTER].length === 0) {
-      this.data[TABLE_NAMES.SPARE_PARTS_MASTER] = JSON.parse(JSON.stringify(INITIAL_DATA.spare_parts_master || []));
-      this.saveTable(TABLE_NAMES.SPARE_PARTS_MASTER);
-    }
-
-    if (!this.data[TABLE_NAMES.EMPLOYEES] || this.data[TABLE_NAMES.EMPLOYEES].length === 0) {
-      this.data[TABLE_NAMES.EMPLOYEES] = JSON.parse(JSON.stringify(INITIAL_DATA.employees || []));
-      this.saveTable(TABLE_NAMES.EMPLOYEES);
-    } else {
-      let changedEmp = false;
-      (INITIAL_DATA.employees || []).forEach(seed => {
-        if (!this.data[TABLE_NAMES.EMPLOYEES].some(e => e.id === seed.id || e.cardNumber === seed.cardNumber)) {
-          this.data[TABLE_NAMES.EMPLOYEES].push(JSON.parse(JSON.stringify(seed)));
-          changedEmp = true;
-        }
-      });
-      if (changedEmp) this.saveTable(TABLE_NAMES.EMPLOYEES);
-    }
-
-    if (!this.data[TABLE_NAMES.TOOLS_MASTER] || this.data[TABLE_NAMES.TOOLS_MASTER].length === 0) {
-      this.data[TABLE_NAMES.TOOLS_MASTER] = JSON.parse(JSON.stringify(INITIAL_DATA.tools_master || []));
-      this.saveTable(TABLE_NAMES.TOOLS_MASTER);
-    } else {
-      let changedTool = false;
-      (INITIAL_DATA.tools_master || []).forEach(seed => {
-        if (!this.data[TABLE_NAMES.TOOLS_MASTER].some(t => t.id === seed.id || t.code === seed.code || t.name === seed.name)) {
-          this.data[TABLE_NAMES.TOOLS_MASTER].push(JSON.parse(JSON.stringify(seed)));
-          changedTool = true;
-        }
-      });
-      if (changedTool) this.saveTable(TABLE_NAMES.TOOLS_MASTER);
-    }
-
-    if (!this.data[TABLE_NAMES.ACCESSORIES_MASTER] || this.data[TABLE_NAMES.ACCESSORIES_MASTER].length === 0) {
-      this.data[TABLE_NAMES.ACCESSORIES_MASTER] = JSON.parse(JSON.stringify(INITIAL_DATA.accessories_master || []));
-      this.saveTable(TABLE_NAMES.ACCESSORIES_MASTER);
-    } else {
-      let changedAcc = false;
-      (INITIAL_DATA.accessories_master || []).forEach(seed => {
-        if (!this.data[TABLE_NAMES.ACCESSORIES_MASTER].some(a => a.id === seed.id || a.code === seed.code || a.name === seed.name)) {
-          this.data[TABLE_NAMES.ACCESSORIES_MASTER].push(JSON.parse(JSON.stringify(seed)));
-          changedAcc = true;
-        }
-      });
-      if (changedAcc) this.saveTable(TABLE_NAMES.ACCESSORIES_MASTER);
-    }
-
-    if (!this.data[TABLE_NAMES.ET_BOARDS] || this.data[TABLE_NAMES.ET_BOARDS].length === 0) {
-      this.data[TABLE_NAMES.ET_BOARDS] = INITIAL_DATA.generateInitialEtBoards ? INITIAL_DATA.generateInitialEtBoards() : [];
-      this.saveTable(TABLE_NAMES.ET_BOARDS);
-    }
-
-    if (!this.data[TABLE_NAMES.ET_BOARD_HISTORY] || this.data[TABLE_NAMES.ET_BOARD_HISTORY].length === 0) {
-      this.data[TABLE_NAMES.ET_BOARD_HISTORY] = INITIAL_DATA.generateInitialEtHistory ? INITIAL_DATA.generateInitialEtHistory() : [];
-      this.saveTable(TABLE_NAMES.ET_BOARD_HISTORY);
-    }
-
-    if (!this.data[TABLE_NAMES.ET_COMPANIES] || this.data[TABLE_NAMES.ET_COMPANIES].length === 0) {
-      this.data[TABLE_NAMES.ET_COMPANIES] = JSON.parse(JSON.stringify(INITIAL_DATA.et_companies || []));
-      this.saveTable(TABLE_NAMES.ET_COMPANIES);
-    }
-
-    if (!this.data[TABLE_NAMES.ET_CATEGORIES] || this.data[TABLE_NAMES.ET_CATEGORIES].length === 0) {
-      this.data[TABLE_NAMES.ET_CATEGORIES] = JSON.parse(JSON.stringify(INITIAL_DATA.et_categories || []));
-      this.saveTable(TABLE_NAMES.ET_CATEGORIES);
     }
 
     if (!Array.isArray(this.data[TABLE_NAMES.RELOCATE_SESSIONS])) {
@@ -379,41 +272,10 @@ class StorageEngine {
 
     if (!Array.isArray(this.data[TABLE_NAMES.PERMISSION_PRESETS]) || this.data[TABLE_NAMES.PERMISSION_PRESETS].length === 0) {
       this.data[TABLE_NAMES.PERMISSION_PRESETS] = JSON.parse(JSON.stringify(DEFAULT_PERMISSION_PRESETS || []));
-      this.saveTable(TABLE_NAMES.PERMISSION_PRESETS);
-    } else {
-      // Ensure all standard system demo presets exist and are up to date
-      let changedPresets = false;
-      (DEFAULT_PERMISSION_PRESETS || []).forEach(seed => {
-        const existingIdx = this.data[TABLE_NAMES.PERMISSION_PRESETS].findIndex(p => 
-          p.id === seed.id || 
-          p.code === seed.code ||
-          (seed.code === 'MAINTENANCE_MANAGER' && (p.code === 'MANAGER' || p.id === 'preset_manager'))
-        );
-        if (existingIdx === -1) {
-          this.data[TABLE_NAMES.PERMISSION_PRESETS].push(JSON.parse(JSON.stringify(seed)));
-          changedPresets = true;
-        } else {
-          const existing = this.data[TABLE_NAMES.PERMISSION_PRESETS][existingIdx];
-          if (existing.isSystem) {
-            existing.id = seed.id;
-            existing.code = seed.code;
-            existing.name = seed.name;
-            existing.accessLevel = seed.accessLevel;
-            existing.description = seed.description;
-            existing.icon = seed.icon;
-            existing.badgeColor = seed.badgeColor;
-            changedPresets = true;
-          }
-        }
-      });
-      if (changedPresets) {
-        this.saveTable(TABLE_NAMES.PERMISSION_PRESETS);
-      }
     }
 
     // Auto-migrate existing users to default permission presets
     const currentUsers = this.data[TABLE_NAMES.USERS] || [];
-    let usersMigrated = false;
     currentUsers.forEach(u => {
       const uRole = (u.role || '').toUpperCase();
       if (!u.presetId || u.presetId === 'preset-super-admin' || u.presetId === 'preset-admin' || u.presetId === 'preset-maintenance-user') {
@@ -427,16 +289,11 @@ class StorageEngine {
           u.presetId = 'preset_maintenance_user';
           u.presetName = 'Maintenance User';
         }
-        usersMigrated = true;
       }
     });
-    if (usersMigrated) {
-      this.saveTable(TABLE_NAMES.USERS);
-    }
 
     // Auto-migrate legacy storage_master machine names to canonical names
     const currentSM = this.data[TABLE_NAMES.STORAGE_MASTER] || [];
-    let smMigrated = false;
     const smAliasMap = {
       'plain machine 1-needle': 'Plane Machine',
       'plain machine': 'Plane Machine',
@@ -451,13 +308,9 @@ class StorageEngine {
         const lower = it.machineName.trim().toLowerCase();
         if (smAliasMap[lower]) {
           it.machineName = smAliasMap[lower];
-          smMigrated = true;
         }
       }
     });
-    if (smMigrated) {
-      this.saveTable(TABLE_NAMES.STORAGE_MASTER);
-    }
 
     // Auto-migrate legacy/duplicate machine IDs to canonical 76 machine types
     const duplicateIdMap = {
@@ -479,26 +332,12 @@ class StorageEngine {
       'mac-1788870296741-340': 'mn-1788869247205-his3'  // Bartack -> Bar tak Machine
     };
 
-    let currentMachines = this.data[TABLE_NAMES.MACHINES] || [];
-    const hasMockMachines = currentMachines.some(m => m && m.serialNumber && String(m.serialNumber).startsWith('JK-PM-'));
-    if (hasMockMachines || currentMachines.length < 500) {
-      currentMachines = INITIAL_DATA.generateInitialMachines();
-      this.data[TABLE_NAMES.MACHINES] = currentMachines;
-      try {
-        localStorage.setItem(STORAGE_KEY_PREFIX + TABLE_NAMES.MACHINES, JSON.stringify(currentMachines));
-      } catch (_) {}
-    }
-
-    let macsMigrated = false;
+    const currentMachines = this.data[TABLE_NAMES.MACHINES] || [];
     currentMachines.forEach(m => {
       if (m && duplicateIdMap[m.machineNameId]) {
         m.machineNameId = duplicateIdMap[m.machineNameId];
-        macsMigrated = true;
       }
     });
-    if (macsMigrated) {
-      this.saveTable(TABLE_NAMES.MACHINES);
-    }
 
     // Deduplicate MACHINE_NAMES table: strip duplicates and ensure canonical 76
     const duplicateIds = new Set(Object.keys(duplicateIdMap));
@@ -516,86 +355,6 @@ class StorageEngine {
     });
     if (uniqueMN.length !== currentMN.length) {
       this.data[TABLE_NAMES.MACHINE_NAMES] = uniqueMN;
-      this.saveTable(TABLE_NAMES.MACHINE_NAMES);
-    }
-
-    // Ensure Surma Floor (SU) exists under Pacific Blue (unt-2) if missing in current local storage
-    const currentFloors = this.data[TABLE_NAMES.FLOORS] || [];
-    const hasSurma = currentFloors.some(f => (f.code && f.code.toUpperCase() === 'SU') || (f.name && f.name.toLowerCase().includes('surma')));
-    if (!hasSurma && currentFloors.some(f => f.unitId === 'unt-2')) {
-      const surmaFloor = { id: 'flr-20', unitId: 'unt-2', name: 'Surma Floor', code: 'SU', building: 'Denim Plant', status: 'ACTIVE' };
-      currentFloors.push(surmaFloor);
-      this.saveTable(TABLE_NAMES.FLOORS);
-
-      const currentLines = this.data[TABLE_NAMES.LINES] || [];
-      if (!currentLines.some(l => l.floorId === 'flr-20' && l.name.toUpperCase() === 'SU-A')) {
-        currentLines.push({ id: 'lin-23', floorId: 'flr-20', name: 'SU-A', code: 'SU-A', supervisor: 'Md. Enamul Haque', status: 'ACTIVE' });
-      }
-      if (!currentLines.some(l => l.floorId === 'flr-20' && l.name.toUpperCase() === 'SU-IDLE')) {
-        currentLines.push({ id: 'lin-idl-20', floorId: 'flr-20', name: 'SU-Idle', code: 'SU-Idle', supervisor: 'Standby / Maintenance Pool', status: 'ACTIVE' });
-      }
-      this.saveTable(TABLE_NAMES.LINES);
-    }
-
-    // Ensure standard process sections (Size Set, Eyelet, APW Room) exist in database records for active floors
-    const activeLinesList = this.data[TABLE_NAMES.LINES] || [];
-    const activeFloorsList = this.data[TABLE_NAMES.FLOORS] || [];
-    let linesAdded = 0;
-
-    const targetFloorCodes = ['JA', 'BG', 'SU'];
-    targetFloorCodes.forEach(fCode => {
-      const floor = activeFloorsList.find(f => (f.code || '').toUpperCase() === fCode);
-      if (floor) {
-        // Clean up obsolete separate Eyelet / APW Room or Ironing lines for this floor
-        for (let i = activeLinesList.length - 1; i >= 0; i--) {
-          const l = activeLinesList[i];
-          if (l.floorId === floor.id) {
-            const upper = (l.name || '').toUpperCase();
-            if (upper === `${fCode}-EYELET` || upper === `${fCode}-APW ROOM` || upper === `${fCode}-IRONING` || upper.endsWith('-IRONING')) {
-              activeLinesList.splice(i, 1);
-              linesAdded++;
-            }
-          }
-        }
-
-        const requiredSections = [
-          { name: `${fCode}-Size Set`, code: `${fCode}-Size Set`, supervisor: 'Line Master (Size Set)' },
-          { name: `${fCode}-Eyelet & APW Room`, code: `${fCode}-Eyelet & APW Room`, supervisor: 'Eyelet & APW Room Specialist' }
-        ];
-
-        requiredSections.forEach(sec => {
-          const exists = activeLinesList.some(l => 
-            l.floorId === floor.id && 
-            (l.name.toUpperCase() === sec.name.toUpperCase() || (l.code && l.code.toUpperCase() === sec.code.toUpperCase()))
-          );
-          if (!exists) {
-            activeLinesList.push({
-              id: 'lin-' + floor.id + '-' + sec.name.toLowerCase().replace(/[^a-z0-9]/g, '-'),
-              floorId: floor.id,
-              name: sec.name,
-              code: sec.code,
-              supervisor: sec.supervisor,
-              status: 'ACTIVE'
-            });
-            linesAdded++;
-          }
-        });
-      }
-    });
-
-    if (linesAdded > 0) {
-      this.saveTable(TABLE_NAMES.LINES);
-      console.log(`[Database Store] Synchronized ${linesAdded} line records (Size Set, Eyelet & APW Room) to database.`);
-    }
-
-    if (!this.data[TABLE_NAMES.PREVENTIVE_CONFIG] || this.data[TABLE_NAMES.PREVENTIVE_CONFIG].length < 20) {
-      this.data[TABLE_NAMES.PREVENTIVE_CONFIG] = JSON.parse(JSON.stringify(INITIAL_DATA.preventive_config || []));
-      this.saveTable(TABLE_NAMES.PREVENTIVE_CONFIG);
-    }
-
-    if (!this.data[TABLE_NAMES.PREVENTIVE_MAINTENANCE] || this.data[TABLE_NAMES.PREVENTIVE_MAINTENANCE].length === 0) {
-      this.data[TABLE_NAMES.PREVENTIVE_MAINTENANCE] = INITIAL_DATA.generateInitialPreventiveMaintenance ? INITIAL_DATA.generateInitialPreventiveMaintenance() : [];
-      this.saveTable(TABLE_NAMES.PREVENTIVE_MAINTENANCE);
     }
   }
 
@@ -609,16 +368,16 @@ class StorageEngine {
    *
    * @param {string} table - Table name
    * @param {boolean|*} dataOrImmediate - Optional new data or immediate flag
-   * @param {boolean} maybeImmediate - Immediate flag if dataOrImmediate is data
+   * @param {boolean} maybeImmediate - Immediate flag if dataOrImmediate is data (default true)
    * @returns {Promise<boolean>} - true if Firestore write confirmed, false otherwise
    */
-  async saveTable(table, dataOrImmediate = null, maybeImmediate = false) {
+  async saveTable(table, dataOrImmediate = null, maybeImmediate = true) {
     let immediate = true; // Default to immediate (confirmed write)
     if (typeof dataOrImmediate === 'boolean') {
       immediate = dataOrImmediate;
     } else if (dataOrImmediate !== null && dataOrImmediate !== undefined) {
       this.data[table] = dataOrImmediate;
-      immediate = Boolean(maybeImmediate) !== false; // default true
+      immediate = maybeImmediate !== false; // default true
     }
 
     const records = this.data[table];
@@ -634,6 +393,11 @@ class StorageEngine {
 
     if (!this.lastTableUpdates) this.lastTableUpdates = {};
     this.lastTableUpdates[table] = Date.now();
+
+    // If server persist is suppressed (during boot/initialization), do not fire cloud writes
+    if (this._suppressServerPersist) {
+      return true;
+    }
 
     // Secondary backup to local node server (debounced, non-blocking)
     if (this._autoPersistDebounce) clearTimeout(this._autoPersistDebounce);
@@ -843,7 +607,11 @@ class StorageEngine {
    */
   async handleRemoteManifestUpdate(manifest) {
     if (!manifest || typeof manifest !== 'object' || Object.keys(manifest).length === 0) return;
-    if (this._isHandlingRealtimeUpdate || this.isUserTyping()) return;
+    if (this._isHandlingRealtimeUpdate) return;
+    if (this.isUserTyping()) {
+      this._pendingRemoteManifest = { ...(this._pendingRemoteManifest || {}), ...manifest };
+      return;
+    }
     this._isHandlingRealtimeUpdate = true;
 
     try {
@@ -922,56 +690,38 @@ class StorageEngine {
       this.lastTableUpdates[tbl] = Date.now();
 
       if (Array.isArray(serverRecs[tbl])) {
-        if (serverRecs[tbl].length > 0) {
-          if (tbl === TABLE_NAMES.MACHINE_NAMES) {
-            const seen = new Set();
-            const cleanRecs = [];
-            const dupIds = new Set(Object.keys(duplicateIdMap));
-            serverRecs[tbl].forEach(m => {
-              if (m && m.name && !dupIds.has(m.id)) {
-                const norm = m.name.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
-                if (!seen.has(norm)) {
-                  seen.add(norm);
-                  cleanRecs.push(m);
-                }
+        if (tbl === TABLE_NAMES.MACHINE_NAMES) {
+          const seen = new Set();
+          const cleanRecs = [];
+          const dupIds = new Set(Object.keys(duplicateIdMap));
+          serverRecs[tbl].forEach(m => {
+            if (m && m.name && !dupIds.has(m.id)) {
+              const norm = m.name.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+              if (!seen.has(norm)) {
+                seen.add(norm);
+                cleanRecs.push(m);
               }
-            });
-            this.data[tbl] = cleanRecs;
-          } else if (tbl === TABLE_NAMES.MACHINES) {
-            const incoming = serverRecs[tbl] || [];
-            const hasMock = incoming.some(m => m && m.serialNumber && String(m.serialNumber).startsWith('JK-PM-'));
-            if (hasMock && (this.data[tbl]?.length >= 500)) {
-              console.warn('[Database Store] ⚠️ Blocked incoming mock machines from replacing real factory machines.');
-              return;
             }
-            const cleanMachines = incoming
-              .filter(m => !(m && m.serialNumber && String(m.serialNumber).startsWith('JK-PM-')))
-              .map(m => {
-                if (m && duplicateIdMap[m.machineNameId]) {
-                  return { ...m, machineNameId: duplicateIdMap[m.machineNameId] };
-                }
-                return m;
-              });
-            if (cleanMachines.length >= 500 || !this.data[tbl] || this.data[tbl].length === 0) {
-              this.data[tbl] = cleanMachines;
+          });
+          this.data[tbl] = cleanRecs;
+        } else if (tbl === TABLE_NAMES.MACHINES) {
+          const incoming = serverRecs[tbl] || [];
+          const cleanMachines = incoming.map(m => {
+            if (m && duplicateIdMap[m.machineNameId]) {
+              return { ...m, machineNameId: duplicateIdMap[m.machineNameId] };
             }
-          } else {
-            // Firestore / persistent database is the authoritative single source of truth
-            this.data[tbl] = serverRecs[tbl];
-          }
-
-          try {
-            localStorage.setItem(STORAGE_KEY_PREFIX + tbl, JSON.stringify(this.data[tbl]));
-          } catch (_) {}
-          updated = true;
-        } else if (Array.isArray(this.data[tbl]) && this.data[tbl].length > 0 && (tbl === TABLE_NAMES.RELOCATE_SESSIONS || tbl === TABLE_NAMES.RELOCATION_HISTORY || tbl === TABLE_NAMES.RELOCATION_APPROVALS)) {
-          // Allow empty arrays for session tables
-          this.data[tbl] = [];
-          try {
-            localStorage.setItem(STORAGE_KEY_PREFIX + tbl, JSON.stringify([]));
-          } catch (_) {}
-          updated = true;
+            return m;
+          });
+          this.data[tbl] = cleanMachines;
+        } else {
+          // Firestore / persistent database is the authoritative single source of truth
+          this.data[tbl] = serverRecs[tbl];
         }
+
+        try {
+          localStorage.setItem(STORAGE_KEY_PREFIX + tbl, JSON.stringify(this.data[tbl]));
+        } catch (_) {}
+        updated = true;
       } else if (serverRecs[tbl] && typeof serverRecs[tbl] === 'object' && !Array.isArray(serverRecs[tbl])) {
         // Handle object tables such as settings and homepage_config
         if (tbl === TABLE_NAMES.SETTINGS) {
@@ -1052,30 +802,20 @@ class StorageEngine {
     // 1. Google Cloud Firestore sync (Primary Single Source of Truth)
     try {
       const cloudData = await firebaseSync.fetchAllFromFirestore();
-      if (cloudData && typeof cloudData === 'object' && Object.keys(cloudData).length > 0) {
-        const hasCloudMachines = Array.isArray(cloudData[TABLE_NAMES.MACHINES]) && cloudData[TABLE_NAMES.MACHINES].length > 0;
-        if (hasCloudMachines) {
-          this._isCloudConnected = true;
+      if (cloudData && typeof cloudData === 'object' && !cloudData._isEmpty && Object.keys(cloudData).length > 0) {
+        this._isCloudConnected = true;
 
-          // Seed syncedDocVersions with server updateTimes to prevent immediately
-          // re-detecting our own startup write as a "remote change" during the first poll cycle
-          const updateTimes = cloudData._updateTimes || {};
-          for (const [tbl, ts] of Object.entries(updateTimes)) {
-            if (ts) this.syncedDocVersions.set(tbl, ts);
-          }
-
-          this.applyIncomingDatabaseRecords(cloudData, 'Google Cloud Firestore REST');
-          cloudLoadedSuccessfully = true;
-        } else if (Array.isArray(this.data[TABLE_NAMES.MACHINES]) && this.data[TABLE_NAMES.MACHINES].length > 0) {
-          console.log('[Firebase Sync] Cloud database is new, uploading initial factory records...');
-          firebaseSync.saveAllToFirestore(this.data).then(ok => {
-            if (ok) {
-              this._isCloudConnected = true;
-              this.updateStatusBadge('saved');
-            }
-          }).catch(() => {});
+        // Seed syncedDocVersions with server updateTimes to prevent immediately
+        // re-detecting our own startup write as a "remote change" during the first poll cycle
+        const updateTimes = cloudData._updateTimes || {};
+        for (const [tbl, ts] of Object.entries(updateTimes)) {
+          if (ts) this.syncedDocVersions.set(tbl, ts);
         }
-      } else if (Array.isArray(this.data[TABLE_NAMES.MACHINES]) && this.data[TABLE_NAMES.MACHINES].length > 0) {
+
+        this.applyIncomingDatabaseRecords(cloudData, 'Google Cloud Firestore REST');
+        cloudLoadedSuccessfully = true;
+      } else if (cloudData && cloudData._isEmpty === true && Array.isArray(this.data[TABLE_NAMES.MACHINES]) && this.data[TABLE_NAMES.MACHINES].length > 0) {
+        console.log('[Firebase Sync] Cloud database is newly created and empty. Seeding initial factory records...');
         firebaseSync.saveAllToFirestore(this.data).then(ok => {
           if (ok) {
             this._isCloudConnected = true;
@@ -1396,6 +1136,98 @@ class StorageEngine {
     }
 
     return removed;
+  }
+
+  /**
+   * Confirmed mutation methods: guarantees Firestore write confirmation (HTTP 200)
+   * If Firebase write fails, state is automatically rolled back and CloudSaveError is thrown.
+   */
+  async insertConfirmed(tableName, item) {
+    if (!this.data[tableName]) this.data[tableName] = [];
+    if (!item.id) {
+      item.id = `${tableName.substring(0, 3)}-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+    }
+    item.createdAt = item.createdAt || new Date().toISOString();
+    item.updatedAt = new Date().toISOString();
+
+    const snapshot = JSON.parse(JSON.stringify(this.data[tableName]));
+    this.data[tableName].push(item);
+    if (tableName === TABLE_NAMES.MACHINES) this.rebuildAllIndexes();
+
+    const ok = await this.saveTable(tableName, true);
+    if (!ok) {
+      this.data[tableName] = snapshot;
+      if (tableName === TABLE_NAMES.MACHINES) this.rebuildAllIndexes();
+      try {
+        localStorage.setItem(STORAGE_KEY_PREFIX + tableName, JSON.stringify(snapshot));
+      } catch (_) {}
+      throw new CloudSaveError(`❌ Cloud Save Failed: Firebase write for '${tableName}' was not confirmed. Check your connection.`);
+    }
+    return item;
+  }
+
+  async updateConfirmed(tableName, id, updates) {
+    const table = this.data[tableName] || [];
+    const index = table.findIndex(item => item.id === id);
+    if (index === -1) return null;
+
+    const oldItem = JSON.parse(JSON.stringify(table[index]));
+    table[index] = {
+      ...table[index],
+      ...updates,
+      updatedAt: new Date().toISOString()
+    };
+    if (tableName === TABLE_NAMES.MACHINES) this.rebuildAllIndexes();
+
+    const ok = await this.saveTable(tableName, true);
+    if (!ok) {
+      table[index] = oldItem;
+      if (tableName === TABLE_NAMES.MACHINES) this.rebuildAllIndexes();
+      try {
+        localStorage.setItem(STORAGE_KEY_PREFIX + tableName, JSON.stringify(table));
+      } catch (_) {}
+      throw new CloudSaveError(`❌ Cloud Save Failed: Firebase write for '${tableName}' was not confirmed. Check your connection.`);
+    }
+    return table[index];
+  }
+
+  async deleteConfirmed(tableName, id) {
+    const table = this.data[tableName] || [];
+    const index = table.findIndex(item => item.id === id);
+    if (index === -1) return false;
+
+    const removed = table[index];
+    const snapshot = JSON.parse(JSON.stringify(table));
+    table.splice(index, 1);
+    if (tableName === TABLE_NAMES.MACHINES) this.rebuildAllIndexes();
+
+    const ok = await this.saveTable(tableName, true);
+    if (!ok) {
+      this.data[tableName] = snapshot;
+      if (tableName === TABLE_NAMES.MACHINES) this.rebuildAllIndexes();
+      try {
+        localStorage.setItem(STORAGE_KEY_PREFIX + tableName, JSON.stringify(snapshot));
+      } catch (_) {}
+      throw new CloudSaveError(`❌ Cloud Save Failed: Firebase write for '${tableName}' was not confirmed. Check your connection.`);
+    }
+    return removed;
+  }
+
+  async setTableConfirmed(tableName, items) {
+    const snapshot = JSON.parse(JSON.stringify(this.data[tableName] || []));
+    this.data[tableName] = items || [];
+    if (tableName === TABLE_NAMES.MACHINES) this.rebuildAllIndexes();
+
+    const ok = await this.saveTable(tableName, true);
+    if (!ok) {
+      this.data[tableName] = snapshot;
+      if (tableName === TABLE_NAMES.MACHINES) this.rebuildAllIndexes();
+      try {
+        localStorage.setItem(STORAGE_KEY_PREFIX + tableName, JSON.stringify(snapshot));
+      } catch (_) {}
+      throw new CloudSaveError(`❌ Cloud Save Failed: Firebase write for '${tableName}' was not confirmed. Check your connection.`);
+    }
+    return this.data[tableName];
   }
 
   // Fast Index Lookups

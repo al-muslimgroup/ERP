@@ -825,7 +825,7 @@ class AuthService {
     ) || null;
   }
 
-  createPreset(presetData) {
+  async createPreset(presetData) {
     if (!this.canManageRoles()) {
       throw new Error('Access Denied: Only Administrators can create Permission Presets.');
     }
@@ -856,7 +856,12 @@ class AuthService {
     };
 
     presets.push(newPreset);
-    storage.setTable(TABLE_NAMES.PERMISSION_PRESETS, presets);
+    const ok = await storage.saveTable(TABLE_NAMES.PERMISSION_PRESETS, presets, true);
+    if (!ok) {
+      const idx = presets.findIndex(p => p.id === newPreset.id);
+      if (idx !== -1) presets.splice(idx, 1);
+      throw new CloudSaveError('❌ Cloud Save Failed: Preset creation was not confirmed by the cloud.');
+    }
 
     auditService.log(
       'CONFIG',
@@ -868,7 +873,7 @@ class AuthService {
     return newPreset;
   }
 
-  updatePreset(presetId, updates, applyToAssignedUsers = false) {
+  async updatePreset(presetId, updates, applyToAssignedUsers = false) {
     if (!this.canManageRoles()) {
       throw new Error('Access Denied: Only Administrators can modify Permission Presets.');
     }
@@ -877,7 +882,7 @@ class AuthService {
     const idx = presets.findIndex(p => p.id === presetId || p.code === presetId);
     if (idx === -1) throw new Error('Preset not found.');
 
-    const oldPreset = presets[idx];
+    const oldPreset = JSON.parse(JSON.stringify(presets[idx]));
     const updatedPreset = {
       ...oldPreset,
       ...updates,
@@ -887,7 +892,11 @@ class AuthService {
     };
 
     presets[idx] = updatedPreset;
-    storage.setTable(TABLE_NAMES.PERMISSION_PRESETS, presets);
+    const ok = await storage.saveTable(TABLE_NAMES.PERMISSION_PRESETS, presets, true);
+    if (!ok) {
+      presets[idx] = oldPreset;
+      throw new CloudSaveError('❌ Cloud Save Failed: Preset update was not confirmed by the cloud.');
+    }
 
     let affectedCount = 0;
     // Batch update assigned users if requested
@@ -911,6 +920,10 @@ class AuthService {
         }
       });
 
+      if (affectedCount > 0) {
+        await storage.saveTable(TABLE_NAMES.USERS, true);
+      }
+
       if (this.currentUser && (this.currentUser.presetId === updatedPreset.id || this.currentUser.presetId === updatedPreset.code)) {
         this.currentUser = storage.getItem(TABLE_NAMES.USERS, this.currentUser.id);
       }
@@ -926,7 +939,7 @@ class AuthService {
     return { preset: updatedPreset, affectedUsersCount: affectedCount };
   }
 
-  deletePreset(presetId) {
+  async deletePreset(presetId) {
     if (!this.canManageRoles()) {
       throw new Error('Access Denied: Only Administrators can delete Permission Presets.');
     }
@@ -941,16 +954,24 @@ class AuthService {
 
     // Detach any assigned users to CUSTOM
     const users = this.getAllUsers();
+    let detachedCount = 0;
     users.forEach(u => {
       if (u.presetId === preset.id || u.presetId === preset.code) {
         u.presetId = 'CUSTOM';
         u.presetName = 'Custom User';
         storage.update(TABLE_NAMES.USERS, u.id, u);
+        detachedCount++;
       }
     });
 
-    presets = presets.filter(p => p.id !== preset.id && p.code !== preset.code);
-    storage.setTable(TABLE_NAMES.PERMISSION_PRESETS, presets);
+    const newPresets = presets.filter(p => p.id !== preset.id && p.code !== preset.code);
+    const ok = await storage.saveTable(TABLE_NAMES.PERMISSION_PRESETS, newPresets, true);
+    if (!ok) {
+      throw new CloudSaveError('❌ Cloud Save Failed: Preset deletion was not confirmed by the cloud.');
+    }
+    if (detachedCount > 0) {
+      await storage.saveTable(TABLE_NAMES.USERS, true);
+    }
 
     auditService.log(
       'CONFIG',
@@ -962,12 +983,12 @@ class AuthService {
     return true;
   }
 
-  duplicatePreset(presetId, newName = null) {
+  async duplicatePreset(presetId, newName = null) {
     const preset = this.getPresetById(presetId);
     if (!preset) throw new Error('Source preset not found.');
 
     const name = (newName || `${preset.name} (Copy)`).trim();
-    return this.createPreset({
+    return await this.createPreset({
       name: name,
       code: `${preset.code}_COPY`,
       description: `Duplicated from ${preset.name}`,
@@ -979,12 +1000,13 @@ class AuthService {
     });
   }
 
-  resetToDefaultPresets() {
+  async resetToDefaultPresets() {
     if (!this.canManageRoles()) {
       throw new Error('Access Denied: Only Administrators can reset Permission Presets.');
     }
     const defaultPresets = JSON.parse(JSON.stringify(DEFAULT_PERMISSION_PRESETS || []));
-    storage.setTable(TABLE_NAMES.PERMISSION_PRESETS, defaultPresets);
+    const ok = await storage.saveTable(TABLE_NAMES.PERMISSION_PRESETS, defaultPresets, true);
+    if (!ok) throw new CloudSaveError('❌ Cloud Save Failed: Preset reset was not confirmed by the cloud.');
     auditService.log(
       'CONFIG',
       'ADMIN',
@@ -994,11 +1016,11 @@ class AuthService {
     return defaultPresets;
   }
 
-  resetToDemoPresets() {
-    return this.resetToDefaultPresets();
+  async resetToDemoPresets() {
+    return await this.resetToDefaultPresets();
   }
 
-  assignPresetToUser(userId, presetId, syncScope = true) {
+  async assignPresetToUser(userId, presetId, syncScope = true) {
     if (!this.canManageUsers()) {
       throw new Error('Access Denied: You do not have permission to assign presets.');
     }
@@ -1012,6 +1034,8 @@ class AuthService {
         presetName: 'Custom User',
         updatedAt: new Date().toISOString()
       });
+      const ok = await storage.saveTable(TABLE_NAMES.USERS, true);
+      if (!ok) throw new CloudSaveError('❌ Cloud Save Failed: User preset assignment was not confirmed by the cloud.');
       if (this.currentUser?.id === userId) this.currentUser = updated;
       return updated;
     }
@@ -1039,6 +1063,9 @@ class AuthService {
     }
 
     const updated = storage.update(TABLE_NAMES.USERS, userId, updates);
+    const ok = await storage.saveTable(TABLE_NAMES.USERS, true);
+    if (!ok) throw new CloudSaveError('❌ Cloud Save Failed: User preset assignment was not confirmed by the cloud.');
+
     if (this.currentUser?.id === userId) this.currentUser = updated;
 
     auditService.log(
@@ -1051,15 +1078,37 @@ class AuthService {
     return updated;
   }
 
-  assignPresetToUsers(userIds, presetId, syncScope = true) {
+  async assignPresetToUsers(userIds, presetId, syncScope = true) {
     if (!Array.isArray(userIds) || userIds.length === 0) return 0;
+    const preset = presetId === 'CUSTOM' ? { id: 'CUSTOM', name: 'Custom User' } : this.getPresetById(presetId);
+    if (!preset) throw new Error('Permission Preset not found.');
+
     let count = 0;
     userIds.forEach(uid => {
-      try {
-        this.assignPresetToUser(uid, presetId, syncScope);
+      const user = storage.getItem(TABLE_NAMES.USERS, uid);
+      if (user) {
+        const updates = {
+          presetId: preset.id,
+          presetName: preset.name,
+          updatedAt: new Date().toISOString()
+        };
+        if (preset.permissions) {
+          updates.permissions = JSON.parse(JSON.stringify(preset.permissions));
+        }
+        if (preset.code === 'SUPER_ADMIN') updates.role = 'SUPER_ADMIN';
+        else if (preset.code === 'ADMIN') updates.role = 'ADMIN';
+        else if (preset.code) updates.role = 'USER';
+
+        if (syncScope && preset.scope) {
+          updates.assignedScope = JSON.parse(JSON.stringify(preset.scope));
+        }
+        storage.update(TABLE_NAMES.USERS, uid, updates);
         count++;
-      } catch (_) {}
+      }
     });
+
+    const ok = await storage.saveTable(TABLE_NAMES.USERS, true);
+    if (!ok) throw new CloudSaveError('❌ Cloud Save Failed: Batch preset assignment was not confirmed by the cloud.');
     return count;
   }
 
@@ -1278,7 +1327,7 @@ class AuthService {
   /**
    * Change username of the currently logged-in user or specified user (Admin)
    */
-  changeUsername(newUsername, userId = null) {
+  async changeUsername(newUsername, userId = null) {
     const targetId = userId || this.currentUser?.id;
     if (!targetId) throw new Error('No user session active.');
 
@@ -1305,6 +1354,9 @@ class AuthService {
       updatedAt: new Date().toISOString()
     });
 
+    const ok = await storage.saveTable(TABLE_NAMES.USERS, true);
+    if (!ok) throw new CloudSaveError('❌ Cloud Save Failed: Username change was not confirmed by the cloud.');
+
     if (this.currentUser?.id === targetId) {
       this.currentUser = updated;
       localStorage.setItem('al_muslim_active_user_id', updated.id);
@@ -1329,7 +1381,7 @@ class AuthService {
   /**
    * Update Self Profile (Name, Email, Username, Phone)
    */
-  updateProfile(profileData) {
+  async updateProfile(profileData) {
     if (!this.currentUser) throw new Error('No active user session.');
     const userId = this.currentUser.id;
 
@@ -1368,6 +1420,9 @@ class AuthService {
       ...updates,
       updatedAt: new Date().toISOString()
     });
+
+    const ok = await storage.saveTable(TABLE_NAMES.USERS, true);
+    if (!ok) throw new CloudSaveError('❌ Cloud Save Failed: Profile update was not confirmed by the cloud.');
 
     this.currentUser = updated;
     localStorage.setItem('al_muslim_active_user_id', updated.id);
@@ -1468,7 +1523,7 @@ class AuthService {
     return newStatus;
   }
 
-  resetPassword(userId, newPassword) {
+  async resetPassword(userId, newPassword) {
     if (!this.canManageUsers()) {
       throw new Error('Access Denied: You do not have permission to reset passwords.');
     }
@@ -1488,6 +1543,9 @@ class AuthService {
       updatedAt: new Date().toISOString()
     });
 
+    const ok = await storage.saveTable(TABLE_NAMES.USERS, true);
+    if (!ok) throw new CloudSaveError('❌ Cloud Save Failed: Password reset was not confirmed by the cloud.');
+
     auditService.log(
       'PASSWORD_RESET_ADMIN',
       'SECURITY',
@@ -1498,7 +1556,7 @@ class AuthService {
     return true;
   }
 
-  changePassword(currentPassword, newPassword) {
+  async changePassword(currentPassword, newPassword) {
     if (!this.currentUser) throw new Error('User not authenticated.');
     
     // Verify current password with cryptoService
@@ -1517,6 +1575,9 @@ class AuthService {
       mustChangePassword: false,
       updatedAt: new Date().toISOString()
     });
+
+    const ok = await storage.saveTable(TABLE_NAMES.USERS, true);
+    if (!ok) throw new CloudSaveError('❌ Cloud Save Failed: Password change was not confirmed by the cloud.');
 
     this.currentUser.password = hashedPassword;
     this.currentUser.mustChangePassword = false;
@@ -1639,7 +1700,7 @@ class AuthService {
     };
   }
 
-  updateUserScope(userId, assignedScope) {
+  async updateUserScope(userId, assignedScope) {
     if (!this.canManageUsers() && !this.isSuperAdmin()) {
       throw new Error('Access Denied: You do not have permission to update user location access scope.');
     }
@@ -1659,6 +1720,9 @@ class AuthService {
       assignedScope: cleanScope,
       updatedAt: new Date().toISOString()
     });
+
+    const ok = await storage.saveTable(TABLE_NAMES.USERS, true);
+    if (!ok) throw new CloudSaveError('❌ Cloud Save Failed: User location scope update was not confirmed by the cloud.');
 
     if (this.currentUser?.id === userId) {
       this.currentUser = updated;

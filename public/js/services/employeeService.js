@@ -539,21 +539,8 @@ class EmployeeService {
   }
 
   _ensureSeedData() {
-    let list = storage.getTable(TABLE_NAMES.EMPLOYEES) || [];
-    if (list.length === 0) {
-      storage.saveTable(TABLE_NAMES.EMPLOYEES, JSON.parse(JSON.stringify(INITIAL_SEED_EMPLOYEES)));
-    } else {
-      let changed = false;
-      INITIAL_SEED_EMPLOYEES.forEach(seed => {
-        if (!list.some(e => e.cardNumber === seed.cardNumber || e.id === seed.id || (seed.name && e.name && e.name.toLowerCase() === seed.name.toLowerCase()))) {
-          list.push(JSON.parse(JSON.stringify(seed)));
-          changed = true;
-        }
-      });
-      if (changed) {
-        storage.saveTable(TABLE_NAMES.EMPLOYEES, list);
-      }
-    }
+    // Single source of truth is Firestore and StorageEngine.
+    // Never resurrect deleted employees or overwrite user data with mock seeds.
   }
 
   /**

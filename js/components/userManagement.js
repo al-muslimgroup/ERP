@@ -2752,11 +2752,15 @@ export function initUserManagementEvents() {
   }
 
   // Reset to Factory Default Presets Handlers
-  const handleResetDefaultPresets = () => {
+  const handleResetDefaultPresets = async () => {
     if (confirm('Are you sure you want to restore factory default permission presets?')) {
-      authService.resetToDefaultPresets();
-      notificationService.success('Factory default permission presets restored successfully!');
-      refreshView();
+      try {
+        await authService.resetToDefaultPresets();
+        notificationService.success('Factory default permission presets restored successfully!');
+        refreshView();
+      } catch (err) {
+        notificationService.error('Failed to reset presets: ' + err.message);
+      }
     }
   };
 
@@ -2883,11 +2887,11 @@ export function initUserManagementEvents() {
 
   // 6f. Duplicate Preset Profile
   document.querySelectorAll('.btn-preset-duplicate').forEach(btn => {
-    btn.addEventListener('click', (e) => {
+    btn.addEventListener('click', async (e) => {
       e.stopPropagation();
       const id = btn.getAttribute('data-id');
       try {
-        const cloned = authService.duplicatePreset(id);
+        const cloned = await authService.duplicatePreset(id);
         notificationService.success(`Created duplicate preset profile "${cloned.name}".`);
         refreshView();
       } catch (err) {
@@ -2916,7 +2920,7 @@ export function initUserManagementEvents() {
       });
       if (confirmed) {
         try {
-          authService.deletePreset(id);
+          await authService.deletePreset(id);
           notificationService.success(`Preset "${preset.name}" has been deleted.`);
           refreshView();
         } catch (err) {
@@ -2942,11 +2946,11 @@ export function initUserManagementEvents() {
 
   // 8. Toggle User Active/Inactive
   document.querySelectorAll('.btn-action-toggle-status').forEach(btn => {
-    btn.addEventListener('click', (e) => {
+    btn.addEventListener('click', async (e) => {
       e.stopPropagation();
       const id = btn.getAttribute('data-id');
       try {
-        const newStatus = authService.toggleUserStatus(id);
+        const newStatus = await authService.toggleUserStatus(id);
         notificationService.success(`User status changed to ${newStatus}`);
         refreshView();
       } catch (err) {
@@ -2973,7 +2977,7 @@ export function initUserManagementEvents() {
 
       if (confirmed) {
         try {
-          authService.deleteUser(id);
+          await authService.deleteUser(id);
           notificationService.success(`User '${user.name}' has been deleted.`);
           refreshView();
         } catch (err) {
@@ -3067,7 +3071,7 @@ export function initUserManagementEvents() {
     // 12. Submit Add User Form
     const formAdd = modalLayer.querySelector('#form-add-new-user');
     if (formAdd) {
-      formAdd.addEventListener('submit', (e) => {
+      formAdd.addEventListener('submit', async (e) => {
         e.preventDefault();
         const name = modalLayer.querySelector('#add-user-fullname')?.value?.trim();
         const email = modalLayer.querySelector('#add-user-email')?.value?.trim();
@@ -3078,7 +3082,7 @@ export function initUserManagementEvents() {
         const presetId = modalLayer.querySelector('#add-user-preset')?.value;
 
         try {
-          const newUser = authService.createUser({
+          const newUser = await authService.createUser({
             name,
             email,
             username,
@@ -3098,7 +3102,7 @@ export function initUserManagementEvents() {
     // 13. Submit Edit User Form
     const formEdit = modalLayer.querySelector('#form-edit-user');
     if (formEdit && targetUser) {
-      formEdit.addEventListener('submit', (e) => {
+      formEdit.addEventListener('submit', async (e) => {
         e.preventDefault();
         const name = modalLayer.querySelector('#edit-user-fullname')?.value?.trim();
         const email = modalLayer.querySelector('#edit-user-email')?.value?.trim();
@@ -3108,7 +3112,7 @@ export function initUserManagementEvents() {
         const presetId = modalLayer.querySelector('#edit-user-preset')?.value;
 
         try {
-          authService.updateUser(targetUser.id, {
+          await authService.updateUser(targetUser.id, {
             name,
             email,
             username,
@@ -3139,7 +3143,7 @@ export function initUserManagementEvents() {
         }
 
         try {
-          authService.updateUser(targetUser.id, { password: newPwd });
+          await authService.updateUser(targetUser.id, { password: newPwd });
 
           if (sendEmail && targetUser.email && emailService.isEmailConfigured()) {
             try {
@@ -3347,7 +3351,7 @@ export function initUserManagementEvents() {
     // 21. Save Permissions Button
     const btnSavePerms = modalLayer.querySelector('#btn-save-user-perms');
     if (btnSavePerms && targetUser) {
-      btnSavePerms.addEventListener('click', () => {
+      btnSavePerms.addEventListener('click', async () => {
         try {
           const finalPerms = {};
           modalLayer.querySelectorAll('.chk-perm-action').forEach(c => {
@@ -3359,7 +3363,7 @@ export function initUserManagementEvents() {
             }
           });
 
-          authService.updateUserPermissions(targetUser.id, finalPerms);
+          await authService.updateUserPermissions(targetUser.id, finalPerms);
           notificationService.success(`Action permissions for '${targetUser.name}' saved successfully!`);
           closeModal(true);
         } catch (err) {
@@ -3599,9 +3603,9 @@ export function initUserManagementEvents() {
     // 22e. Save Location Scope Button
     const btnSaveScope = modalLayer.querySelector('#btn-save-user-scope');
     if (btnSaveScope && targetUser) {
-      btnSaveScope.addEventListener('click', () => {
+      btnSaveScope.addEventListener('click', async () => {
         try {
-          authService.updateUserScope(targetUser.id, editingScope);
+          await authService.updateUserScope(targetUser.id, editingScope);
           notificationService.success(`Location access scope for '${targetUser.name}' saved successfully!`);
           closeModal(true);
         } catch (err) {
@@ -3617,7 +3621,7 @@ export function initUserManagementEvents() {
     // 23a. Save Preset Settings (Create or Update)
     const btnSavePreset = modalLayer.querySelector('#btn-save-preset-settings');
     if (btnSavePreset) {
-      btnSavePreset.addEventListener('click', () => {
+      btnSavePreset.addEventListener('click', async () => {
         const name = modalLayer.querySelector('#preset-name-input')?.value?.trim();
         const accessLevel = modalLayer.querySelector('#preset-access-level-input')?.value?.trim() || 'Module Access';
         const description = modalLayer.querySelector('#preset-description-input')?.value?.trim() || '';
@@ -3642,7 +3646,7 @@ export function initUserManagementEvents() {
 
         try {
           if (targetPreset) {
-            const result = authService.updatePreset(targetPreset.id, {
+            const result = await authService.updatePreset(targetPreset.id, {
               name,
               accessLevel,
               description,
@@ -3659,7 +3663,7 @@ export function initUserManagementEvents() {
             }
             notificationService.success(msg);
           } else {
-            authService.createPreset({
+            await authService.createPreset({
               name,
               accessLevel,
               description,
@@ -3719,10 +3723,10 @@ export function initUserManagementEvents() {
     // 23c. Confirm Batch Assign Users to Preset
     const btnConfirmAssign = modalLayer.querySelector('#btn-confirm-assign-users');
     if (btnConfirmAssign && targetPreset) {
-      btnConfirmAssign.addEventListener('click', () => {
+      btnConfirmAssign.addEventListener('click', async () => {
         const syncScope = modalLayer.querySelector('#chk-sync-scope-to-users')?.checked ?? true;
         try {
-          const count = authService.assignPresetToUsers(selectedUserIdsForPreset, targetPreset.id, syncScope);
+          const count = await authService.assignPresetToUsers(selectedUserIdsForPreset, targetPreset.id, syncScope);
           notificationService.success(`Assigned profile "${targetPreset.name}" to ${count} user account(s).`);
           closeModal(true);
         } catch (err) {
@@ -3734,7 +3738,7 @@ export function initUserManagementEvents() {
     // 23d. Confirm 1-Click Quick Preset Assignment to User
     const btnConfirmQuickPreset = modalLayer.querySelector('#btn-confirm-quick-preset');
     if (btnConfirmQuickPreset && targetUser) {
-      btnConfirmQuickPreset.addEventListener('click', () => {
+      btnConfirmQuickPreset.addEventListener('click', async () => {
         const choice = modalLayer.querySelector('input[name="quick-preset-choice"]:checked')?.value;
         const syncScope = modalLayer.querySelector('#chk-quick-preset-sync-scope')?.checked ?? true;
         if (!choice) {
@@ -3742,7 +3746,7 @@ export function initUserManagementEvents() {
           return;
         }
         try {
-          authService.assignPresetToUser(targetUser.id, choice, syncScope);
+          await authService.assignPresetToUser(targetUser.id, choice, syncScope);
           const p = authService.getPresetById(choice);
           notificationService.success(`Assigned profile "${p ? p.name : 'Custom User'}" to ${targetUser.name}!`);
           closeModal(true);

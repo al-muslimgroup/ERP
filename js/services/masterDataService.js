@@ -750,7 +750,7 @@ class MasterDataService {
     return updated;
   }
 
-  createFloorsBatch(unitId, namesList, building = 'Main Building') {
+  async createFloorsBatch(unitId, namesList, building = 'Main Building') {
     if (!authService.isAdmin()) throw new Error('Admin authorization required.');
     if (!unitId) throw new Error('Parent Factory/Unit is required.');
     const names = Array.isArray(namesList) 
@@ -822,6 +822,10 @@ class MasterDataService {
         });
       });
       storage.insertMany(TABLE_NAMES.LINES, newLines);
+      await Promise.all([
+        storage.saveTable(TABLE_NAMES.FLOORS, true),
+        storage.saveTable(TABLE_NAMES.LINES, true)
+      ]);
       auditService.log('MASTER_FLOOR_BATCH_CREATED', 'FLOOR', unitId, `Batch created ${newFloors.length} Floors with initial lines`);
       this._broadcastChange();
     }
@@ -886,7 +890,7 @@ class MasterDataService {
     return updated;
   }
 
-  createLinesBatch(floorId, namesList, supervisor = '') {
+  async createLinesBatch(floorId, namesList, supervisor = '') {
     if (!authService.isAdmin()) throw new Error('Admin authorization required.');
     if (!floorId) throw new Error('Parent Floor is required.');
     const floor = this.getFloorById(floorId);
@@ -922,6 +926,7 @@ class MasterDataService {
 
     if (newLines.length > 0) {
       storage.insertMany(TABLE_NAMES.LINES, newLines);
+      await storage.saveTable(TABLE_NAMES.LINES, true);
       auditService.log('MASTER_LINE_BATCH_CREATED', 'LINE', floorId, `Batch created ${newLines.length} Lines for Floor ${floor?.name || floorId} (Skipped ${skippedLines.length} duplicates)`);
       this._broadcastChange();
     }
@@ -929,7 +934,7 @@ class MasterDataService {
     return newLines;
   }
 
-  createLinesForUnitBatch(unitId, namesList, floorName = 'Ground Floor') {
+  async createLinesForUnitBatch(unitId, namesList, floorName = 'Ground Floor') {
     if (!authService.isAdmin()) throw new Error('Admin authorization required.');
     if (!unitId) throw new Error('Parent Factory/Unit is required.');
 
@@ -943,21 +948,21 @@ class MasterDataService {
       targetFloor = floors[0];
     }
     if (!targetFloor) {
-      targetFloor = this.createFloor({
+      targetFloor = await this.createFloor({
         unitId,
         name: floorName || 'Ground Floor',
         building: 'Main Building'
       });
     }
 
-    return this.createLinesBatch(targetFloor.id, namesList);
+    return await this.createLinesBatch(targetFloor.id, namesList);
   }
 
   /**
    * 1-Click Multi-Floor System: Batch create lines across ALL floors in a unit simultaneously.
    * Each floor receives its own proper {FLOOR_CODE}-{LINE} naming (e.g. JA-A, BG-A, CH-A, SU-A...)
    */
-  createLinesBatchForAllFloors(unitId, namesList, supervisor = '') {
+  async createLinesBatchForAllFloors(unitId, namesList, supervisor = '') {
     if (!authService.isAdmin()) throw new Error('Admin authorization required.');
     if (!unitId) throw new Error('Parent Factory/Unit is required.');
 
@@ -977,13 +982,13 @@ class MasterDataService {
     let totalSkipped = 0;
     const results = [];
 
-    floors.forEach(floor => {
-      const created = this.createLinesBatch(floor.id, rawNames, supervisor);
+    for (const floor of floors) {
+      const created = await this.createLinesBatch(floor.id, rawNames, supervisor);
       totalCreated += created.length;
       const skippedCount = created.skippedLines ? created.skippedLines.length : 0;
       totalSkipped += skippedCount;
       results.push({ floor, count: created.length, skipped: created.skippedLines || [] });
-    });
+    }
 
     auditService.log('MASTER_LINE_ALL_FLOORS_BATCH_CREATED', 'UNIT', unitId, `Batch created ${totalCreated} Lines across ${floors.length} Floors (Skipped ${totalSkipped} duplicates)`);
     this._broadcastChange();
@@ -991,7 +996,7 @@ class MasterDataService {
   }
 
   // --- 5. MACHINE NAME / TYPE ---
-  createMachineName(data) {
+  async createMachineName(data) {
     if (!authService.isAdmin()) throw new Error('Admin authorization required.');
     if (!data.name || !data.name.trim()) throw new Error('Machine Name is required.');
     const cleanName = data.name.trim();
@@ -1027,6 +1032,11 @@ class MasterDataService {
       description: data.description?.trim() || '',
       status: data.status || 'ACTIVE'
     });
+    const ok = await storage.saveTable(TABLE_NAMES.MACHINE_NAMES, true);
+    if (!ok) {
+      storage.delete(TABLE_NAMES.MACHINE_NAMES, created.id);
+      throw new CloudSaveError('❌ Cloud Save Failed: Machine Name creation not confirmed.');
+    }
     auditService.log('MASTER_MACHINENAME_CREATED', 'MACHINE_NAME', created.id, `Created Machine Name: ${created.name}`);
     this._broadcastChange();
     return created;
@@ -1159,7 +1169,7 @@ class MasterDataService {
     return { deleted: true, message: `'${item.name}' was successfully deleted.` };
   }
 
-  bulkToggleStatus(type, ids, targetStatus) {
+  async bulkToggleStatus(type, ids, targetStatus) {
     if (!authService.isAdmin()) throw new Error('Admin authorization required.');
     const table = this._getTableForType(type);
     let count = 0;
@@ -1167,15 +1177,16 @@ class MasterDataService {
       storage.update(table, id, { status: targetStatus });
       count++;
     });
+    await storage.saveTable(table, true);
     auditService.log('MASTER_BULK_STATUS', type.toUpperCase(), `${count} items`, `Bulk set status to ${targetStatus}`);
     this._broadcastChange();
     return count;
   }
 
-  bulkDelete(type, ids, force = false) {
+  async bulkDelete(type, ids, force = false) {
     if (!authService.isAdmin()) throw new Error('Admin authorization required.');
     if (force) {
-      return this.bulkCascadeDelete(type, ids);
+      return await this.bulkCascadeDelete(type, ids);
     }
     const table = this._getTableForType(type);
     let deletedCount = 0;
@@ -1191,6 +1202,7 @@ class MasterDataService {
         deletedCount++;
       }
     });
+    await storage.saveTable(table, true);
 
     auditService.log('MASTER_BULK_DELETE', type.toUpperCase(), `${ids.length} items`, `Bulk processed: ${deletedCount} removed, ${deactivatedCount} deactivated`);
     this._broadcastChange();
