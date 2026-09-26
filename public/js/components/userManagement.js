@@ -843,8 +843,10 @@ export function renderUserManagement() {
         </div>
       `}
 
-      <!-- Modals Container -->
-      ${renderActiveModalHtml()}
+      <!-- Modals Container (Isolated Layer for Zero Screen Jump) -->
+      <div id="user-modal-layer">
+        ${renderActiveModalHtml()}
+      </div>
 
     </div>
   `;
@@ -2467,13 +2469,64 @@ export function initUserManagementEvents() {
     requestAnimationFrame(restore);
   };
 
-  const closeModal = () => {
+  let bindUserModalEvents = null;
+
+  const updateUserModalLayer = () => {
+    let modalLayer = document.getElementById('user-modal-layer');
+    if (!modalLayer) {
+      const view = document.getElementById('main-view-container');
+      if (view) {
+        modalLayer = document.createElement('div');
+        modalLayer.id = 'user-modal-layer';
+        view.appendChild(modalLayer);
+      }
+    }
+    if (modalLayer) {
+      // Capture inner modal scroll positions before updating
+      const modalWrap = modalLayer.querySelector('.modal-card, .modal-dialog, .modal-body');
+      const modalY = modalWrap ? modalWrap.scrollTop : 0;
+      const modalX = modalWrap ? modalWrap.scrollLeft : 0;
+      const matrixEl = modalLayer.querySelector('.permissions-matrix-scroll-wrap');
+      const matrixY = matrixEl ? matrixEl.scrollTop : 0;
+      const unitsEl = modalLayer.querySelector('#scope-units-scroll-list');
+      const unitsY = unitsEl ? unitsEl.scrollTop : 0;
+      const floorsEl = modalLayer.querySelector('#scope-floors-scroll-list');
+      const floorsY = floorsEl ? floorsEl.scrollTop : 0;
+      const linesEl = modalLayer.querySelector('#scope-lines-scroll-list');
+      const linesY = linesEl ? linesEl.scrollTop : 0;
+
+      modalLayer.innerHTML = renderActiveModalHtml();
+      if (typeof bindUserModalEvents === 'function') {
+        bindUserModalEvents();
+      }
+
+      // Restore inner modal scroll positions
+      const newModalWrap = modalLayer.querySelector('.modal-card, .modal-dialog, .modal-body');
+      if (newModalWrap && modalY > 0) {
+        newModalWrap.scrollTop = modalY;
+        newModalWrap.scrollLeft = modalX;
+      }
+      const newMatrix = modalLayer.querySelector('.permissions-matrix-scroll-wrap');
+      if (newMatrix && matrixY > 0) newMatrix.scrollTop = matrixY;
+      const newUnits = modalLayer.querySelector('#scope-units-scroll-list');
+      if (newUnits && unitsY > 0) newUnits.scrollTop = unitsY;
+      const newFloors = modalLayer.querySelector('#scope-floors-scroll-list');
+      if (newFloors && floorsY > 0) newFloors.scrollTop = floorsY;
+      const newLines = modalLayer.querySelector('#scope-lines-scroll-list');
+      if (newLines && linesY > 0) newLines.scrollTop = linesY;
+    }
+  };
+
+  const closeModal = (shouldRefreshTable = false) => {
     activeModalType = null;
     targetUser = null;
     targetPreset = null;
     editingPermissions = {};
     selectedUserIdsForPreset = [];
-    refreshView();
+    updateUserModalLayer();
+    if (shouldRefreshTable) {
+      refreshView();
+    }
   };
 
   // 1. Search filter
@@ -2512,18 +2565,18 @@ export function initUserManagementEvents() {
     });
   }
 
-  // 4. Open Add User Modal
+  // 4. Open Add User Modal (In-place, Zero-Jump)
   const btnOpenAdd = document.getElementById('btn-open-add-user-modal');
   if (btnOpenAdd) {
     btnOpenAdd.addEventListener('click', (e) => {
       e.stopPropagation();
       activeModalType = 'ADD_USER';
       targetUser = null;
-      refreshView();
+      updateUserModalLayer();
     });
   }
 
-  // 4b. Open Create Preset Modal
+  // 4b. Open Create Preset Modal (In-place, Zero-Jump)
   const handleOpenCreatePreset = (e) => {
     e.stopPropagation();
     activeModalType = 'CREATE_EDIT_PRESET';
@@ -2537,7 +2590,7 @@ export function initUserManagementEvents() {
     });
     editingScope = { allGroups: true, groupIds: [], unitIds: [], floorIds: [], lineIds: [] };
     applyToAssignedUsers = true;
-    refreshView();
+    updateUserModalLayer();
   };
 
   const btnCreatePreset = document.getElementById('btn-open-create-preset-modal');
@@ -2667,7 +2720,7 @@ export function initUserManagementEvents() {
     });
   });
 
-  // 5. Open Edit User Modal
+  // 5. Open Edit User Modal (In-place, Zero-Jump)
   document.querySelectorAll('.btn-action-edit-user').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -2676,12 +2729,12 @@ export function initUserManagementEvents() {
       if (user) {
         activeModalType = 'EDIT_USER';
         targetUser = user;
-        refreshView();
+        updateUserModalLayer();
       }
     });
   });
 
-  // 6. Open Individual Permissions Modal
+  // 6. Open Individual Permissions Modal (In-place, Zero-Jump)
   document.querySelectorAll('.btn-action-user-perms').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -2693,12 +2746,12 @@ export function initUserManagementEvents() {
         targetUser = user;
         editingPermissions = JSON.parse(JSON.stringify(user.permissions || {}));
         editingScope = JSON.parse(JSON.stringify(user.assignedScope || { allGroups: true, groupIds: [], unitIds: [], floorIds: [], lineIds: [] }));
-        refreshView();
+        updateUserModalLayer();
       }
     });
   });
 
-  // 6b. Open Location Scope Modal
+  // 6b. Open Location Scope Modal (In-place, Zero-Jump)
   document.querySelectorAll('.btn-action-user-scope').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -2710,12 +2763,12 @@ export function initUserManagementEvents() {
         targetUser = user;
         editingPermissions = JSON.parse(JSON.stringify(user.permissions || {}));
         editingScope = JSON.parse(JSON.stringify(user.assignedScope || { allGroups: true, groupIds: [], unitIds: [], floorIds: [], lineIds: [] }));
-        refreshView();
+        updateUserModalLayer();
       }
     });
   });
 
-  // 6c. Open 1-Click Quick Preset Assignment Modal for User
+  // 6c. Open 1-Click Quick Preset Assignment Modal for User (In-place, Zero-Jump)
   document.querySelectorAll('.btn-action-user-preset').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -2725,12 +2778,12 @@ export function initUserManagementEvents() {
         activeModalType = 'USER_QUICK_PRESET';
         targetUser = user;
         syncScopeOnPresetAssign = true;
-        refreshView();
+        updateUserModalLayer();
       }
     });
   });
 
-  // 6d. Edit Preset Profile
+  // 6d. Edit Preset Profile (In-place, Zero-Jump)
   document.querySelectorAll('.btn-preset-edit').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -2743,12 +2796,12 @@ export function initUserManagementEvents() {
         editingPermissions = JSON.parse(JSON.stringify(preset.permissions || {}));
         editingScope = JSON.parse(JSON.stringify(preset.scope || { allGroups: true, groupIds: [], unitIds: [], floorIds: [], lineIds: [] }));
         applyToAssignedUsers = true;
-        refreshView();
+        updateUserModalLayer();
       }
     });
   });
 
-  // 6e. Quick Assign Users to Preset
+  // 6e. Quick Assign Users to Preset (In-place, Zero-Jump)
   document.querySelectorAll('.btn-preset-quick-assign').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -2765,7 +2818,7 @@ export function initUserManagementEvents() {
             (!u.presetId && preset.code === 'MAINTENANCE_USER' && (u.role || '').toUpperCase() === 'USER'))
           .map(u => u.id);
         syncScopeOnPresetAssign = true;
-        refreshView();
+        updateUserModalLayer();
       }
     });
   });
@@ -2815,7 +2868,7 @@ export function initUserManagementEvents() {
     });
   });
 
-  // 7. Open Reset Password Modal
+  // 7. Open Reset Password Modal (In-place, Zero-Jump)
   document.querySelectorAll('.btn-action-reset-pwd').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -2824,7 +2877,7 @@ export function initUserManagementEvents() {
       if (user) {
         activeModalType = 'RESET_PASSWORD';
         targetUser = user;
-        refreshView();
+        updateUserModalLayer();
       }
     });
   });
@@ -2872,323 +2925,534 @@ export function initUserManagementEvents() {
     });
   });
 
-  // 10. Close Modal Buttons
-  const btnClose = document.getElementById('btn-close-modal');
-  const btnCancel = document.getElementById('btn-cancel-modal');
-  if (btnClose) btnClose.addEventListener('click', closeModal);
-  if (btnCancel) btnCancel.addEventListener('click', closeModal);
+  // ==========================================
+  // Isolated Modal Event Handlers (In-Place, Zero-Jump)
+  // ==========================================
+  bindUserModalEvents = () => {
+    const modalLayer = document.getElementById('user-modal-layer');
+    if (!modalLayer) return;
 
-  // 10b. Modal Tab Switching
-  const tabPerms = document.getElementById('tab-btn-perms');
-  if (tabPerms) {
-    tabPerms.addEventListener('click', () => {
-      activeModalTab = 'PERMISSIONS';
-      refreshView();
-    });
-  }
+    // 10. Close Modal Buttons & Overlay Click
+    const btnClose = modalLayer.querySelector('#btn-close-modal');
+    const btnCancel = modalLayer.querySelector('#btn-cancel-modal');
+    const overlay = modalLayer.querySelector('.modal-overlay');
 
-  const tabScope = document.getElementById('tab-btn-scope');
-  if (tabScope) {
-    tabScope.addEventListener('click', () => {
-      activeModalTab = 'LOCATION_SCOPE';
-      refreshView();
-    });
-  }
+    if (btnClose) btnClose.addEventListener('click', () => closeModal(false));
+    if (btnCancel) btnCancel.addEventListener('click', () => closeModal(false));
+    if (overlay) {
+      overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) closeModal(false);
+      });
+    }
 
-  // 11. Toggle Password Visibility
-  const btnToggleAdd = document.getElementById('btn-toggle-add-pwd');
-  if (btnToggleAdd) {
-    btnToggleAdd.addEventListener('click', () => {
-      const inp = document.getElementById('add-user-password');
-      if (inp) {
-        inp.type = inp.type === 'password' ? 'text' : 'password';
-      }
-    });
-  }
+    // 10b. Modal Tab Switching (In-place, Zero-Jump)
+    const tabPerms = modalLayer.querySelector('#tab-btn-perms');
+    if (tabPerms) {
+      tabPerms.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        activeModalTab = 'PERMISSIONS';
+        updateUserModalLayer();
+      });
+    }
 
-  const btnToggleReset = document.getElementById('btn-toggle-reset-pwd');
-  if (btnToggleReset) {
-    btnToggleReset.addEventListener('click', () => {
-      const inp = document.getElementById('reset-new-password');
-      if (inp) {
-        inp.type = inp.type === 'password' ? 'text' : 'password';
-      }
-    });
-  }
+    const tabScope = modalLayer.querySelector('#tab-btn-scope');
+    if (tabScope) {
+      tabScope.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        activeModalTab = 'LOCATION_SCOPE';
+        updateUserModalLayer();
+      });
+    }
 
-  // 12. Submit Add User Form
-  const formAdd = document.getElementById('form-add-new-user');
-  if (formAdd) {
-    formAdd.addEventListener('submit', (e) => {
-      e.preventDefault();
-      const name = document.getElementById('add-user-fullname')?.value?.trim();
-      const email = document.getElementById('add-user-email')?.value?.trim();
-      const username = document.getElementById('add-user-username')?.value?.trim();
-      const password = document.getElementById('add-user-password')?.value;
-      const role = document.getElementById('add-user-role')?.value || 'USER';
-      const status = document.getElementById('add-user-status')?.value || 'ACTIVE';
-      const presetId = document.getElementById('add-user-preset')?.value;
+    // 11. Toggle Password Visibility
+    const btnToggleAdd = modalLayer.querySelector('#btn-toggle-add-pwd');
+    if (btnToggleAdd) {
+      btnToggleAdd.addEventListener('click', () => {
+        const inp = modalLayer.querySelector('#add-user-password');
+        if (inp) {
+          inp.type = inp.type === 'password' ? 'text' : 'password';
+        }
+      });
+    }
 
-      try {
-        const newUser = authService.createUser({
-          name,
-          email,
-          username,
-          password,
-          role,
-          status,
-          presetId
-        });
-        notificationService.success(`User '${newUser.name}' created successfully with profile [${newUser.presetName}]!`);
-        closeModal();
-      } catch (err) {
-        notificationService.error(err.message);
-      }
-    });
-  }
+    const btnToggleReset = modalLayer.querySelector('#btn-toggle-reset-pwd');
+    if (btnToggleReset) {
+      btnToggleReset.addEventListener('click', () => {
+        const inp = modalLayer.querySelector('#reset-new-password');
+        if (inp) {
+          inp.type = inp.type === 'password' ? 'text' : 'password';
+        }
+      });
+    }
 
-  // 13. Submit Edit User Form
-  const formEdit = document.getElementById('form-edit-user');
-  if (formEdit && targetUser) {
-    formEdit.addEventListener('submit', (e) => {
-      e.preventDefault();
-      const name = document.getElementById('edit-user-fullname')?.value?.trim();
-      const email = document.getElementById('edit-user-email')?.value?.trim();
-      const username = document.getElementById('edit-user-username')?.value?.trim();
-      const role = document.getElementById('edit-user-role')?.value || targetUser.role;
-      const status = document.getElementById('edit-user-status')?.value || targetUser.status;
-      const presetId = document.getElementById('edit-user-preset')?.value;
+    // 12. Submit Add User Form
+    const formAdd = modalLayer.querySelector('#form-add-new-user');
+    if (formAdd) {
+      formAdd.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const name = modalLayer.querySelector('#add-user-fullname')?.value?.trim();
+        const email = modalLayer.querySelector('#add-user-email')?.value?.trim();
+        const username = modalLayer.querySelector('#add-user-username')?.value?.trim();
+        const password = modalLayer.querySelector('#add-user-password')?.value;
+        const role = modalLayer.querySelector('#add-user-role')?.value || 'USER';
+        const status = modalLayer.querySelector('#add-user-status')?.value || 'ACTIVE';
+        const presetId = modalLayer.querySelector('#add-user-preset')?.value;
 
-      try {
-        authService.updateUser(targetUser.id, {
-          name,
-          email,
-          username,
-          role,
-          status,
-          presetId: presetId || targetUser.presetId
-        });
-        notificationService.success(`Updated profile for '${name}'.`);
-        closeModal();
-      } catch (err) {
-        notificationService.error(err.message);
-      }
-    });
-  }
+        try {
+          const newUser = authService.createUser({
+            name,
+            email,
+            username,
+            password,
+            role,
+            status,
+            presetId
+          });
+          notificationService.success(`User '${newUser.name}' created successfully with profile [${newUser.presetName}]!`);
+          closeModal(true);
+        } catch (err) {
+          notificationService.error(err.message);
+        }
+      });
+    }
 
-  // 14. Submit Reset Password Form
-  const formReset = document.getElementById('form-reset-password');
-  if (formReset && targetUser) {
-    formReset.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const newPwd = document.getElementById('reset-new-password')?.value;
-      const confirmPwd = document.getElementById('reset-confirm-password')?.value;
-      const sendEmail = document.getElementById('chk-send-reset-email')?.checked;
+    // 13. Submit Edit User Form
+    const formEdit = modalLayer.querySelector('#form-edit-user');
+    if (formEdit && targetUser) {
+      formEdit.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const name = modalLayer.querySelector('#edit-user-fullname')?.value?.trim();
+        const email = modalLayer.querySelector('#edit-user-email')?.value?.trim();
+        const username = modalLayer.querySelector('#edit-user-username')?.value?.trim();
+        const role = modalLayer.querySelector('#edit-user-role')?.value || targetUser.role;
+        const status = modalLayer.querySelector('#edit-user-status')?.value || targetUser.status;
+        const presetId = modalLayer.querySelector('#edit-user-preset')?.value;
 
-      if (newPwd !== confirmPwd) {
-        notificationService.error('Passwords do not match. Please re-enter.');
-        return;
-      }
+        try {
+          authService.updateUser(targetUser.id, {
+            name,
+            email,
+            username,
+            role,
+            status,
+            presetId: presetId || targetUser.presetId
+          });
+          notificationService.success(`Updated profile for '${name}'.`);
+          closeModal(true);
+        } catch (err) {
+          notificationService.error(err.message);
+        }
+      });
+    }
 
-      try {
-        authService.updateUser(targetUser.id, { password: newPwd });
+    // 14. Submit Reset Password Form
+    const formReset = modalLayer.querySelector('#form-reset-password');
+    if (formReset && targetUser) {
+      formReset.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const newPwd = modalLayer.querySelector('#reset-new-password')?.value;
+        const confirmPwd = modalLayer.querySelector('#reset-confirm-password')?.value;
+        const sendEmail = modalLayer.querySelector('#chk-send-reset-email')?.checked;
 
-        if (sendEmail && targetUser.email && emailService.isEmailConfigured()) {
-          try {
-            await emailService.sendMail({
-              to: targetUser.email,
-              subject: 'Al-Muslim ERP: Password Reset Notification',
-              html: `<p>Dear ${targetUser.name},</p><p>Your password for Al-Muslim ERP has been reset by the administrator. You can now log in with your updated credentials.</p>`
-            });
-            notificationService.success('Password reset and confirmation email sent!');
-          } catch (mailErr) {
-            notificationService.warning('Password reset successfully, but email notification could not be delivered: ' + mailErr.message);
+        if (newPwd !== confirmPwd) {
+          notificationService.error('Passwords do not match. Please re-enter.');
+          return;
+        }
+
+        try {
+          authService.updateUser(targetUser.id, { password: newPwd });
+
+          if (sendEmail && targetUser.email && emailService.isEmailConfigured()) {
+            try {
+              await emailService.sendMail({
+                to: targetUser.email,
+                subject: 'Al-Muslim ERP: Password Reset Notification',
+                html: `<p>Dear ${targetUser.name},</p><p>Your password for Al-Muslim ERP has been reset by the administrator. You can now log in with your updated credentials.</p>`
+              });
+              notificationService.success('Password reset and confirmation email sent!');
+            } catch (mailErr) {
+              notificationService.warning('Password reset successfully, but email notification could not be delivered: ' + mailErr.message);
+            }
+          } else {
+            notificationService.success(`Password for '${targetUser.name}' updated successfully!`);
           }
-        } else {
-          notificationService.success(`Password for '${targetUser.name}' updated successfully!`);
+
+          closeModal(true);
+        } catch (err) {
+          notificationService.error(err.message);
         }
+      });
+    }
 
-        closeModal();
-      } catch (err) {
-        notificationService.error(err.message);
-      }
-    });
-  }
-
-  // 15. Permission Matrix Checkbox Handlers (7 Actions)
-  document.querySelectorAll('.chk-perm-action').forEach(chk => {
-    chk.addEventListener('change', () => {
-      const mod = chk.getAttribute('data-module');
-      const action = chk.getAttribute('data-action');
-      if (!editingPermissions[mod]) editingPermissions[mod] = [];
-
-      if (chk.checked) {
-        if (!editingPermissions[mod].includes(action)) {
-          editingPermissions[mod].push(action);
-        }
-        // If enabling any action, also ensure VIEW is enabled
-        if (action !== 'VIEW' && !editingPermissions[mod].includes('VIEW')) {
-          editingPermissions[mod].push('VIEW');
-          const viewChk = document.querySelector(`.chk-perm-action[data-module="${mod}"][data-action="VIEW"]`);
-          if (viewChk) viewChk.checked = true;
-        }
-      } else {
-        editingPermissions[mod] = editingPermissions[mod].filter(a => a !== action);
-        // If disabling VIEW, disable all actions for this module
-        if (action === 'VIEW') {
-          editingPermissions[mod] = [];
-          document.querySelectorAll(`.chk-perm-action[data-module="${mod}"]`).forEach(c => { c.checked = false; });
-        }
-      }
-    });
-  });
-
-  // 15b. Column-Header & Master Action Toggle Checkboxes (Toggle an action across all modules)
-  ['VIEW', 'ADD', 'EDIT', 'DELETE', 'IMPORT', 'EXPORT', 'APPROVE'].forEach(act => {
-    const colToggle = document.getElementById(`col-toggle-${act}`);
-    const masterToggle = document.getElementById(`master-toggle-${act}`);
-
-    const handleActionToggle = (isChecked) => {
-      document.querySelectorAll(`.chk-perm-action[data-action="${act}"]`).forEach(c => {
-        c.checked = isChecked;
-        const mod = c.getAttribute('data-module');
+    // 15. Permission Matrix Checkbox Handlers (7 Actions)
+    modalLayer.querySelectorAll('.chk-perm-action').forEach(chk => {
+      chk.addEventListener('change', () => {
+        const mod = chk.getAttribute('data-module');
+        const action = chk.getAttribute('data-action');
         if (!editingPermissions[mod]) editingPermissions[mod] = [];
-        if (isChecked) {
-          if (!editingPermissions[mod].includes(act)) editingPermissions[mod].push(act);
-          if (act !== 'VIEW' && !editingPermissions[mod].includes('VIEW')) {
+
+        if (chk.checked) {
+          if (!editingPermissions[mod].includes(action)) {
+            editingPermissions[mod].push(action);
+          }
+          // If enabling any action, also ensure VIEW is enabled
+          if (action !== 'VIEW' && !editingPermissions[mod].includes('VIEW')) {
             editingPermissions[mod].push('VIEW');
-            const viewChk = document.querySelector(`.chk-perm-action[data-module="${mod}"][data-action="VIEW"]`);
+            const viewChk = modalLayer.querySelector(`.chk-perm-action[data-module="${mod}"][data-action="VIEW"]`);
             if (viewChk) viewChk.checked = true;
           }
         } else {
-          editingPermissions[mod] = editingPermissions[mod].filter(a => a !== act);
-          if (act === 'VIEW') {
+          editingPermissions[mod] = editingPermissions[mod].filter(a => a !== action);
+          // If disabling VIEW, disable all actions for this module
+          if (action === 'VIEW') {
             editingPermissions[mod] = [];
-            document.querySelectorAll(`.chk-perm-action[data-module="${mod}"]`).forEach(sub => { sub.checked = false; });
+            modalLayer.querySelectorAll(`.chk-perm-action[data-module="${mod}"]`).forEach(c => { c.checked = false; });
           }
         }
       });
-      if (colToggle) colToggle.checked = isChecked;
-      if (masterToggle) masterToggle.checked = isChecked;
-    };
+    });
 
-    if (colToggle) {
-      colToggle.addEventListener('change', (e) => handleActionToggle(e.target.checked));
-    }
-    if (masterToggle) {
-      masterToggle.addEventListener('change', (e) => handleActionToggle(e.target.checked));
-    }
-  });
+    // 15b. Column-Header & Master Action Toggle Checkboxes
+    ['VIEW', 'ADD', 'EDIT', 'DELETE', 'IMPORT', 'EXPORT', 'APPROVE'].forEach(act => {
+      const colToggle = modalLayer.querySelector(`#col-toggle-${act}`);
+      const masterToggle = modalLayer.querySelector(`#master-toggle-${act}`);
 
-  // 16. Row Quick Toggle
-  document.querySelectorAll('.btn-perm-toggle-row').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const mod = btn.getAttribute('data-module');
-      const checkboxes = document.querySelectorAll(`.chk-perm-action[data-module="${mod}"]`);
-      const anyUnchecked = Array.from(checkboxes).some(c => !c.checked);
+      const handleActionToggle = (isChecked) => {
+        modalLayer.querySelectorAll(`.chk-perm-action[data-action="${act}"]`).forEach(c => {
+          c.checked = isChecked;
+          const mod = c.getAttribute('data-module');
+          if (!editingPermissions[mod]) editingPermissions[mod] = [];
+          if (isChecked) {
+            if (!editingPermissions[mod].includes(act)) editingPermissions[mod].push(act);
+            if (act !== 'VIEW' && !editingPermissions[mod].includes('VIEW')) {
+              editingPermissions[mod].push('VIEW');
+              const viewChk = modalLayer.querySelector(`.chk-perm-action[data-module="${mod}"][data-action="VIEW"]`);
+              if (viewChk) viewChk.checked = true;
+            }
+          } else {
+            editingPermissions[mod] = editingPermissions[mod].filter(a => a !== act);
+            if (act === 'VIEW') {
+              editingPermissions[mod] = [];
+              modalLayer.querySelectorAll(`.chk-perm-action[data-module="${mod}"]`).forEach(sub => { sub.checked = false; });
+            }
+          }
+        });
+        if (colToggle) colToggle.checked = isChecked;
+        if (masterToggle) masterToggle.checked = isChecked;
+      };
 
-      checkboxes.forEach(c => {
-        c.checked = anyUnchecked;
-        const act = c.getAttribute('data-action');
-        if (!editingPermissions[mod]) editingPermissions[mod] = [];
-        if (anyUnchecked) {
+      if (colToggle) {
+        colToggle.addEventListener('change', (e) => handleActionToggle(e.target.checked));
+      }
+      if (masterToggle) {
+        masterToggle.addEventListener('change', (e) => handleActionToggle(e.target.checked));
+      }
+    });
+
+    // 16. Row Quick Toggle
+    modalLayer.querySelectorAll('.btn-perm-toggle-row').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const mod = btn.getAttribute('data-module');
+        const checkboxes = modalLayer.querySelectorAll(`.chk-perm-action[data-module="${mod}"]`);
+        const anyUnchecked = Array.from(checkboxes).some(c => !c.checked);
+
+        checkboxes.forEach(c => {
+          c.checked = anyUnchecked;
+          const act = c.getAttribute('data-action');
+          if (!editingPermissions[mod]) editingPermissions[mod] = [];
+          if (anyUnchecked) {
+            if (!editingPermissions[mod].includes(act)) editingPermissions[mod].push(act);
+          } else {
+            editingPermissions[mod] = editingPermissions[mod].filter(a => a !== act);
+          }
+        });
+      });
+    });
+
+    // 17. Select All Permissions (All 7 Actions)
+    const btnSelectAll = modalLayer.querySelector('#btn-perm-select-all');
+    if (btnSelectAll) {
+      btnSelectAll.addEventListener('click', () => {
+        modalLayer.querySelectorAll('.chk-perm-action').forEach(c => {
+          c.checked = true;
+          const mod = c.getAttribute('data-module');
+          const act = c.getAttribute('data-action');
+          if (!editingPermissions[mod]) editingPermissions[mod] = [];
           if (!editingPermissions[mod].includes(act)) editingPermissions[mod].push(act);
-        } else {
-          editingPermissions[mod] = editingPermissions[mod].filter(a => a !== act);
+        });
+      });
+    }
+
+    // 18. Clear All Permissions
+    const btnClearAll = modalLayer.querySelector('#btn-perm-clear-all');
+    if (btnClearAll) {
+      btnClearAll.addEventListener('click', () => {
+        modalLayer.querySelectorAll('.chk-perm-action').forEach(c => {
+          c.checked = false;
+        });
+        editingPermissions = {};
+      });
+    }
+
+    // 19. Admin Preset Button (Full 7 Actions)
+    const btnAdminPreset = modalLayer.querySelector('#btn-perm-preset-admin');
+    if (btnAdminPreset) {
+      btnAdminPreset.addEventListener('click', () => {
+        editingPermissions = {};
+        PERMISSION_CONFIG_MODULES.forEach(grp => {
+          grp.modules.forEach(m => {
+            editingPermissions[m.id] = [...m.actions];
+          });
+        });
+        updateUserModalLayer();
+      });
+    }
+
+    // 19b. Approver Preset Button (Read, Export, Approve)
+    const btnApproverPreset = modalLayer.querySelector('#btn-perm-preset-approver');
+    if (btnApproverPreset) {
+      btnApproverPreset.addEventListener('click', () => {
+        editingPermissions = {};
+        PERMISSION_CONFIG_MODULES.forEach(grp => {
+          grp.modules.forEach(m => {
+            editingPermissions[m.id] = m.actions.filter(a => ['VIEW', 'READ', 'EXPORT', 'APPROVE'].includes(a));
+          });
+        });
+        updateUserModalLayer();
+      });
+    }
+
+    // 19c. Data Operator Preset Button (Read, Add, Edit, Import, Export - No Delete or Approve)
+    const btnOperatorPreset = modalLayer.querySelector('#btn-perm-preset-operator');
+    if (btnOperatorPreset) {
+      btnOperatorPreset.addEventListener('click', () => {
+        editingPermissions = {};
+        PERMISSION_CONFIG_MODULES.forEach(grp => {
+          grp.modules.forEach(m => {
+            editingPermissions[m.id] = m.actions.filter(a => ['VIEW', 'READ', 'ADD', 'EDIT', 'IMPORT', 'EXPORT'].includes(a));
+          });
+        });
+        updateUserModalLayer();
+      });
+    }
+
+    // 20. View Only Preset Button (Read Only)
+    const btnViewOnlyPreset = modalLayer.querySelector('#btn-perm-preset-viewonly');
+    if (btnViewOnlyPreset) {
+      btnViewOnlyPreset.addEventListener('click', () => {
+        editingPermissions = {};
+        PERMISSION_CONFIG_MODULES.forEach(grp => {
+          grp.modules.forEach(m => {
+            editingPermissions[m.id] = ['VIEW'];
+          });
+        });
+        updateUserModalLayer();
+      });
+    }
+
+    // 21. Save Permissions Button
+    const btnSavePerms = modalLayer.querySelector('#btn-save-user-perms');
+    if (btnSavePerms && targetUser) {
+      btnSavePerms.addEventListener('click', () => {
+        try {
+          const finalPerms = {};
+          modalLayer.querySelectorAll('.chk-perm-action').forEach(c => {
+            if (c.checked) {
+              const mod = c.getAttribute('data-module');
+              const act = c.getAttribute('data-action');
+              if (!finalPerms[mod]) finalPerms[mod] = [];
+              if (!finalPerms[mod].includes(act)) finalPerms[mod].push(act);
+            }
+          });
+
+          authService.updateUserPermissions(targetUser.id, finalPerms);
+          notificationService.success(`Action permissions for '${targetUser.name}' saved successfully!`);
+          closeModal(true);
+        } catch (err) {
+          notificationService.error('Failed to save permissions: ' + err.message);
         }
       });
-    });
-  });
+    }
 
-  // 17. Select All Permissions (All 7 Actions)
-  const btnSelectAll = document.getElementById('btn-perm-select-all');
-  if (btnSelectAll) {
-    btnSelectAll.addEventListener('click', () => {
-      document.querySelectorAll('.chk-perm-action').forEach(c => {
-        c.checked = true;
-        const mod = c.getAttribute('data-module');
-        const act = c.getAttribute('data-action');
-        if (!editingPermissions[mod]) editingPermissions[mod] = [];
-        if (!editingPermissions[mod].includes(act)) editingPermissions[mod].push(act);
+    // ==========================================
+    // 22. LOCATION DATA ACCESS SCOPING HANDLERS
+    // ==========================================
+
+    // 22a. Scope Mode Switch (All Locations vs Granular)
+    const modeAll = modalLayer.querySelector('#scope-mode-all');
+    const modeRestricted = modalLayer.querySelector('#scope-mode-restricted');
+
+    if (modeAll) {
+      modeAll.addEventListener('change', () => {
+        editingScope.allGroups = true;
+        updateUserModalLayer();
+      });
+    }
+
+    if (modeRestricted) {
+      modeRestricted.addEventListener('change', () => {
+        editingScope.allGroups = false;
+        updateUserModalLayer();
+      });
+    }
+
+    // 22b. Unit Checkboxes
+    modalLayer.querySelectorAll('.chk-scope-unit').forEach(chk => {
+      chk.addEventListener('change', () => {
+        const id = chk.getAttribute('data-id');
+        if (!Array.isArray(editingScope.unitIds)) editingScope.unitIds = [];
+        if (chk.checked) {
+          if (!editingScope.unitIds.includes(id)) editingScope.unitIds.push(id);
+        } else {
+          editingScope.unitIds = editingScope.unitIds.filter(x => x !== id);
+          // Also remove floors/lines belonging to this deselected unit
+          const unitFloors = masterDataService.getAllFloors().filter(f => f.unitId === id).map(f => f.id);
+          if (Array.isArray(editingScope.floorIds)) {
+            editingScope.floorIds = editingScope.floorIds.filter(fId => !unitFloors.includes(fId));
+          }
+          const unitLines = masterDataService.getAllLines().filter(l => unitFloors.includes(l.floorId)).map(l => l.id);
+          if (Array.isArray(editingScope.lineIds)) {
+            editingScope.lineIds = editingScope.lineIds.filter(lId => !unitLines.includes(lId));
+          }
+        }
+        updateUserModalLayer();
       });
     });
-  }
 
-  // 18. Clear All Permissions
-  const btnClearAll = document.getElementById('btn-perm-clear-all');
-  if (btnClearAll) {
-    btnClearAll.addEventListener('click', () => {
-      document.querySelectorAll('.chk-perm-action').forEach(c => {
-        c.checked = false;
+    // Unit All / Clear
+    const btnAllUnits = modalLayer.querySelector('#btn-scope-all-units');
+    if (btnAllUnits) {
+      btnAllUnits.addEventListener('click', () => {
+        editingScope.unitIds = masterDataService.getAllUnits().map(u => u.id);
+        updateUserModalLayer();
       });
-      editingPermissions = {};
-    });
-  }
+    }
 
-  // 19. Admin Preset Button (Full 7 Actions)
-  const btnAdminPreset = document.getElementById('btn-perm-preset-admin');
-  if (btnAdminPreset) {
-    btnAdminPreset.addEventListener('click', () => {
-      editingPermissions = {};
-      PERMISSION_CONFIG_MODULES.forEach(grp => {
-        grp.modules.forEach(m => {
-          editingPermissions[m.id] = [...m.actions];
-        });
+    const btnClearUnits = modalLayer.querySelector('#btn-scope-clear-units');
+    if (btnClearUnits) {
+      btnClearUnits.addEventListener('click', () => {
+        editingScope.unitIds = [];
+        editingScope.floorIds = [];
+        editingScope.lineIds = [];
+        updateUserModalLayer();
       });
-      refreshView();
-    });
-  }
+    }
 
-  // 19b. Approver Preset Button (Read, Export, Approve)
-  const btnApproverPreset = document.getElementById('btn-perm-preset-approver');
-  if (btnApproverPreset) {
-    btnApproverPreset.addEventListener('click', () => {
-      editingPermissions = {};
-      PERMISSION_CONFIG_MODULES.forEach(grp => {
-        grp.modules.forEach(m => {
-          editingPermissions[m.id] = m.actions.filter(a => ['VIEW', 'READ', 'EXPORT', 'APPROVE'].includes(a));
-        });
+    // 22c. Floor Checkboxes
+    modalLayer.querySelectorAll('.chk-scope-floor').forEach(chk => {
+      chk.addEventListener('change', () => {
+        const id = chk.getAttribute('data-id');
+        if (!Array.isArray(editingScope.floorIds)) editingScope.floorIds = [];
+        if (chk.checked) {
+          if (!editingScope.floorIds.includes(id)) editingScope.floorIds.push(id);
+        } else {
+          editingScope.floorIds = editingScope.floorIds.filter(x => x !== id);
+          // Also remove lines belonging to this floor
+          const floorLines = masterDataService.getAllLines().filter(l => l.floorId === id).map(l => l.id);
+          if (Array.isArray(editingScope.lineIds)) {
+            editingScope.lineIds = editingScope.lineIds.filter(lId => !floorLines.includes(lId));
+          }
+        }
+        updateUserModalLayer();
       });
-      refreshView();
     });
-  }
 
-  // 19c. Data Operator Preset Button (Read, Add, Edit, Import, Export - No Delete or Approve)
-  const btnOperatorPreset = document.getElementById('btn-perm-preset-operator');
-  if (btnOperatorPreset) {
-    btnOperatorPreset.addEventListener('click', () => {
-      editingPermissions = {};
-      PERMISSION_CONFIG_MODULES.forEach(grp => {
-        grp.modules.forEach(m => {
-          editingPermissions[m.id] = m.actions.filter(a => ['VIEW', 'READ', 'ADD', 'EDIT', 'IMPORT', 'EXPORT'].includes(a));
-        });
+    // Floor All / Clear
+    const btnAllFloors = modalLayer.querySelector('#btn-scope-all-floors');
+    if (btnAllFloors) {
+      btnAllFloors.addEventListener('click', () => {
+        const selectedUnitIds = editingScope.unitIds || [];
+        const floors = selectedUnitIds.length > 0
+          ? masterDataService.getAllFloors().filter(f => selectedUnitIds.includes(f.unitId))
+          : masterDataService.getAllFloors();
+        editingScope.floorIds = floors.map(f => f.id);
+        updateUserModalLayer();
       });
-      refreshView();
-    });
-  }
+    }
 
-  // 20. View Only Preset Button (Read Only)
-  const btnViewOnlyPreset = document.getElementById('btn-perm-preset-viewonly');
-  if (btnViewOnlyPreset) {
-    btnViewOnlyPreset.addEventListener('click', () => {
-      editingPermissions = {};
-      PERMISSION_CONFIG_MODULES.forEach(grp => {
-        grp.modules.forEach(m => {
-          editingPermissions[m.id] = ['VIEW'];
-        });
+    const btnClearFloors = modalLayer.querySelector('#btn-scope-clear-floors');
+    if (btnClearFloors) {
+      btnClearFloors.addEventListener('click', () => {
+        editingScope.floorIds = [];
+        editingScope.lineIds = [];
+        updateUserModalLayer();
       });
-      refreshView();
-    });
-  }
+    }
 
-  // 21. Save Permissions Button
-  const btnSavePerms = document.getElementById('btn-save-user-perms');
-  if (btnSavePerms && targetUser) {
-    btnSavePerms.addEventListener('click', () => {
-      try {
+    // 22d. Line Checkboxes
+    modalLayer.querySelectorAll('.chk-scope-line').forEach(chk => {
+      chk.addEventListener('change', () => {
+        const id = chk.getAttribute('data-id');
+        if (!Array.isArray(editingScope.lineIds)) editingScope.lineIds = [];
+        if (chk.checked) {
+          if (!editingScope.lineIds.includes(id)) editingScope.lineIds.push(id);
+        } else {
+          editingScope.lineIds = editingScope.lineIds.filter(x => x !== id);
+        }
+        updateUserModalLayer();
+      });
+    });
+
+    // Line All / Clear
+    const btnAllLines = modalLayer.querySelector('#btn-scope-all-lines');
+    if (btnAllLines) {
+      btnAllLines.addEventListener('click', () => {
+        const selectedFloorIds = editingScope.floorIds || [];
+        const lines = selectedFloorIds.length > 0
+          ? masterDataService.getAllLines().filter(l => selectedFloorIds.includes(l.floorId))
+          : masterDataService.getAllLines();
+        editingScope.lineIds = lines.map(l => l.id);
+        updateUserModalLayer();
+      });
+    }
+
+    const btnClearLines = modalLayer.querySelector('#btn-scope-clear-lines');
+    if (btnClearLines) {
+      btnClearLines.addEventListener('click', () => {
+        editingScope.lineIds = [];
+        updateUserModalLayer();
+      });
+    }
+
+    // 22e. Save Location Scope Button
+    const btnSaveScope = modalLayer.querySelector('#btn-save-user-scope');
+    if (btnSaveScope && targetUser) {
+      btnSaveScope.addEventListener('click', () => {
+        try {
+          authService.updateUserScope(targetUser.id, editingScope);
+          notificationService.success(`Location access scope for '${targetUser.name}' saved successfully!`);
+          closeModal(true);
+        } catch (err) {
+          notificationService.error('Failed to save location scope: ' + err.message);
+        }
+      });
+    }
+
+    // ==========================================
+    // 23. PRESET MODAL ACTION HANDLERS
+    // ==========================================
+
+    // 23a. Save Preset Settings (Create or Update)
+    const btnSavePreset = modalLayer.querySelector('#btn-save-preset-settings');
+    if (btnSavePreset) {
+      btnSavePreset.addEventListener('click', () => {
+        const name = modalLayer.querySelector('#preset-name-input')?.value?.trim();
+        const accessLevel = modalLayer.querySelector('#preset-access-level-input')?.value?.trim() || 'Module Access';
+        const description = modalLayer.querySelector('#preset-description-input')?.value?.trim() || '';
+        const icon = modalLayer.querySelector('#preset-icon-input')?.value || '🛡️';
+        const badgeColor = modalLayer.querySelector('#preset-badge-color-input')?.value || '#0ea5e9';
+        const applyToAssigned = modalLayer.querySelector('#preset-apply-to-assigned-users')?.checked ?? false;
+
+        if (!name) {
+          notificationService.error('Preset Name is required.');
+          return;
+        }
+
         const finalPerms = {};
-        document.querySelectorAll('.chk-perm-action').forEach(c => {
+        modalLayer.querySelectorAll('.chk-perm-action').forEach(c => {
           if (c.checked) {
             const mod = c.getAttribute('data-module');
             const act = c.getAttribute('data-action');
@@ -3197,309 +3461,121 @@ export function initUserManagementEvents() {
           }
         });
 
-        authService.updateUserPermissions(targetUser.id, finalPerms);
-        notificationService.success(`Action permissions for '${targetUser.name}' saved successfully!`);
-        closeModal();
-      } catch (err) {
-        notificationService.error('Failed to save permissions: ' + err.message);
-      }
-    });
-  }
+        try {
+          if (targetPreset) {
+            const result = authService.updatePreset(targetPreset.id, {
+              name,
+              accessLevel,
+              description,
+              icon,
+              badgeColor,
+              permissions: finalPerms,
+              scope: editingScope,
+              syncScopeWithUsers: applyToAssigned
+            }, applyToAssigned);
 
-  // ==========================================
-  // 22. LOCATION DATA ACCESS SCOPING HANDLERS
-  // ==========================================
-
-  // 22a. Scope Mode Switch (All Locations vs Granular)
-  const modeAll = document.getElementById('scope-mode-all');
-  const modeRestricted = document.getElementById('scope-mode-restricted');
-
-  if (modeAll) {
-    modeAll.addEventListener('change', () => {
-      editingScope.allGroups = true;
-      refreshView();
-    });
-  }
-
-  if (modeRestricted) {
-    modeRestricted.addEventListener('change', () => {
-      editingScope.allGroups = false;
-      refreshView();
-    });
-  }
-
-  // 22b. Unit Checkboxes
-  document.querySelectorAll('.chk-scope-unit').forEach(chk => {
-    chk.addEventListener('change', () => {
-      const id = chk.getAttribute('data-id');
-      if (!Array.isArray(editingScope.unitIds)) editingScope.unitIds = [];
-      if (chk.checked) {
-        if (!editingScope.unitIds.includes(id)) editingScope.unitIds.push(id);
-      } else {
-        editingScope.unitIds = editingScope.unitIds.filter(x => x !== id);
-        // Also remove floors/lines belonging to this deselected unit
-        const unitFloors = masterDataService.getAllFloors().filter(f => f.unitId === id).map(f => f.id);
-        if (Array.isArray(editingScope.floorIds)) {
-          editingScope.floorIds = editingScope.floorIds.filter(fId => !unitFloors.includes(fId));
-        }
-        const unitLines = masterDataService.getAllLines().filter(l => unitFloors.includes(l.floorId)).map(l => l.id);
-        if (Array.isArray(editingScope.lineIds)) {
-          editingScope.lineIds = editingScope.lineIds.filter(lId => !unitLines.includes(lId));
-        }
-      }
-      refreshView();
-    });
-  });
-
-  // Unit All / Clear
-  const btnAllUnits = document.getElementById('btn-scope-all-units');
-  if (btnAllUnits) {
-    btnAllUnits.addEventListener('click', () => {
-      editingScope.unitIds = masterDataService.getAllUnits().map(u => u.id);
-      refreshView();
-    });
-  }
-
-  const btnClearUnits = document.getElementById('btn-scope-clear-units');
-  if (btnClearUnits) {
-    btnClearUnits.addEventListener('click', () => {
-      editingScope.unitIds = [];
-      editingScope.floorIds = [];
-      editingScope.lineIds = [];
-      refreshView();
-    });
-  }
-
-  // 22c. Floor Checkboxes
-  document.querySelectorAll('.chk-scope-floor').forEach(chk => {
-    chk.addEventListener('change', () => {
-      const id = chk.getAttribute('data-id');
-      if (!Array.isArray(editingScope.floorIds)) editingScope.floorIds = [];
-      if (chk.checked) {
-        if (!editingScope.floorIds.includes(id)) editingScope.floorIds.push(id);
-      } else {
-        editingScope.floorIds = editingScope.floorIds.filter(x => x !== id);
-        // Also remove lines belonging to this floor
-        const floorLines = masterDataService.getAllLines().filter(l => l.floorId === id).map(l => l.id);
-        if (Array.isArray(editingScope.lineIds)) {
-          editingScope.lineIds = editingScope.lineIds.filter(lId => !floorLines.includes(lId));
-        }
-      }
-      refreshView();
-    });
-  });
-
-  // Floor All / Clear
-  const btnAllFloors = document.getElementById('btn-scope-all-floors');
-  if (btnAllFloors) {
-    btnAllFloors.addEventListener('click', () => {
-      const selectedUnitIds = editingScope.unitIds || [];
-      const floors = selectedUnitIds.length > 0
-        ? masterDataService.getAllFloors().filter(f => selectedUnitIds.includes(f.unitId))
-        : masterDataService.getAllFloors();
-      editingScope.floorIds = floors.map(f => f.id);
-      refreshView();
-    });
-  }
-
-  const btnClearFloors = document.getElementById('btn-scope-clear-floors');
-  if (btnClearFloors) {
-    btnClearFloors.addEventListener('click', () => {
-      editingScope.floorIds = [];
-      editingScope.lineIds = [];
-      refreshView();
-    });
-  }
-
-  // 22d. Line Checkboxes
-  document.querySelectorAll('.chk-scope-line').forEach(chk => {
-    chk.addEventListener('change', () => {
-      const id = chk.getAttribute('data-id');
-      if (!Array.isArray(editingScope.lineIds)) editingScope.lineIds = [];
-      if (chk.checked) {
-        if (!editingScope.lineIds.includes(id)) editingScope.lineIds.push(id);
-      } else {
-        editingScope.lineIds = editingScope.lineIds.filter(x => x !== id);
-      }
-      refreshView();
-    });
-  });
-
-  // Line All / Clear
-  const btnAllLines = document.getElementById('btn-scope-all-lines');
-  if (btnAllLines) {
-    btnAllLines.addEventListener('click', () => {
-      const selectedFloorIds = editingScope.floorIds || [];
-      const lines = selectedFloorIds.length > 0
-        ? masterDataService.getAllLines().filter(l => selectedFloorIds.includes(l.floorId))
-        : masterDataService.getAllLines();
-      editingScope.lineIds = lines.map(l => l.id);
-      refreshView();
-    });
-  }
-
-  const btnClearLines = document.getElementById('btn-scope-clear-lines');
-  if (btnClearLines) {
-    btnClearLines.addEventListener('click', () => {
-      editingScope.lineIds = [];
-      refreshView();
-    });
-  }
-
-  // 22e. Save Location Scope Button
-  const btnSaveScope = document.getElementById('btn-save-user-scope');
-  if (btnSaveScope && targetUser) {
-    btnSaveScope.addEventListener('click', () => {
-      try {
-        authService.updateUserScope(targetUser.id, editingScope);
-        notificationService.success(`Location access scope for '${targetUser.name}' saved successfully!`);
-        closeModal();
-      } catch (err) {
-        notificationService.error('Failed to save location scope: ' + err.message);
-      }
-    });
-  }
-
-  // ==========================================
-  // 23. PRESET MODAL ACTION HANDLERS
-  // ==========================================
-
-  // 23a. Save Preset Settings (Create or Update)
-  const btnSavePreset = document.getElementById('btn-save-preset-settings');
-  if (btnSavePreset) {
-    btnSavePreset.addEventListener('click', () => {
-      const name = document.getElementById('preset-name-input')?.value?.trim();
-      const accessLevel = document.getElementById('preset-access-level-input')?.value?.trim() || 'Module Access';
-      const description = document.getElementById('preset-description-input')?.value?.trim() || '';
-      const icon = document.getElementById('preset-icon-input')?.value || '🛡️';
-      const badgeColor = document.getElementById('preset-badge-color-input')?.value || '#0ea5e9';
-      const applyToAssigned = document.getElementById('preset-apply-to-assigned-users')?.checked ?? false;
-
-      if (!name) {
-        notificationService.error('Preset Name is required.');
-        return;
-      }
-
-      // Collect active permissions from checkboxes
-      const finalPerms = {};
-      document.querySelectorAll('.chk-perm-action').forEach(c => {
-        if (c.checked) {
-          const mod = c.getAttribute('data-module');
-          const act = c.getAttribute('data-action');
-          if (!finalPerms[mod]) finalPerms[mod] = [];
-          if (!finalPerms[mod].includes(act)) finalPerms[mod].push(act);
-        }
-      });
-
-      try {
-        if (targetPreset) {
-          const result = authService.updatePreset(targetPreset.id, {
-            name,
-            accessLevel,
-            description,
-            icon,
-            badgeColor,
-            permissions: finalPerms,
-            scope: editingScope,
-            syncScopeWithUsers: applyToAssigned
-          }, applyToAssigned);
-
-          let msg = `Preset "${name}" updated successfully!`;
-          if (applyToAssigned && result.affectedUsersCount > 0) {
-            msg += ` Applied to ${result.affectedUsersCount} assigned user(s).`;
+            let msg = `Preset "${name}" updated successfully!`;
+            if (applyToAssigned && result.affectedUsersCount > 0) {
+              msg += ` Applied to ${result.affectedUsersCount} assigned user(s).`;
+            }
+            notificationService.success(msg);
+          } else {
+            authService.createPreset({
+              name,
+              accessLevel,
+              description,
+              icon,
+              badgeColor,
+              permissions: finalPerms,
+              scope: editingScope
+            });
+            notificationService.success(`New Preset Profile "${name}" created successfully!`);
           }
-          notificationService.success(msg);
-        } else {
-          authService.createPreset({
-            name,
-            accessLevel,
-            description,
-            icon,
-            badgeColor,
-            permissions: finalPerms,
-            scope: editingScope
-          });
-          notificationService.success(`New Preset Profile "${name}" created successfully!`);
+          closeModal(true);
+        } catch (err) {
+          notificationService.error(err.message);
         }
-        closeModal();
-      } catch (err) {
-        notificationService.error(err.message);
-      }
-    });
-  }
+      });
+    }
 
-  // 23b. Assign Users Modal Checkbox Handlers
-  const btnSelectAllAssign = document.getElementById('btn-assign-modal-select-all');
-  if (btnSelectAllAssign) {
-    btnSelectAllAssign.addEventListener('click', () => {
-      document.querySelectorAll('.chk-assign-user-item').forEach(c => {
-        c.checked = true;
+    // 23b. Assign Users Modal Checkbox Handlers
+    const btnSelectAllAssign = modalLayer.querySelector('#btn-assign-modal-select-all');
+    if (btnSelectAllAssign) {
+      btnSelectAllAssign.addEventListener('click', () => {
+        modalLayer.querySelectorAll('.chk-assign-user-item').forEach(c => {
+          c.checked = true;
+          const uid = c.getAttribute('data-id');
+          if (!selectedUserIdsForPreset.includes(uid)) selectedUserIdsForPreset.push(uid);
+        });
+        const countEl = modalLayer.querySelector('#assign-selected-count');
+        if (countEl) countEl.innerText = selectedUserIdsForPreset.length;
+      });
+    }
+
+    const btnDeselectAllAssign = modalLayer.querySelector('#btn-assign-modal-deselect-all');
+    if (btnDeselectAllAssign) {
+      btnDeselectAllAssign.addEventListener('click', () => {
+        modalLayer.querySelectorAll('.chk-assign-user-item').forEach(c => {
+          c.checked = false;
+        });
+        selectedUserIdsForPreset = [];
+        const countEl = modalLayer.querySelector('#assign-selected-count');
+        if (countEl) countEl.innerText = '0';
+      });
+    }
+
+    modalLayer.querySelectorAll('.chk-assign-user-item').forEach(c => {
+      c.addEventListener('change', () => {
         const uid = c.getAttribute('data-id');
-        if (!selectedUserIdsForPreset.includes(uid)) selectedUserIdsForPreset.push(uid);
+        if (c.checked) {
+          if (!selectedUserIdsForPreset.includes(uid)) selectedUserIdsForPreset.push(uid);
+        } else {
+          selectedUserIdsForPreset = selectedUserIdsForPreset.filter(x => x !== uid);
+        }
+        const countEl = modalLayer.querySelector('#assign-selected-count');
+        if (countEl) countEl.innerText = selectedUserIdsForPreset.length;
       });
-      const countEl = document.getElementById('assign-selected-count');
-      if (countEl) countEl.innerText = selectedUserIdsForPreset.length;
     });
-  }
 
-  const btnDeselectAllAssign = document.getElementById('btn-assign-modal-deselect-all');
-  if (btnDeselectAllAssign) {
-    btnDeselectAllAssign.addEventListener('click', () => {
-      document.querySelectorAll('.chk-assign-user-item').forEach(c => {
-        c.checked = false;
+    // 23c. Confirm Batch Assign Users to Preset
+    const btnConfirmAssign = modalLayer.querySelector('#btn-confirm-assign-users');
+    if (btnConfirmAssign && targetPreset) {
+      btnConfirmAssign.addEventListener('click', () => {
+        const syncScope = modalLayer.querySelector('#chk-sync-scope-to-users')?.checked ?? true;
+        try {
+          const count = authService.assignPresetToUsers(selectedUserIdsForPreset, targetPreset.id, syncScope);
+          notificationService.success(`Assigned profile "${targetPreset.name}" to ${count} user account(s).`);
+          closeModal(true);
+        } catch (err) {
+          notificationService.error(err.message);
+        }
       });
-      selectedUserIdsForPreset = [];
-      const countEl = document.getElementById('assign-selected-count');
-      if (countEl) countEl.innerText = '0';
-    });
-  }
+    }
 
-  document.querySelectorAll('.chk-assign-user-item').forEach(c => {
-    c.addEventListener('change', () => {
-      const uid = c.getAttribute('data-id');
-      if (c.checked) {
-        if (!selectedUserIdsForPreset.includes(uid)) selectedUserIdsForPreset.push(uid);
-      } else {
-        selectedUserIdsForPreset = selectedUserIdsForPreset.filter(x => x !== uid);
-      }
-      const countEl = document.getElementById('assign-selected-count');
-      if (countEl) countEl.innerText = selectedUserIdsForPreset.length;
-    });
-  });
+    // 23d. Confirm 1-Click Quick Preset Assignment to User
+    const btnConfirmQuickPreset = modalLayer.querySelector('#btn-confirm-quick-preset');
+    if (btnConfirmQuickPreset && targetUser) {
+      btnConfirmQuickPreset.addEventListener('click', () => {
+        const choice = modalLayer.querySelector('input[name="quick-preset-choice"]:checked')?.value;
+        const syncScope = modalLayer.querySelector('#chk-quick-preset-sync-scope')?.checked ?? true;
+        if (!choice) {
+          notificationService.error('Please select a permission preset profile.');
+          return;
+        }
+        try {
+          authService.assignPresetToUser(targetUser.id, choice, syncScope);
+          const p = authService.getPresetById(choice);
+          notificationService.success(`Assigned profile "${p ? p.name : 'Custom User'}" to ${targetUser.name}!`);
+          closeModal(true);
+        } catch (err) {
+          notificationService.error(err.message);
+        }
+      });
+    }
+  };
 
-  // 23c. Confirm Batch Assign Users to Preset
-  const btnConfirmAssign = document.getElementById('btn-confirm-assign-users');
-  if (btnConfirmAssign && targetPreset) {
-    btnConfirmAssign.addEventListener('click', () => {
-      const syncScope = document.getElementById('chk-sync-scope-to-users')?.checked ?? true;
-      try {
-        const count = authService.assignPresetToUsers(selectedUserIdsForPreset, targetPreset.id, syncScope);
-        notificationService.success(`Assigned profile "${targetPreset.name}" to ${count} user account(s).`);
-        closeModal();
-      } catch (err) {
-        notificationService.error(err.message);
-      }
-    });
-  }
-
-  // 23d. Confirm 1-Click Quick Preset Assignment to User
-  const btnConfirmQuickPreset = document.getElementById('btn-confirm-quick-preset');
-  if (btnConfirmQuickPreset && targetUser) {
-    btnConfirmQuickPreset.addEventListener('click', () => {
-      const choice = document.querySelector('input[name="quick-preset-choice"]:checked')?.value;
-      const syncScope = document.getElementById('chk-quick-preset-sync-scope')?.checked ?? true;
-      if (!choice) {
-        notificationService.error('Please select a permission preset profile.');
-        return;
-      }
-      try {
-        authService.assignPresetToUser(targetUser.id, choice, syncScope);
-        const p = authService.getPresetById(choice);
-        notificationService.success(`Assigned profile "${p ? p.name : 'Custom User'}" to ${targetUser.name}!`);
-        closeModal();
-      } catch (err) {
-        notificationService.error(err.message);
-      }
-    });
+  // If a modal is already in the DOM, bind its events immediately
+  if (activeModalType) {
+    bindUserModalEvents();
   }
 }

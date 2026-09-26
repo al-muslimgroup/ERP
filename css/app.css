@@ -92,9 +92,8 @@ body {
   transition: background-color 0.2s ease, color 0.2s ease;
 }
 
-/* Background scroll lock when any modal is open (prevents touch-bleed jitter) */
+/* Background scroll lock when any modal is open (prevents touch-bleed jitter without resetting window scroll) */
 body.modal-open {
-  overflow: hidden !important;
   touch-action: none;
   overscroll-behavior: none;
 }

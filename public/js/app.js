@@ -510,8 +510,20 @@ class ERPApplication {
   renderModalsOnly() {
     try {
       const container = document.getElementById('main-view-container');
+      const pageView = document.querySelector('.page-view');
+      const tableWrap = document.querySelector('.table-responsive, .inventory-table-container, .excel-grid');
+      const invViewport = document.getElementById('inventory-table-scroll-viewport');
+
       const savedContainerY = container ? container.scrollTop : 0;
       const savedContainerX = container ? container.scrollLeft : 0;
+      const savedPageViewY = pageView ? pageView.scrollTop : 0;
+      const savedTableY = tableWrap ? tableWrap.scrollTop : 0;
+      const savedTableX = tableWrap ? tableWrap.scrollLeft : 0;
+      const savedInvViewportY = invViewport ? invViewport.scrollTop : 0;
+      const savedInvViewportX = invViewport ? invViewport.scrollLeft : 0;
+      const savedWindowY = window.scrollY || document.documentElement.scrollTop || 0;
+      const savedWindowX = window.scrollX || document.documentElement.scrollLeft || 0;
+
       const modalLayer = document.getElementById('modal-layer');
       if (modalLayer) {
         modalLayer.innerHTML = this.getActiveModalHtml();
@@ -519,10 +531,30 @@ class ERPApplication {
       }
       const hasModal = !!(state.get('activeModal'));
       document.body.classList.toggle('modal-open', hasModal);
-      if (container) {
-        container.scrollTop = savedContainerY;
-        container.scrollLeft = savedContainerX;
-      }
+
+      const restore = () => {
+        if (container) {
+          container.scrollTop = savedContainerY;
+          container.scrollLeft = savedContainerX;
+        }
+        if (pageView) {
+          pageView.scrollTop = savedPageViewY;
+        }
+        if (tableWrap) {
+          tableWrap.scrollTop = savedTableY;
+          tableWrap.scrollLeft = savedTableX;
+        }
+        if (invViewport) {
+          invViewport.scrollTop = savedInvViewportY;
+          invViewport.scrollLeft = savedInvViewportX;
+        }
+        if (savedWindowY > 0 || savedWindowX > 0) {
+          window.scrollTo({ top: savedWindowY, left: savedWindowX, behavior: 'instant' });
+        }
+      };
+
+      restore();
+      requestAnimationFrame(restore);
     } catch (err) {
       console.error('Error rendering modals:', err);
     }
