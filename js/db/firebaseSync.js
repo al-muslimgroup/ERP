@@ -452,9 +452,98 @@ export async function saveAllToFirestore(allData) {
   }
 }
 
+let _realtimeUnsubscribe = null;
+let _isRealtimeActive = false;
+
 /**
- * Backwards-compatibility stub
+ * Check if the native Firebase Firestore onSnapshot real-time listener is currently active
+ */
+export function isRealtimeActive() {
+  return _isRealtimeActive;
+}
+
+/**
+ * Return native Firestore database instance if Firebase SDK is loaded on window
  */
 export async function getFirestoreInstance() {
+  if (typeof window !== 'undefined' && window.firebase && typeof window.firebase.firestore === 'function') {
+    if (!window.firebase.apps || !window.firebase.apps.length) {
+      window.firebase.initializeApp(FIREBASE_CONFIG);
+    }
+    return window.firebase.firestore();
+  }
   return null;
+}
+
+/**
+ * Start official Google Cloud Firestore onSnapshot real-time listener.
+ * Connects directly to Firestore via streaming WebChannel/WebSocket to receive
+ * instant notifications (<100ms) whenever ANY client updates any ERP table.
+ *
+ * @param {Object} options
+ * @param {Function} options.onManifestUpdate - Callback with updated manifest { [table]: serverTs }
+ * @param {Function} options.onStatusChange - Callback for connection status ('connected' | 'rest_mode' | 'error')
+ * @returns {Function|null} - Unsubscribe function or null
+ */
+export function startRealtimeSync({ onManifestUpdate, onStatusChange } = {}) {
+  if (typeof window === 'undefined') return null;
+
+  // Verify Firebase SDK availability on window
+  if (!window.firebase || typeof window.firebase.initializeApp !== 'function') {
+    console.log('[Firebase Realtime] Firebase SDK not loaded on window; using high-frequency REST polling fallback.');
+    if (onStatusChange) onStatusChange('rest_mode');
+    return null;
+  }
+
+  try {
+    const app = !window.firebase.apps || !window.firebase.apps.length
+      ? window.firebase.initializeApp(FIREBASE_CONFIG)
+      : window.firebase.app();
+
+    const db = window.firebase.firestore();
+
+    // Clean up any existing listener
+    if (_realtimeUnsubscribe) {
+      try { _realtimeUnsubscribe(); } catch (_) {}
+      _realtimeUnsubscribe = null;
+    }
+
+    const manifestDocRef = db.collection(COLLECTION_NAME).doc(SYNC_MANIFEST_DOC);
+
+    _realtimeUnsubscribe = manifestDocRef.onSnapshot((docSnap) => {
+      _isRealtimeActive = true;
+      if (onStatusChange) onStatusChange('connected');
+
+      if (!docSnap.exists) return;
+      const data = docSnap.data() || {};
+
+      if (typeof onManifestUpdate === 'function') {
+        onManifestUpdate(data);
+      }
+    }, (error) => {
+      console.warn('[Firebase Realtime] Real-time onSnapshot listener warning:', error.message);
+      _isRealtimeActive = false;
+      if (onStatusChange) onStatusChange('error');
+    });
+
+    console.log('[Firebase Realtime] 🟢 Real-time Firebase Firestore onSnapshot listener started.');
+    return _realtimeUnsubscribe;
+  } catch (err) {
+    console.warn('[Firebase Realtime] Failed to initialize Firebase listener:', err.message);
+    _isRealtimeActive = false;
+    if (onStatusChange) onStatusChange('error');
+    return null;
+  }
+}
+
+/**
+ * Unsubscribe and tear down the real-time Firebase listener
+ */
+export function stopRealtimeSync() {
+  if (_realtimeUnsubscribe) {
+    try { _realtimeUnsubscribe(); } catch (_) {}
+    _realtimeUnsubscribe = null;
+    _isRealtimeActive = false;
+    console.log('[Firebase Realtime] Stopped real-time Firestore listener.');
+  }
 }

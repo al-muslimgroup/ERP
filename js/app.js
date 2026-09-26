@@ -248,6 +248,10 @@ class ERPApplication {
       this.queueBackgroundRender();
     });
 
+    window.addEventListener('erp:transfers-updated', () => {
+      this.queueBackgroundRender();
+    });
+
     // Re-render when homepage config changes from another device (via Firebase polling)
     window.addEventListener('erp:homepage-updated', () => {
       const cv = state.get('currentView');

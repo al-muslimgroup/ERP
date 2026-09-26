@@ -122,13 +122,16 @@ class StorageEngine {
             this.checkAndSyncRemoteChanges();
           }
         });
+        // 1. Start official Google Cloud Firestore onSnapshot real-time listener
+        this.initRealtimeSyncListener();
+
+        // 2. Multi-device sync backup heartbeat (polls every 8s as fallback if WebSocket sleeps)
         if (!this._remoteSyncTimer) {
-          // Poll every 6s for real-time multi-device synchronization via sync_manifest (1 doc read)
           this._remoteSyncTimer = setInterval(() => {
             if (!this.isUserTyping()) {
               this.checkAndSyncRemoteChanges();
             }
-          }, 6000);
+          }, 8000);
         }
       }
 
@@ -632,38 +635,55 @@ class StorageEngine {
     if (!this.lastTableUpdates) this.lastTableUpdates = {};
     this.lastTableUpdates[table] = Date.now();
 
-    // Debounced sync to local node server (non-blocking, fire-and-forget)
+    // Secondary backup to local node server (debounced, non-blocking)
     if (this._autoPersistDebounce) clearTimeout(this._autoPersistDebounce);
     this._autoPersistDebounce = setTimeout(() => {
       this.persistToServerDatabase();
-    }, 250);
+    }, 400);
 
-    // 2. Confirmed Firestore REST write
+    // 2. Direct Confirmed Firestore Cloud Write
     this.updateStatusBadge('saving');
 
     const doCloudSave = async () => {
-      try {
-        const result = await firebaseSync.saveTableToFirestore(table, records);
-        if (result && result.success) {
-          this._isCloudConnected = true;
-          // Store server-confirmed updateTime for clock-skew-safe remote detection
-          if (result.updateTime) {
-            this.syncedDocVersions.set(table, result.updateTime);
-          }
-          this.updateStatusBadge('saved');
-          return true;
-        }
-        this._isCloudConnected = false;
-        this.updateStatusBadge('error');
-        return false;
-      } catch (e) {
-        console.warn(`[Storage] Firebase save warning for ${table}:`, e.message);
-        this.updateStatusBadge('error');
-        return false;
+      if (!this._tableSavePromises) this._tableSavePromises = new Map();
+
+      // If a write for this specific table is already in flight, wait for it before writing latest state
+      if (this._tableSavePromises.has(table)) {
+        try {
+          await this._tableSavePromises.get(table);
+        } catch (_) {}
       }
+
+      const currentPromise = (async () => {
+        try {
+          const currentRecords = this.data[table];
+          const result = await firebaseSync.saveTableToFirestore(table, currentRecords);
+          if (result && result.success) {
+            this._isCloudConnected = true;
+            // Store server-confirmed updateTime for clock-skew-safe remote detection
+            if (result.updateTime) {
+              this.syncedDocVersions.set(table, result.updateTime);
+            }
+            this.updateStatusBadge('saved');
+            return true;
+          }
+          this._isCloudConnected = false;
+          this.updateStatusBadge('error');
+          return false;
+        } catch (e) {
+          console.warn(`[Storage] Firebase save warning for ${table}:`, e.message);
+          this.updateStatusBadge('error');
+          return false;
+        } finally {
+          this._tableSavePromises.delete(table);
+        }
+      })();
+
+      this._tableSavePromises.set(table, currentPromise);
+      return await currentPromise;
     };
 
-    // Background (healing / init) writes use a short debounce to avoid write storms
+    // Background (healing / bulk init) writes use a short 100ms debounce
     if (!immediate) {
       if (!this._cloudPersistDebounces) this._cloudPersistDebounces = {};
       if (this._cloudPersistDebounces[table]) clearTimeout(this._cloudPersistDebounces[table]);
@@ -671,11 +691,11 @@ class StorageEngine {
         this._cloudPersistDebounces[table] = setTimeout(async () => {
           const res = await doCloudSave();
           resolve(res);
-        }, 250);
+        }, 100);
       });
     }
 
-    // Immediate (user-action) write — await confirmation
+    // Immediate (user-action) write — await confirmation with 0ms delay
     return await doCloudSave();
   }
 
@@ -793,6 +813,90 @@ class StorageEngine {
       console.warn('[Storage Multi-Device Sync] Remote check note:', err.message);
     } finally {
       this._isCheckingRemote = false;
+    }
+  }
+
+  /**
+   * Initialize native Firebase Firestore onSnapshot real-time listener
+   */
+  initRealtimeSyncListener() {
+    if (typeof window === 'undefined') return;
+    try {
+      firebaseSync.startRealtimeSync({
+        onManifestUpdate: (manifest) => {
+          this.handleRemoteManifestUpdate(manifest);
+        },
+        onStatusChange: (status) => {
+          if (status === 'connected') {
+            this._isCloudConnected = true;
+            this.updateStatusBadge('saved');
+          }
+        }
+      });
+    } catch (e) {
+      console.warn('[Storage] Real-time listener init warning:', e.message);
+    }
+  }
+
+  /**
+   * Handle real-time push notification from Firestore onSnapshot listener (<100ms latency)
+   */
+  async handleRemoteManifestUpdate(manifest) {
+    if (!manifest || typeof manifest !== 'object' || Object.keys(manifest).length === 0) return;
+    if (this._isHandlingRealtimeUpdate || this.isUserTyping()) return;
+    this._isHandlingRealtimeUpdate = true;
+
+    try {
+      const isViewingSettings = typeof window !== 'undefined' && window.state && window.state.get('currentView') === 'settings';
+      const tablesToUpdate = [];
+
+      for (const [tbl, remoteTs] of Object.entries(manifest)) {
+        if (!remoteTs || typeof remoteTs !== 'string') continue;
+        if (tbl === TABLE_NAMES.SETTINGS && isViewingSettings) continue;
+
+        // Skip our own recent local writes (less than 2.5 seconds old)
+        const localAge = Date.now() - (this.lastTableUpdates?.[tbl] || 0);
+        if (localAge < 2500) {
+          this.syncedDocVersions.set(tbl, remoteTs);
+          continue;
+        }
+
+        const knownServerTs = this.syncedDocVersions.get(tbl) || '';
+        if (remoteTs > knownServerTs) {
+          tablesToUpdate.push({ tbl, remoteTs });
+        }
+      }
+
+      if (tablesToUpdate.length === 0) return;
+
+      console.log(`[Firebase Realtime] ⚡ Real-time push: ${tablesToUpdate.length} table(s) updated:`, tablesToUpdate.map(t => t.tbl));
+
+      let anyUpdated = false;
+      for (const { tbl, remoteTs } of tablesToUpdate) {
+        const result = await firebaseSync.fetchTableFromFirestore(tbl);
+        if (result !== null && result !== undefined) {
+          const tableData = result.data !== undefined ? result.data : result;
+          const remoteUpdateTime = result.updateTime || remoteTs;
+
+          if (tableData !== null && tableData !== undefined) {
+            this.applyIncomingDatabaseRecords({ [tbl]: tableData }, `Real-time Firebase Push (${tbl})`);
+            if (!this.lastTableUpdates) this.lastTableUpdates = {};
+            this.lastTableUpdates[tbl] = Date.now();
+            const effectiveTs = remoteUpdateTime && remoteUpdateTime > remoteTs ? remoteUpdateTime : remoteTs;
+            this.syncedDocVersions.set(tbl, effectiveTs);
+            anyUpdated = true;
+          }
+        }
+      }
+
+      if (anyUpdated) {
+        this._isCloudConnected = true;
+        this.updateStatusBadge('saved');
+      }
+    } catch (err) {
+      console.warn('[Firebase Realtime] Remote manifest update handling error:', err.message);
+    } finally {
+      this._isHandlingRealtimeUpdate = false;
     }
   }
 
@@ -915,6 +1019,14 @@ class StorageEngine {
 
         if (hasMasterDataUpdated) {
           window.dispatchEvent(new CustomEvent('erp:master-data-updated'));
+        }
+        const hasTransfersUpdated = serverRecs && (
+          TABLE_NAMES.TRANSFERS in serverRecs ||
+          TABLE_NAMES.TRANSFER_REQUESTS in serverRecs ||
+          TABLE_NAMES.APPROVAL_REQUESTS in serverRecs
+        );
+        if (hasTransfersUpdated) {
+          window.dispatchEvent(new CustomEvent('erp:transfers-updated'));
         }
         window.dispatchEvent(new CustomEvent('erp:storage-updated'));
         if (hasMachinesUpdated) {
@@ -1041,14 +1153,6 @@ class StorageEngine {
     this.updateStatusBadge('saving');
 
     this._activePersistPromise = (async () => {
-      // Async trigger Firebase Cloud Firestore save in parallel
-      firebaseSync.saveAllToFirestore(this.data).then(ok => {
-        if (ok) {
-          this._isCloudConnected = true;
-          this.updateStatusBadge('saved');
-        }
-      }).catch(() => {});
-
       try {
         const payload = JSON.stringify(this.data);
         const url = getApiEndpoint('/api/db/records');
