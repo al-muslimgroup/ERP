@@ -937,11 +937,6 @@ export function initInventoryTableEvents() {
   const scrollViewport = document.getElementById('inventory-table-scroll-viewport');
   if (scrollViewport) {
     scrollViewport.addEventListener('scroll', closeAllActionMenus, { passive: true });
-    scrollViewport.addEventListener('wheel', (e) => {
-      if (e.shiftKey) {
-        scrollViewport.scrollLeft += e.deltaY;
-      }
-    }, { passive: true });
   }
   window.addEventListener('scroll', closeAllActionMenus, { passive: true });
   window.addEventListener('resize', closeAllActionMenus, { passive: true });

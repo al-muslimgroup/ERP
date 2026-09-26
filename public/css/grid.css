@@ -195,7 +195,10 @@
   min-height: 380px;
   overflow-x: auto !important; /* Real native browser horizontal scrollbar always active */
   overflow-y: auto !important;   /* Vertical scrolling inside table body */
-  overscroll-behavior: auto;
+  /* contain: prevent vertical over-scroll from propagating to the parent page */
+  overscroll-behavior: contain;
+  /* auto: do NOT use smooth scrolling — programmatic restoreAppState must be instant */
+  scroll-behavior: auto;
   -webkit-overflow-scrolling: touch;
   background-color: var(--bg-surface);
   border: 1px solid var(--border-color);

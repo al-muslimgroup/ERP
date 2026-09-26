@@ -46,7 +46,9 @@ import { renderQrCodeView, initQrCodeEvents } from './components/qrCodeView.js?v
 import { chatService } from './services/chatService.js';
 
 /**
- * Captures all active scroll, viewport, and focused input states
+ * Captures all active scroll, viewport, and focused input states.
+ * NOTE: Always captures even when value is 0, so that restoreAppState
+ * can distinguish "was at 0" from "was not captured".
  */
 function captureAppState() {
   const container = document.getElementById('main-view-container');
@@ -67,8 +69,11 @@ function captureAppState() {
     pageViewX: pageView ? pageView.scrollLeft : 0,
     gridY: grid ? grid.scrollTop : 0,
     gridX: grid ? grid.scrollLeft : 0,
+    // Always record exact positions (including 0) so restore is pixel-perfect
     invViewportY: invViewport ? invViewport.scrollTop : 0,
     invViewportX: invViewport ? invViewport.scrollLeft : 0,
+    // Flag: was the inventory viewport actively rendered?
+    hasInvViewport: !!invViewport,
     focusedId: activeEl && activeEl.id ? activeEl.id : null,
     selectionStart: activeEl && typeof activeEl.selectionStart === 'number' ? activeEl.selectionStart : null,
     selectionEnd: activeEl && typeof activeEl.selectionEnd === 'number' ? activeEl.selectionEnd : null
@@ -76,7 +81,11 @@ function captureAppState() {
 }
 
 /**
- * Restores exact scroll, viewport, and focused input states with zero layout shifting
+ * Restores exact scroll, viewport, and focused input states.
+ * Uses a triple-rAF chain so that:
+ *   Frame 1 — HTML is in the DOM
+ *   Frame 2 — browser has laid out and measured new DOM
+ *   Frame 3 — scrollTop/scrollLeft assignments land after layout is stable
  */
 function restoreAppState(saved) {
   if (!saved) return;
@@ -112,10 +121,11 @@ function restoreAppState(saved) {
     }
 
     // Restore inventory table dedicated scroll viewport (horizontal + vertical)
+    // Apply to both top=0 and top>0 cases so position is always pixel-perfect
     const invViewport = document.getElementById('inventory-table-scroll-viewport');
-    if (invViewport) {
-      if (saved.invViewportY > 0) invViewport.scrollTop = saved.invViewportY;
-      if (saved.invViewportX > 0) invViewport.scrollLeft = saved.invViewportX;
+    if (invViewport && saved.hasInvViewport) {
+      invViewport.scrollTop = saved.invViewportY;
+      invViewport.scrollLeft = saved.invViewportX;
     }
 
     if (saved.focusedId) {
@@ -131,8 +141,50 @@ function restoreAppState(saved) {
     }
   };
 
+  // Immediate synchronous restore: guarantees zero flicker and prevents intermediate zero-state capture
   apply();
-  requestAnimationFrame(apply);
+
+  // Next-frame confirmation: handles layout settlement & custom font/element metrics
+  requestAnimationFrame(() => {
+    apply();
+    requestAnimationFrame(apply);
+  });
+}
+
+/** Tracks whether the user is actively scrolling the inventory viewport or main container */
+let _invScrollActive = false;
+let _invScrollTimer = null;
+let _invPendingReRender = false;
+
+function _initInvScrollGuard() {
+  const vp = document.getElementById('inventory-table-scroll-viewport');
+  const mainContainer = document.getElementById('main-view-container');
+
+  const onScroll = () => {
+    _invScrollActive = true;
+    if (vp) vp._isScrolling = true;
+    clearTimeout(_invScrollTimer);
+    _invScrollTimer = setTimeout(() => {
+      _invScrollActive = false;
+      if (vp) vp._isScrolling = false;
+      if (_invPendingReRender) {
+        _invPendingReRender = false;
+        if (window.__erpApp) {
+          window.__erpApp.queueBackgroundRender();
+        }
+      }
+    }, 1200);
+  };
+
+  if (vp && !vp._scrollGuardAttached) {
+    vp._scrollGuardAttached = true;
+    vp.addEventListener('scroll', onScroll, { passive: true });
+  }
+
+  if (mainContainer && !mainContainer._scrollGuardAttached) {
+    mainContainer._scrollGuardAttached = true;
+    mainContainer.addEventListener('scroll', onScroll, { passive: true });
+  }
 }
 
 class ERPApplication {
@@ -153,12 +205,12 @@ class ERPApplication {
     state.on('change:masterDataActiveTab', () => this.renderMainContent());
     state.on('filters:changed', () => this.renderMainContent());
     state.on('columns:changed', () => this.renderMainContent());
-    state.on('inventory:updated', () => this.renderMainContent(true, true));
+    state.on('inventory:updated', () => this.queueBackgroundRender());
     state.on('change:agentPanelOpen', () => this.renderAgentPanel());
 
     window.addEventListener('erp:relocate-updated', () => {
       if (state.get('currentView') === 'relocate') {
-        this.renderMainContent(true, true);
+        this.queueBackgroundRender();
       }
     });
 
@@ -173,43 +225,43 @@ class ERPApplication {
 
     window.addEventListener('erp:notification', (e) => {
       this.showToast('🔔 ' + e.detail.title, e.detail.message, 'info');
-      this.renderMainContent(true, true);
+      this.queueBackgroundRender();
     });
 
     window.addEventListener('erp:fields-updated', () => {
-      this.renderMainContent(true, true);
+      this.queueBackgroundRender();
     });
 
     window.addEventListener('erp:excel-structure-updated', () => {
-      this.renderMainContent(true, true);
+      this.queueBackgroundRender();
     });
 
     window.addEventListener('erp:master-data-updated', () => {
-      this.renderMainContent(true, true);
+      this.queueBackgroundRender();
     });
 
     window.addEventListener('erp:et-lab-updated', () => {
-      this.renderMainContent(true, true);
+      this.queueBackgroundRender();
     });
 
     window.addEventListener('erp:storage-updated', () => {
-      this.renderMainContent(true, true);
+      this.queueBackgroundRender();
     });
 
     // Re-render when homepage config changes from another device (via Firebase polling)
     window.addEventListener('erp:homepage-updated', () => {
       const cv = state.get('currentView');
       if (cv === 'home') {
-        this.renderMainContent(true, true);
+        this.queueBackgroundRender();
       }
     });
 
     window.addEventListener('erp:preventive-maintenance-updated', () => {
-      this.renderMainContent(true, true);
+      this.queueBackgroundRender();
     });
 
     window.addEventListener('erp:audit-logs-updated', () => {
-      this.renderMainContent(true, true);
+      this.queueBackgroundRender();
     });
 
     window.__appLoaded = true;
@@ -405,11 +457,24 @@ class ERPApplication {
     return false;
   }
 
+  queueBackgroundRender() {
+    clearTimeout(this._bgRenderDebounceTimer);
+    this._bgRenderDebounceTimer = setTimeout(() => {
+      this.renderMainContent(true, true);
+    }, 100);
+  }
+
   renderMainContent(preserveScroll = true, isBackgroundSync = false) {
     try {
       if (isBackgroundSync) {
         if (this.isUserEditing()) {
           console.log('[ERP] Background re-render skipped: user is actively editing');
+          return;
+        }
+        // Skip background re-render while user is actively scrolling the inventory table or page
+        if (_invScrollActive) {
+          console.log('[ERP] Background re-render deferred: viewport is actively being scrolled');
+          _invPendingReRender = true;
           return;
         }
         const cv = state.get('currentView');
@@ -423,6 +488,8 @@ class ERPApplication {
         const savedState = preserveScroll ? captureAppState() : null;
         container.innerHTML = this.getActiveViewHtml();
         this.initViewEvents();
+        // Re-attach scroll guard to newly rendered inventory viewport
+        _initInvScrollGuard();
         if (preserveScroll && savedState) {
           restoreAppState(savedState);
         } else {
@@ -616,6 +683,8 @@ class ERPApplication {
         break;
       case 'inventory':
         initInventoryTableEvents();
+        // Attach scroll guard after events are initialized — protects against Firebase re-render during scroll
+        _initInvScrollGuard();
         break;
       case 'relocate':
         initRelocateViewEvents();
@@ -838,6 +907,7 @@ class ERPApplication {
 export const app = new ERPApplication();
 if (typeof window !== 'undefined') {
   window.app = app;
+  window.__erpApp = app;
 }
 
 if (typeof document !== 'undefined') {

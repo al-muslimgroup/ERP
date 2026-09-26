@@ -733,6 +733,11 @@ class StorageEngine {
       if (typeof window !== 'undefined' && window.state && window.state.get('activeModal')) {
         return true;
       }
+      // Also block sync re-render if the user is actively scrolling the inventory table
+      if (typeof document !== 'undefined') {
+        const invVp = document.getElementById('inventory-table-scroll-viewport');
+        if (invVp && invVp._scrollGuardAttached && invVp._isScrolling) return true;
+      }
     } catch (_) {}
     return false;
   }
@@ -774,9 +779,8 @@ class StorageEngine {
               this.applyIncomingDatabaseRecords({ [tbl]: tableData }, `Remote Cloud (${tbl})`);
               this.lastTableUpdates[tbl] = Date.now();
               // Mark that we know about this server version — prevent re-fetching our own writes
-              if (remoteUpdateTime) {
-                this.syncedDocVersions.set(tbl, remoteUpdateTime);
-              }
+              const effectiveTs = remoteUpdateTime && remoteUpdateTime > remoteTs ? remoteUpdateTime : remoteTs;
+              this.syncedDocVersions.set(tbl, effectiveTs);
               anyUpdated = true;
             }
           }
@@ -897,11 +901,27 @@ class StorageEngine {
       console.log(`[Database Store] ✅ Synchronized with ${sourceName}. Total machines: ${this.data[TABLE_NAMES.MACHINES]?.length || 0}, Total lines: ${this.data[TABLE_NAMES.LINES]?.length || 0}`);
 
       if (typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('erp:master-data-updated'));
+        const hasMachinesUpdated = serverRecs && (TABLE_NAMES.MACHINES in serverRecs);
+        const hasMasterDataUpdated = serverRecs && (
+          TABLE_NAMES.GROUPS in serverRecs ||
+          TABLE_NAMES.UNITS in serverRecs ||
+          TABLE_NAMES.FLOORS in serverRecs ||
+          TABLE_NAMES.LINES in serverRecs ||
+          TABLE_NAMES.MACHINE_NAMES in serverRecs ||
+          TABLE_NAMES.BRANDS in serverRecs ||
+          TABLE_NAMES.MODELS in serverRecs ||
+          TABLE_NAMES.CATEGORIES in serverRecs
+        );
+
+        if (hasMasterDataUpdated) {
+          window.dispatchEvent(new CustomEvent('erp:master-data-updated'));
+        }
         window.dispatchEvent(new CustomEvent('erp:storage-updated'));
-        window.dispatchEvent(new CustomEvent('erp:inventory-updated'));
-        if (window.state && typeof window.state.emit === 'function') {
-          window.state.emit('inventory:updated');
+        if (hasMachinesUpdated) {
+          window.dispatchEvent(new CustomEvent('erp:inventory-updated'));
+          if (window.state && typeof window.state.emit === 'function') {
+            window.state.emit('inventory:updated');
+          }
         }
         // Dispatch homepage-specific event when homepage_config is updated from remote
         if (serverRecs && serverRecs[TABLE_NAMES.HOMEPAGE_CONFIG]) {
