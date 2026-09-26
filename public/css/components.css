@@ -4,6 +4,38 @@
  */
 
 /* Modal Backdrop & Dialog */
+#modal-layer,
+#user-modal-layer,
+#storage-modal-layer,
+#pm-modal-layer,
+#relocate-modal-container,
+#relocate-scanner-slot,
+#tools-modal-layer,
+.modal-layer-container,
+[id$="-modal-layer"],
+[id$="-modal-container"] {
+  position: fixed !important;
+  top: 0 !important;
+  left: 0 !important;
+  width: 0 !important;
+  height: 0 !important;
+  pointer-events: none !important;
+  z-index: 10000 !important;
+}
+
+#modal-layer > *,
+#user-modal-layer > *,
+#storage-modal-layer > *,
+#pm-modal-layer > *,
+#relocate-modal-container > *,
+#relocate-scanner-slot > *,
+#tools-modal-layer > *,
+.modal-layer-container > *,
+[id$="-modal-layer"] > *,
+[id$="-modal-container"] > * {
+  pointer-events: auto !important;
+}
+
 .modal-overlay {
   position: fixed !important;
   top: 0 !important;

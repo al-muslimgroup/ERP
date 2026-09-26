@@ -1782,7 +1782,7 @@ class SmartStorageService {
     // Focus primary button for fast Enter keypress
     setTimeout(() => {
       const confirmBtn = document.getElementById('btn-correction-confirm');
-      if (confirmBtn) confirmBtn.focus();
+      if (confirmBtn) confirmBtn.focus({ preventScroll: true });
     }, 50);
 
     const handleConfirm = () => {

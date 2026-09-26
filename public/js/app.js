@@ -91,7 +91,7 @@ function restoreAppState(saved) {
   if (!saved) return;
 
   const apply = () => {
-    if (saved.windowY > 0 || saved.windowX > 0) {
+    if (window.scrollY !== saved.windowY || window.scrollX !== saved.windowX) {
       window.scrollTo(saved.windowX, saved.windowY);
       if (document.documentElement) document.documentElement.scrollTop = saved.windowY;
       if (document.body) document.body.scrollTop = saved.windowY;
@@ -104,20 +104,20 @@ function restoreAppState(saved) {
 
     const container = document.getElementById('main-view-container');
     if (container) {
-      if (saved.containerY > 0) container.scrollTop = saved.containerY;
-      if (saved.containerX > 0) container.scrollLeft = saved.containerX;
+      container.scrollTop = saved.containerY;
+      container.scrollLeft = saved.containerX;
     }
 
     const pageView = document.querySelector('.page-view');
     if (pageView) {
-      if (saved.pageViewY > 0) pageView.scrollTop = saved.pageViewY;
-      if (saved.pageViewX > 0) pageView.scrollLeft = saved.pageViewX;
+      pageView.scrollTop = saved.pageViewY;
+      pageView.scrollLeft = saved.pageViewX;
     }
 
     const grid = document.querySelector('.excel-grid-container, .table-responsive, .history-content-area, .master-data-content, #reports-tab-content');
     if (grid) {
-      if (saved.gridY > 0) grid.scrollTop = saved.gridY;
-      if (saved.gridX > 0) grid.scrollLeft = saved.gridX;
+      grid.scrollTop = saved.gridY;
+      grid.scrollLeft = saved.gridX;
     }
 
     // Restore inventory table dedicated scroll viewport (horizontal + vertical)
@@ -552,7 +552,7 @@ class ERPApplication {
           invViewport.scrollTop = savedInvViewportY;
           invViewport.scrollLeft = savedInvViewportX;
         }
-        if (savedWindowY > 0 || savedWindowX > 0) {
+        if (window.scrollY !== savedWindowY || window.scrollX !== savedWindowX) {
           window.scrollTo({ top: savedWindowY, left: savedWindowX, behavior: 'instant' });
         }
       };

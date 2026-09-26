@@ -2483,6 +2483,8 @@ export function initRelocateViewEvents() {
     const pv = container.querySelector('.page-view');
     const pvY = pv ? pv.scrollTop : 0;
     const pvX = pv ? pv.scrollLeft : 0;
+    const winY = window.scrollY || document.documentElement.scrollTop || 0;
+    const winX = window.scrollX || document.documentElement.scrollLeft || 0;
 
     container.innerHTML = renderRelocateView();
     initRelocateViewEvents();
@@ -2494,6 +2496,9 @@ export function initRelocateViewEvents() {
       if (newPv) {
         newPv.scrollTop = pvY;
         newPv.scrollLeft = pvX;
+      }
+      if (winY > 0 || winX > 0) {
+        window.scrollTo({ top: winY, left: winX, behavior: 'instant' });
       }
     };
     restore();

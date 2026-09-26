@@ -3178,15 +3178,53 @@ function closeModal() {
   activePmModal = null;
   modalMachineContext = null;
   modalServiceContext = null;
-  rerenderView();
+
+  const modalLayer = document.getElementById('pm-modal-layer');
+  if (modalLayer) {
+    modalLayer.innerHTML = '';
+  } else {
+    rerenderView();
+  }
 }
 
 function rerenderView() {
   const container = document.getElementById('main-view-container');
-  if (container) {
-    container.innerHTML = renderPreventiveMaintenanceView();
-    initPreventiveMaintenanceEvents();
-  }
+  if (!container) return;
+
+  const containerY = container.scrollTop;
+  const containerX = container.scrollLeft;
+  const pageView = container.querySelector('.page-view');
+  const pageViewY = pageView ? pageView.scrollTop : 0;
+  const pageViewX = pageView ? pageView.scrollLeft : 0;
+  const tableWrap = container.querySelector('.table-responsive, .pm-table-container, .pm-table-wrapper');
+  const tableY = tableWrap ? tableWrap.scrollTop : 0;
+  const tableX = tableWrap ? tableWrap.scrollLeft : 0;
+  const winY = window.scrollY || document.documentElement.scrollTop || 0;
+  const winX = window.scrollX || document.documentElement.scrollLeft || 0;
+
+  container.innerHTML = renderPreventiveMaintenanceView();
+  initPreventiveMaintenanceEvents();
+
+  const restore = () => {
+    container.scrollTop = containerY;
+    container.scrollLeft = containerX;
+    const newPv = container.querySelector('.page-view');
+    if (newPv) {
+      newPv.scrollTop = pageViewY;
+      newPv.scrollLeft = pageViewX;
+    }
+    const newTw = container.querySelector('.table-responsive, .pm-table-container, .pm-table-wrapper');
+    if (newTw) {
+      newTw.scrollTop = tableY;
+      newTw.scrollLeft = tableX;
+    }
+    if (winY > 0 || winX > 0) {
+      window.scrollTo({ top: winY, left: winX, behavior: 'instant' });
+    }
+  };
+
+  restore();
+  requestAnimationFrame(restore);
 }
 
 function exportMaintenanceToExcel() {

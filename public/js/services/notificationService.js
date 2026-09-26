@@ -145,7 +145,7 @@ class NotificationService {
                 ${title}
               </h3>
             </div>
-            <button class="btn btn-ghost btn-sm" id="btn-erp-confirm-x" style="font-size: 16px;">✕</button>
+            <button type="button" class="btn btn-ghost btn-sm" id="btn-erp-confirm-x" style="font-size: 16px;">✕</button>
           </div>
 
           <div style="padding: 16px 0; font-size: 13px; color: var(--text-secondary); line-height: 1.6;">

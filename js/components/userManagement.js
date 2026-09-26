@@ -1123,20 +1123,22 @@ function renderActiveModalHtml() {
     // Master data for location scope selection
     const allUnits = masterDataService.getAllUnits();
     const selectedUnitIds = currentScope.unitIds || [];
-    
+    const allFloors = masterDataService.getAllFloors();
+    const selectedFloorIds = currentScope.floorIds || [];
+    const allLines = masterDataService.getAllLines();
+    const selectedLineIds = currentScope.lineIds || [];
+
     // Floors belonging to selected units (or all if none explicitly selected)
     const availableFloors = selectedUnitIds.length > 0
-      ? masterDataService.getAllFloors().filter(f => selectedUnitIds.includes(f.unitId))
-      : masterDataService.getAllFloors();
-    const selectedFloorIds = currentScope.floorIds || [];
+      ? allFloors.filter(f => selectedUnitIds.includes(f.unitId))
+      : allFloors;
 
     // Lines belonging to selected floors
     const availableLines = selectedFloorIds.length > 0
-      ? masterDataService.getAllLines().filter(l => selectedFloorIds.includes(l.floorId))
+      ? allLines.filter(l => selectedFloorIds.includes(l.floorId))
       : (selectedUnitIds.length > 0
-          ? masterDataService.getAllLines().filter(l => availableFloors.some(f => f.id === l.floorId))
-          : masterDataService.getAllLines());
-    const selectedLineIds = currentScope.lineIds || [];
+          ? allLines.filter(l => availableFloors.some(f => f.id === l.floorId))
+          : allLines);
 
     return `
       <div class="modal-overlay" style="display: flex; align-items: center; justify-content: center; background: rgba(8, 13, 26, 0.85); backdrop-filter: blur(8px); z-index: 9999;">
@@ -1182,8 +1184,8 @@ function renderActiveModalHtml() {
             </button>
           </div>
 
-          ${activeModalTab === 'PERMISSIONS' ? `
-            <!-- TAB 1: 7-ACTION PERMISSION MATRIX -->
+          <!-- TAB 1: 7-ACTION PERMISSION MATRIX -->
+          <div id="user-tab-panel-perms" style="display: ${activeModalTab === 'PERMISSIONS' ? 'flex' : 'none'}; flex-direction: column; flex: 1; min-height: 0;">
             <!-- Quick Action Preset Toolbar -->
             <div style="background: rgba(15, 23, 42, 0.85); padding: 8px 20px; border-bottom: 1px solid var(--border-color); display: flex; flex-direction: column; gap: 6px; flex-shrink: 0;">
               
@@ -1451,13 +1453,15 @@ function renderActiveModalHtml() {
 
             <!-- Footer Actions -->
             <div style="background: var(--bg-surface); padding: 12px 24px; border-top: 1px solid var(--border-color); display: flex; justify-content: flex-end; gap: 10px; flex-shrink: 0;">
-              <button type="button" id="btn-cancel-modal" class="btn btn-secondary" style="font-weight: 600;">Cancel</button>
+              <button type="button" class="btn btn-secondary btn-cancel-user-modal" style="font-weight: 600;">Cancel</button>
               <button type="button" id="btn-save-user-perms" class="btn btn-primary" style="font-weight: 700; background: linear-gradient(135deg, #0284c7, #0369a1); padding: 8px 24px;">
                 💾 Save Permissions
               </button>
             </div>
-          ` : `
-            <!-- TAB 2: LOCATION-BASED DATA ACCESS SCOPING -->
+          </div>
+
+          <!-- TAB 2: LOCATION-BASED DATA ACCESS SCOPING -->
+          <div id="user-tab-panel-scope" style="display: ${activeModalTab === 'LOCATION_SCOPE' ? 'flex' : 'none'}; flex-direction: column; flex: 1; min-height: 0;">
             <div style="padding: 16px 24px; overflow-y: auto; flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 16px;">
               
               <!-- Scope Mode Selector Card -->
@@ -1470,7 +1474,7 @@ function renderActiveModalHtml() {
                 </div>
 
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px;">
-                  <label style="display: flex; align-items: flex-start; gap: 10px; cursor: pointer; color: #fff; background: ${currentScope.allGroups ? 'rgba(56, 189, 248, 0.15)' : 'rgba(15, 23, 42, 0.4)'}; border: 1.5px solid ${currentScope.allGroups ? '#38bdf8' : 'var(--border-color)'}; padding: 12px 16px; border-radius: var(--radius-md);">
+                  <label id="scope-mode-all-card" style="display: flex; align-items: flex-start; gap: 10px; cursor: pointer; color: #fff; background: ${currentScope.allGroups ? 'rgba(56, 189, 248, 0.15)' : 'rgba(15, 23, 42, 0.4)'}; border: 1.5px solid ${currentScope.allGroups ? '#38bdf8' : 'var(--border-color)'}; padding: 12px 16px; border-radius: var(--radius-md);">
                     <input type="radio" name="scope-mode" id="scope-mode-all" value="ALL" ${currentScope.allGroups ? 'checked' : ''} style="cursor: pointer; accent-color: #38bdf8; margin-top: 3px;" />
                     <div>
                       <div style="font-weight: 700; font-size: 13px; color: #38bdf8;">🌐 All Locations (Unrestricted Global Access)</div>
@@ -1478,7 +1482,7 @@ function renderActiveModalHtml() {
                     </div>
                   </label>
 
-                  <label style="display: flex; align-items: flex-start; gap: 10px; cursor: pointer; color: #fff; background: ${!currentScope.allGroups ? 'rgba(234, 179, 8, 0.15)' : 'rgba(15, 23, 42, 0.4)'}; border: 1.5px solid ${!currentScope.allGroups ? '#facc15' : 'var(--border-color)'}; padding: 12px 16px; border-radius: var(--radius-md);">
+                  <label id="scope-mode-restricted-card" style="display: flex; align-items: flex-start; gap: 10px; cursor: pointer; color: #fff; background: ${!currentScope.allGroups ? 'rgba(234, 179, 8, 0.15)' : 'rgba(15, 23, 42, 0.4)'}; border: 1.5px solid ${!currentScope.allGroups ? '#facc15' : 'var(--border-color)'}; padding: 12px 16px; border-radius: var(--radius-md);">
                     <input type="radio" name="scope-mode" id="scope-mode-restricted" value="RESTRICTED" ${!currentScope.allGroups ? 'checked' : ''} style="cursor: pointer; accent-color: #facc15; margin-top: 3px;" />
                     <div>
                       <div style="font-weight: 700; font-size: 13px; color: #facc15;">📍 Restricted Scope (Assigned Plants &amp; Lines Only)</div>
@@ -1492,13 +1496,15 @@ function renderActiveModalHtml() {
               <div style="background: rgba(15, 23, 42, 0.6); border: 1px solid var(--border-color); border-radius: var(--radius-md); padding: 10px 18px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px;">
                 <div style="display: flex; align-items: center; gap: 8px; font-size: 12.5px;">
                   <span style="font-weight: 700; color: #fff;">📌 Live Scope Status:</span>
-                  ${currentScope.allGroups ? `
-                    <span class="badge" style="background: rgba(56, 189, 248, 0.2); color: #38bdf8; font-weight: 700;">🌐 Unrestricted Global Access (All Locations)</span>
-                  ` : `
-                    <span class="badge" style="background: rgba(234, 179, 8, 0.2); color: #facc15; font-weight: 700;">
-                      📍 ${selectedUnitIds.length} Unit(s) &bull; ${selectedFloorIds.length} Floor(s) &bull; ${selectedLineIds.length} Line(s)
-                    </span>
-                  `}
+                  <div id="scope-live-status-container">
+                    ${currentScope.allGroups ? `
+                      <span class="badge" style="background: rgba(56, 189, 248, 0.2); color: #38bdf8; font-weight: 700;">🌐 Unrestricted Global Access (All Locations)</span>
+                    ` : `
+                      <span class="badge" style="background: rgba(234, 179, 8, 0.2); color: #facc15; font-weight: 700;">
+                        📍 ${selectedUnitIds.length} Unit(s) &bull; ${selectedFloorIds.length} Floor(s) &bull; ${selectedLineIds.length} Line(s)
+                      </span>
+                    `}
+                  </div>
                 </div>
                 <div style="font-size: 11.5px; color: var(--text-muted);">
                   Equipment outside authorized locations will not be visible or accessible to this account.
@@ -1545,7 +1551,7 @@ function renderActiveModalHtml() {
                 <div style="background: var(--bg-surface); border: 1px solid var(--border-color); border-radius: var(--radius-lg); display: flex; flex-direction: column; overflow: hidden;">
                   <div style="padding: 10px 14px; background: rgba(2, 132, 199, 0.15); border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center;">
                     <div style="font-weight: 800; font-size: 12.5px; color: #38bdf8;">
-                      🏢 2. Plant Floors (${availableFloors.length})
+                      🏢 2. Plant Floors (<span id="scope-floors-count">${availableFloors.length}</span>)
                     </div>
                     <div style="display: flex; gap: 6px;">
                       <button type="button" id="btn-scope-all-floors" class="btn btn-ghost btn-xs" style="font-size: 10.5px; padding: 2px 5px; color: #38bdf8;">All</button>
@@ -1553,15 +1559,16 @@ function renderActiveModalHtml() {
                     </div>
                   </div>
                   <div id="scope-floors-scroll-list" style="padding: 10px; overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 6px;">
-                    ${availableFloors.length === 0 ? `
+                    ${allFloors.length === 0 ? `
                       <div style="color: var(--text-muted); font-size: 12px; text-align: center; padding: 20px;">
-                        ${selectedUnitIds.length === 0 ? 'Select a Unit on the left first' : 'No floors found under selected Unit(s)'}
+                        No floors found
                       </div>
-                    ` : availableFloors.map(flr => {
+                    ` : allFloors.map(flr => {
                       const isChecked = selectedFloorIds.includes(flr.id);
+                      const isVisible = selectedUnitIds.length === 0 || selectedUnitIds.includes(flr.unitId);
                       const parentUnit = allUnits.find(u => u.id === flr.unitId);
                       return `
-                        <label style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: #fff; cursor: pointer; padding: 6px 8px; border-radius: var(--radius-sm); background: ${isChecked ? 'rgba(56, 189, 248, 0.12)' : 'transparent'}; border: 1px solid ${isChecked ? 'rgba(56, 189, 248, 0.3)' : 'transparent'};">
+                        <label class="scope-floor-item" data-id="${flr.id}" data-unit="${flr.unitId}" style="display: ${isVisible ? 'flex' : 'none'}; align-items: center; gap: 8px; font-size: 12px; color: #fff; cursor: pointer; padding: 6px 8px; border-radius: var(--radius-sm); background: ${isChecked ? 'rgba(56, 189, 248, 0.12)' : 'transparent'}; border: 1px solid ${isChecked ? 'rgba(56, 189, 248, 0.3)' : 'transparent'};">
                           <input 
                             type="checkbox" 
                             class="chk-scope-floor" 
@@ -1582,7 +1589,7 @@ function renderActiveModalHtml() {
                 <div style="background: var(--bg-surface); border: 1px solid var(--border-color); border-radius: var(--radius-lg); display: flex; flex-direction: column; overflow: hidden;">
                   <div style="padding: 10px 14px; background: rgba(2, 132, 199, 0.15); border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center;">
                     <div style="font-weight: 800; font-size: 12.5px; color: #38bdf8;">
-                      🧵 3. Production Lines (${availableLines.length})
+                      🧵 3. Production Lines (<span id="scope-lines-count">${availableLines.length}</span>)
                     </div>
                     <div style="display: flex; gap: 6px;">
                       <button type="button" id="btn-scope-all-lines" class="btn btn-ghost btn-xs" style="font-size: 10.5px; padding: 2px 5px; color: #38bdf8;">All</button>
@@ -1590,15 +1597,17 @@ function renderActiveModalHtml() {
                     </div>
                   </div>
                   <div id="scope-lines-scroll-list" style="padding: 10px; overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 6px;">
-                    ${availableLines.length === 0 ? `
+                    ${allLines.length === 0 ? `
                       <div style="color: var(--text-muted); font-size: 12px; text-align: center; padding: 20px;">
-                        ${selectedFloorIds.length === 0 ? 'Select a Floor to assign specific lines' : 'No lines found under selected Floor(s)'}
+                        No lines found
                       </div>
-                    ` : availableLines.map(lin => {
+                    ` : allLines.map(lin => {
                       const isChecked = selectedLineIds.includes(lin.id);
-                      const parentFloor = availableFloors.find(f => f.id === lin.floorId);
+                      const parentFloor = allFloors.find(f => f.id === lin.floorId);
+                      const parentUnitId = parentFloor ? parentFloor.unitId : '';
+                      const isVisible = selectedFloorIds.length > 0 ? selectedFloorIds.includes(lin.floorId) : (selectedUnitIds.length === 0 || selectedUnitIds.includes(parentUnitId));
                       return `
-                        <label style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: #fff; cursor: pointer; padding: 6px 8px; border-radius: var(--radius-sm); background: ${isChecked ? 'rgba(56, 189, 248, 0.12)' : 'transparent'}; border: 1px solid ${isChecked ? 'rgba(56, 189, 248, 0.3)' : 'transparent'};">
+                        <label class="scope-line-item" data-id="${lin.id}" data-floor="${lin.floorId}" data-unit="${parentUnitId}" style="display: ${isVisible ? 'flex' : 'none'}; align-items: center; gap: 8px; font-size: 12px; color: #fff; cursor: pointer; padding: 6px 8px; border-radius: var(--radius-sm); background: ${isChecked ? 'rgba(56, 189, 248, 0.12)' : 'transparent'}; border: 1px solid ${isChecked ? 'rgba(56, 189, 248, 0.3)' : 'transparent'};">
                           <input 
                             type="checkbox" 
                             class="chk-scope-line" 
@@ -1621,12 +1630,12 @@ function renderActiveModalHtml() {
 
             <!-- Footer Actions -->
             <div style="background: var(--bg-surface); padding: 12px 24px; border-top: 1px solid var(--border-color); display: flex; justify-content: flex-end; gap: 10px; flex-shrink: 0;">
-              <button type="button" id="btn-cancel-modal" class="btn btn-secondary" style="font-weight: 600;">Cancel</button>
+              <button type="button" class="btn btn-secondary btn-cancel-user-modal" style="font-weight: 600;">Cancel</button>
               <button type="button" id="btn-save-user-scope" class="btn btn-primary" style="font-weight: 700; background: linear-gradient(135deg, #0284c7, #0369a1); padding: 8px 24px;">
                 💾 Save Location Scope
               </button>
             </div>
-          `}
+          </div>
 
         </div>
       </div>
@@ -1718,18 +1727,20 @@ function renderActiveModalHtml() {
     // Master data for location scope selection
     const allUnits = masterDataService.getAllUnits();
     const selectedUnitIds = currentScope.unitIds || [];
+    const allFloors = masterDataService.getAllFloors();
+    const selectedFloorIds = currentScope.floorIds || [];
+    const allLines = masterDataService.getAllLines();
+    const selectedLineIds = currentScope.lineIds || [];
     
     const availableFloors = selectedUnitIds.length > 0
-      ? masterDataService.getAllFloors().filter(f => selectedUnitIds.includes(f.unitId))
-      : masterDataService.getAllFloors();
-    const selectedFloorIds = currentScope.floorIds || [];
+      ? allFloors.filter(f => selectedUnitIds.includes(f.unitId))
+      : allFloors;
 
     const availableLines = selectedFloorIds.length > 0
-      ? masterDataService.getAllLines().filter(l => selectedFloorIds.includes(l.floorId))
+      ? allLines.filter(l => selectedFloorIds.includes(l.floorId))
       : (selectedUnitIds.length > 0
-          ? masterDataService.getAllLines().filter(l => availableFloors.some(f => f.id === l.floorId))
-          : masterDataService.getAllLines());
-    const selectedLineIds = currentScope.lineIds || [];
+          ? allLines.filter(l => availableFloors.some(f => f.id === l.floorId))
+          : allLines);
 
     return `
       <div class="modal-overlay" style="display: flex; align-items: center; justify-content: center; background: rgba(8, 13, 26, 0.85); backdrop-filter: blur(8px); z-index: 9999;">
@@ -1846,8 +1857,8 @@ function renderActiveModalHtml() {
             </button>
           </div>
 
-          ${activeModalTab === 'PERMISSIONS' ? `
-            <!-- TAB 1: 7-ACTION PERMISSION MATRIX -->
+          <!-- TAB 1: 7-ACTION PERMISSION MATRIX -->
+          <div id="preset-tab-panel-perms" style="display: ${activeModalTab === 'PERMISSIONS' ? 'flex' : 'none'}; flex-direction: column; flex: 1; min-height: 0;">
             <div style="background: rgba(15, 23, 42, 0.85); padding: 8px 20px; border-bottom: 1px solid var(--border-color); display: flex; flex-direction: column; gap: 6px; flex-shrink: 0;">
               
               <!-- Quick Action Presets -->
@@ -2019,15 +2030,17 @@ function renderActiveModalHtml() {
                 </tbody>
               </table>
             </div>
-          ` : `
-            <!-- TAB 2: LOCATION SCOPE -->
+          </div>
+
+          <!-- TAB 2: LOCATION SCOPE -->
+          <div id="preset-tab-panel-scope" style="display: ${activeModalTab === 'LOCATION_SCOPE' ? 'flex' : 'none'}; flex-direction: column; flex: 1; min-height: 0;">
             <div style="padding: 16px 24px; overflow-y: auto; flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 16px;">
               <div style="background: rgba(15, 23, 42, 0.4); border: 1px solid var(--border-color); border-radius: var(--radius-lg); padding: 14px 18px;">
                 <div style="font-weight: 700; font-size: 13px; color: #fff; margin-bottom: 10px;">
                   Default Location Scope Policy:
                 </div>
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
-                  <label style="display: flex; align-items: flex-start; gap: 10px; cursor: pointer; color: #fff; background: ${currentScope.allGroups ? 'rgba(56, 189, 248, 0.15)' : 'rgba(15, 23, 42, 0.4)'}; border: 1.5px solid ${currentScope.allGroups ? '#38bdf8' : 'var(--border-color)'}; padding: 12px 16px; border-radius: var(--radius-md);">
+                  <label id="scope-mode-all-card" style="display: flex; align-items: flex-start; gap: 10px; cursor: pointer; color: #fff; background: ${currentScope.allGroups ? 'rgba(56, 189, 248, 0.15)' : 'rgba(15, 23, 42, 0.4)'}; border: 1.5px solid ${currentScope.allGroups ? '#38bdf8' : 'var(--border-color)'}; padding: 12px 16px; border-radius: var(--radius-md);">
                     <input type="radio" name="scope-mode" id="scope-mode-all" value="GLOBAL" ${currentScope.allGroups ? 'checked' : ''} style="cursor: pointer; accent-color: #0284c7; margin-top: 3px;" />
                     <div>
                       <div style="font-weight: 700; font-size: 13px; color: #38bdf8;">🌐 Unrestricted Global Access</div>
@@ -2035,7 +2048,7 @@ function renderActiveModalHtml() {
                     </div>
                   </label>
 
-                  <label style="display: flex; align-items: flex-start; gap: 10px; cursor: pointer; color: #fff; background: ${!currentScope.allGroups ? 'rgba(234, 179, 8, 0.15)' : 'rgba(15, 23, 42, 0.4)'}; border: 1.5px solid ${!currentScope.allGroups ? '#facc15' : 'var(--border-color)'}; padding: 12px 16px; border-radius: var(--radius-md);">
+                  <label id="scope-mode-restricted-card" style="display: flex; align-items: flex-start; gap: 10px; cursor: pointer; color: #fff; background: ${!currentScope.allGroups ? 'rgba(234, 179, 8, 0.15)' : 'rgba(15, 23, 42, 0.4)'}; border: 1.5px solid ${!currentScope.allGroups ? '#facc15' : 'var(--border-color)'}; padding: 12px 16px; border-radius: var(--radius-md);">
                     <input type="radio" name="scope-mode" id="scope-mode-restricted" value="RESTRICTED" ${!currentScope.allGroups ? 'checked' : ''} style="cursor: pointer; accent-color: #facc15; margin-top: 3px;" />
                     <div>
                       <div style="font-weight: 700; font-size: 13px; color: #facc15;">📍 Restricted Factory Scope</div>
@@ -2056,7 +2069,7 @@ function renderActiveModalHtml() {
                       <button type="button" id="btn-scope-clear-units" class="btn btn-ghost btn-xs" style="font-size: 10.5px; padding: 2px 5px; color: var(--text-muted);">Clear</button>
                     </div>
                   </div>
-                  <div style="padding: 10px; overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 6px;">
+                  <div id="scope-units-scroll-list" style="padding: 10px; overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 6px;">
                     ${allUnits.map(unt => {
                       const isChecked = selectedUnitIds.includes(unt.id);
                       return `
@@ -2072,18 +2085,19 @@ function renderActiveModalHtml() {
                 <!-- Panel 2: Floors -->
                 <div style="background: var(--bg-surface); border: 1px solid var(--border-color); border-radius: var(--radius-lg); display: flex; flex-direction: column; overflow: hidden;">
                   <div style="padding: 10px 14px; background: rgba(2, 132, 199, 0.15); border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center;">
-                    <div style="font-weight: 800; font-size: 12.5px; color: #38bdf8;">🏢 Floors (${availableFloors.length})</div>
+                    <div style="font-weight: 800; font-size: 12.5px; color: #38bdf8;">🏢 Floors (<span id="scope-floors-count">${availableFloors.length}</span>)</div>
                     <div style="display: flex; gap: 6px;">
                       <button type="button" id="btn-scope-all-floors" class="btn btn-ghost btn-xs" style="font-size: 10.5px; padding: 2px 5px; color: #38bdf8;">All</button>
                       <button type="button" id="btn-scope-clear-floors" class="btn btn-ghost btn-xs" style="font-size: 10.5px; padding: 2px 5px; color: var(--text-muted);">Clear</button>
                     </div>
                   </div>
-                  <div style="padding: 10px; overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 6px;">
-                    ${availableFloors.map(flr => {
+                  <div id="scope-floors-scroll-list" style="padding: 10px; overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 6px;">
+                    ${allFloors.map(flr => {
                       const isChecked = selectedFloorIds.includes(flr.id);
+                      const isVisible = selectedUnitIds.length === 0 || selectedUnitIds.includes(flr.unitId);
                       return `
-                        <label style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: #fff; cursor: pointer; padding: 6px 8px; border-radius: var(--radius-sm); background: ${isChecked ? 'rgba(56, 189, 248, 0.12)' : 'transparent'}; border: 1px solid ${isChecked ? 'rgba(56, 189, 248, 0.3)' : 'transparent'};">
-                          <input type="checkbox" class="chk-scope-floor" data-id="${flr.id}" ${isChecked ? 'checked' : ''} style="width: 15px; height: 15px; cursor: pointer; accent-color: #0284c7;" />
+                        <label class="scope-floor-item" data-id="${flr.id}" data-unit="${flr.unitId}" style="display: ${isVisible ? 'flex' : 'none'}; align-items: center; gap: 8px; font-size: 12px; color: #fff; cursor: pointer; padding: 6px 8px; border-radius: var(--radius-sm); background: ${isChecked ? 'rgba(56, 189, 248, 0.12)' : 'transparent'}; border: 1px solid ${isChecked ? 'rgba(56, 189, 248, 0.3)' : 'transparent'};">
+                          <input type="checkbox" class="chk-scope-floor" data-id="${flr.id}" data-unit="${flr.unitId}" ${isChecked ? 'checked' : ''} style="width: 15px; height: 15px; cursor: pointer; accent-color: #0284c7;" />
                           <span style="font-weight: 600;">${flr.name}</span>
                         </label>
                       `;
@@ -2094,18 +2108,21 @@ function renderActiveModalHtml() {
                 <!-- Panel 3: Lines -->
                 <div style="background: var(--bg-surface); border: 1px solid var(--border-color); border-radius: var(--radius-lg); display: flex; flex-direction: column; overflow: hidden;">
                   <div style="padding: 10px 14px; background: rgba(2, 132, 199, 0.15); border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center;">
-                    <div style="font-weight: 800; font-size: 12.5px; color: #38bdf8;">🧵 Lines (${availableLines.length})</div>
+                    <div style="font-weight: 800; font-size: 12.5px; color: #38bdf8;">🧵 Lines (<span id="scope-lines-count">${availableLines.length}</span>)</div>
                     <div style="display: flex; gap: 6px;">
                       <button type="button" id="btn-scope-all-lines" class="btn btn-ghost btn-xs" style="font-size: 10.5px; padding: 2px 5px; color: #38bdf8;">All</button>
                       <button type="button" id="btn-scope-clear-lines" class="btn btn-ghost btn-xs" style="font-size: 10.5px; padding: 2px 5px; color: var(--text-muted);">Clear</button>
                     </div>
                   </div>
-                  <div style="padding: 10px; overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 6px;">
-                    ${availableLines.map(lin => {
+                  <div id="scope-lines-scroll-list" style="padding: 10px; overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 6px;">
+                    ${allLines.map(lin => {
                       const isChecked = selectedLineIds.includes(lin.id);
+                      const parentFloor = allFloors.find(f => f.id === lin.floorId);
+                      const parentUnitId = parentFloor ? parentFloor.unitId : '';
+                      const isVisible = selectedFloorIds.length > 0 ? selectedFloorIds.includes(lin.floorId) : (selectedUnitIds.length === 0 || selectedUnitIds.includes(parentUnitId));
                       return `
-                        <label style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: #fff; cursor: pointer; padding: 6px 8px; border-radius: var(--radius-sm); background: ${isChecked ? 'rgba(56, 189, 248, 0.12)' : 'transparent'}; border: 1px solid ${isChecked ? 'rgba(56, 189, 248, 0.3)' : 'transparent'};">
-                          <input type="checkbox" class="chk-scope-line" data-id="${lin.id}" ${isChecked ? 'checked' : ''} style="width: 15px; height: 15px; cursor: pointer; accent-color: #0284c7;" />
+                        <label class="scope-line-item" data-id="${lin.id}" data-floor="${lin.floorId}" data-unit="${parentUnitId}" style="display: ${isVisible ? 'flex' : 'none'}; align-items: center; gap: 8px; font-size: 12px; color: #fff; cursor: pointer; padding: 6px 8px; border-radius: var(--radius-sm); background: ${isChecked ? 'rgba(56, 189, 248, 0.12)' : 'transparent'}; border: 1px solid ${isChecked ? 'rgba(56, 189, 248, 0.3)' : 'transparent'};">
+                          <input type="checkbox" class="chk-scope-line" data-id="${lin.id}" data-floor="${lin.floorId}" ${isChecked ? 'checked' : ''} style="width: 15px; height: 15px; cursor: pointer; accent-color: #0284c7;" />
                           <span style="font-weight: 600;">${lin.name}</span>
                         </label>
                       `;
@@ -2115,7 +2132,7 @@ function renderActiveModalHtml() {
               </div>
 
             </div>
-          `}
+          </div>
 
           <!-- Batch Update Checkbox (If editing existing preset with users) -->
           ${targetPreset && assignedUsers.length > 0 ? `
@@ -2359,6 +2376,8 @@ export function initUserManagementEvents() {
     const tableContainer = view.querySelector('.table-responsive, .user-table-container');
     const tableY = tableContainer ? tableContainer.scrollTop : 0;
     const tableX = tableContainer ? tableContainer.scrollLeft : 0;
+    const winY = window.scrollY || document.documentElement.scrollTop || 0;
+    const winX = window.scrollX || document.documentElement.scrollLeft || 0;
 
     // Capture modal scroll positions if a modal is open
     const modalWrap = view.querySelector('.modal-card, .modal-dialog, .modal-body');
@@ -2414,6 +2433,10 @@ export function initUserManagementEvents() {
       if (newTc) {
         newTc.scrollTop = tableY;
         newTc.scrollLeft = tableX;
+      }
+
+      if (winY > 0 || winX > 0) {
+        window.scrollTo({ top: winY, left: winX, behavior: 'instant' });
       }
 
       const newModalWrap = view.querySelector('.modal-card, .modal-dialog, .modal-body');
@@ -2482,6 +2505,19 @@ export function initUserManagementEvents() {
       }
     }
     if (modalLayer) {
+      // 1. Capture exact background scroll positions
+      const view = document.getElementById('main-view-container');
+      const containerY = view ? view.scrollTop : 0;
+      const containerX = view ? view.scrollLeft : 0;
+      const pageView = view ? view.querySelector('.page-view') : null;
+      const pageViewY = pageView ? pageView.scrollTop : 0;
+      const pageViewX = pageView ? pageView.scrollLeft : 0;
+      const tableContainer = view ? view.querySelector('.table-responsive, .user-table-container') : null;
+      const tableY = tableContainer ? tableContainer.scrollTop : 0;
+      const tableX = tableContainer ? tableContainer.scrollLeft : 0;
+      const winY = window.scrollY || document.documentElement.scrollTop || 0;
+      const winX = window.scrollX || document.documentElement.scrollLeft || 0;
+
       // Capture inner modal scroll positions before updating
       const modalWrap = modalLayer.querySelector('.modal-card, .modal-dialog, .modal-body');
       const modalY = modalWrap ? modalWrap.scrollTop : 0;
@@ -2500,20 +2536,41 @@ export function initUserManagementEvents() {
         bindUserModalEvents();
       }
 
-      // Restore inner modal scroll positions
-      const newModalWrap = modalLayer.querySelector('.modal-card, .modal-dialog, .modal-body');
-      if (newModalWrap && modalY > 0) {
-        newModalWrap.scrollTop = modalY;
-        newModalWrap.scrollLeft = modalX;
-      }
-      const newMatrix = modalLayer.querySelector('.permissions-matrix-scroll-wrap');
-      if (newMatrix && matrixY > 0) newMatrix.scrollTop = matrixY;
-      const newUnits = modalLayer.querySelector('#scope-units-scroll-list');
-      if (newUnits && unitsY > 0) newUnits.scrollTop = unitsY;
-      const newFloors = modalLayer.querySelector('#scope-floors-scroll-list');
-      if (newFloors && floorsY > 0) newFloors.scrollTop = floorsY;
-      const newLines = modalLayer.querySelector('#scope-lines-scroll-list');
-      if (newLines && linesY > 0) newLines.scrollTop = linesY;
+      // Restore background scroll positions immediately and in rAF
+      const restoreAll = () => {
+        if (view) {
+          view.scrollTop = containerY;
+          view.scrollLeft = containerX;
+        }
+        if (pageView) {
+          pageView.scrollTop = pageViewY;
+          pageView.scrollLeft = pageViewX;
+        }
+        if (tableContainer) {
+          tableContainer.scrollTop = tableY;
+          tableContainer.scrollLeft = tableX;
+        }
+        if (winY > 0 || winX > 0) {
+          window.scrollTo({ top: winY, left: winX, behavior: 'instant' });
+        }
+        // Restore inner modal scroll positions
+        const newModalWrap = modalLayer.querySelector('.modal-card, .modal-dialog, .modal-body');
+        if (newModalWrap && modalY > 0) {
+          newModalWrap.scrollTop = modalY;
+          newModalWrap.scrollLeft = modalX;
+        }
+        const newMatrix = modalLayer.querySelector('.permissions-matrix-scroll-wrap');
+        if (newMatrix && matrixY > 0) newMatrix.scrollTop = matrixY;
+        const newUnits = modalLayer.querySelector('#scope-units-scroll-list');
+        if (newUnits && unitsY > 0) newUnits.scrollTop = unitsY;
+        const newFloors = modalLayer.querySelector('#scope-floors-scroll-list');
+        if (newFloors && floorsY > 0) newFloors.scrollTop = floorsY;
+        const newLines = modalLayer.querySelector('#scope-lines-scroll-list');
+        if (newLines && linesY > 0) newLines.scrollTop = linesY;
+      };
+
+      restoreAll();
+      requestAnimationFrame(restoreAll);
     }
   };
 
@@ -2523,9 +2580,10 @@ export function initUserManagementEvents() {
     targetPreset = null;
     editingPermissions = {};
     selectedUserIdsForPreset = [];
-    updateUserModalLayer();
     if (shouldRefreshTable) {
       refreshView();
+    } else {
+      updateUserModalLayer();
     }
   };
 
@@ -2933,36 +2991,55 @@ export function initUserManagementEvents() {
     if (!modalLayer) return;
 
     // 10. Close Modal Buttons & Overlay Click
-    const btnClose = modalLayer.querySelector('#btn-close-modal');
-    const btnCancel = modalLayer.querySelector('#btn-cancel-modal');
+    modalLayer.querySelectorAll('#btn-close-modal, #btn-cancel-modal, .btn-cancel-user-modal').forEach(btn => {
+      btn.addEventListener('click', () => closeModal(false));
+    });
     const overlay = modalLayer.querySelector('.modal-overlay');
-
-    if (btnClose) btnClose.addEventListener('click', () => closeModal(false));
-    if (btnCancel) btnCancel.addEventListener('click', () => closeModal(false));
     if (overlay) {
       overlay.addEventListener('click', (e) => {
         if (e.target === overlay) closeModal(false);
       });
     }
 
-    // 10b. Modal Tab Switching (In-place, Zero-Jump)
+    // 10b. Modal Tab Switching (In-place, Zero-Jump, Zero-Reanimation)
     const tabPerms = modalLayer.querySelector('#tab-btn-perms');
+    const tabScope = modalLayer.querySelector('#tab-btn-scope');
+    const panelPerms = modalLayer.querySelector('#user-tab-panel-perms, #preset-tab-panel-perms');
+    const panelScope = modalLayer.querySelector('#user-tab-panel-scope, #preset-tab-panel-scope');
+
     if (tabPerms) {
       tabPerms.addEventListener('click', (e) => {
         e.preventDefault();
         e.stopPropagation();
         activeModalTab = 'PERMISSIONS';
-        updateUserModalLayer();
+        if (panelPerms) panelPerms.style.display = 'flex';
+        if (panelScope) panelScope.style.display = 'none';
+        tabPerms.className = 'btn btn-primary';
+        tabPerms.style.background = 'linear-gradient(135deg, #0284c7, #0369a1)';
+        tabPerms.style.color = '#fff';
+        if (tabScope) {
+          tabScope.className = 'btn btn-ghost';
+          tabScope.style.background = 'transparent';
+          tabScope.style.color = 'var(--text-secondary)';
+        }
       });
     }
 
-    const tabScope = modalLayer.querySelector('#tab-btn-scope');
     if (tabScope) {
       tabScope.addEventListener('click', (e) => {
         e.preventDefault();
         e.stopPropagation();
         activeModalTab = 'LOCATION_SCOPE';
-        updateUserModalLayer();
+        if (panelPerms) panelPerms.style.display = 'none';
+        if (panelScope) panelScope.style.display = 'flex';
+        tabScope.className = 'btn btn-primary';
+        tabScope.style.background = 'linear-gradient(135deg, #0284c7, #0369a1)';
+        tabScope.style.color = '#fff';
+        if (tabPerms) {
+          tabPerms.className = 'btn btn-ghost';
+          tabPerms.style.background = 'transparent';
+          tabPerms.style.color = 'var(--text-secondary)';
+        }
       });
     }
 
@@ -3172,17 +3249,33 @@ export function initUserManagementEvents() {
       });
     });
 
+    const syncPermCheckboxes = () => {
+      modalLayer.querySelectorAll('.chk-perm-action').forEach(c => {
+        const mod = c.getAttribute('data-module');
+        const act = c.getAttribute('data-action');
+        c.checked = Array.isArray(editingPermissions[mod]) && editingPermissions[mod].includes(act);
+      });
+      ['VIEW', 'ADD', 'EDIT', 'DELETE', 'IMPORT', 'EXPORT', 'APPROVE'].forEach(act => {
+        const list = Array.from(modalLayer.querySelectorAll(`.chk-perm-action[data-action="${act}"]`));
+        const allChecked = list.length > 0 && list.every(c => c.checked);
+        const col = modalLayer.querySelector(`#col-toggle-${act}`);
+        const mas = modalLayer.querySelector(`#master-toggle-${act}`);
+        if (col) col.checked = allChecked;
+        if (mas) mas.checked = allChecked;
+      });
+    };
+
     // 17. Select All Permissions (All 7 Actions)
     const btnSelectAll = modalLayer.querySelector('#btn-perm-select-all');
     if (btnSelectAll) {
       btnSelectAll.addEventListener('click', () => {
-        modalLayer.querySelectorAll('.chk-perm-action').forEach(c => {
-          c.checked = true;
-          const mod = c.getAttribute('data-module');
-          const act = c.getAttribute('data-action');
-          if (!editingPermissions[mod]) editingPermissions[mod] = [];
-          if (!editingPermissions[mod].includes(act)) editingPermissions[mod].push(act);
+        editingPermissions = {};
+        PERMISSION_CONFIG_MODULES.forEach(grp => {
+          grp.modules.forEach(m => {
+            editingPermissions[m.id] = [...m.actions];
+          });
         });
+        syncPermCheckboxes();
       });
     }
 
@@ -3190,10 +3283,8 @@ export function initUserManagementEvents() {
     const btnClearAll = modalLayer.querySelector('#btn-perm-clear-all');
     if (btnClearAll) {
       btnClearAll.addEventListener('click', () => {
-        modalLayer.querySelectorAll('.chk-perm-action').forEach(c => {
-          c.checked = false;
-        });
         editingPermissions = {};
+        syncPermCheckboxes();
       });
     }
 
@@ -3207,7 +3298,7 @@ export function initUserManagementEvents() {
             editingPermissions[m.id] = [...m.actions];
           });
         });
-        updateUserModalLayer();
+        syncPermCheckboxes();
       });
     }
 
@@ -3221,7 +3312,7 @@ export function initUserManagementEvents() {
             editingPermissions[m.id] = m.actions.filter(a => ['VIEW', 'READ', 'EXPORT', 'APPROVE'].includes(a));
           });
         });
-        updateUserModalLayer();
+        syncPermCheckboxes();
       });
     }
 
@@ -3235,7 +3326,7 @@ export function initUserManagementEvents() {
             editingPermissions[m.id] = m.actions.filter(a => ['VIEW', 'READ', 'ADD', 'EDIT', 'IMPORT', 'EXPORT'].includes(a));
           });
         });
-        updateUserModalLayer();
+        syncPermCheckboxes();
       });
     }
 
@@ -3249,7 +3340,7 @@ export function initUserManagementEvents() {
             editingPermissions[m.id] = ['VIEW'];
           });
         });
-        updateUserModalLayer();
+        syncPermCheckboxes();
       });
     }
 
@@ -3281,6 +3372,91 @@ export function initUserManagementEvents() {
     // 22. LOCATION DATA ACCESS SCOPING HANDLERS
     // ==========================================
 
+    // ==========================================
+    // 22. LOCATION DATA ACCESS SCOPING HANDLERS (In-Place, Zero-Jump)
+    // ==========================================
+
+    const updateScopeLiveStatus = () => {
+      const liveStatusEl = modalLayer.querySelector('#scope-live-status-container');
+      const allCard = modalLayer.querySelector('#scope-mode-all-card');
+      const restCard = modalLayer.querySelector('#scope-mode-restricted-card');
+      const panels = modalLayer.querySelector('#scope-granular-panels');
+
+      const isAll = Boolean(editingScope.allGroups);
+      if (allCard) {
+        allCard.style.background = isAll ? 'rgba(56, 189, 248, 0.15)' : 'rgba(15, 23, 42, 0.4)';
+        allCard.style.borderColor = isAll ? '#38bdf8' : 'var(--border-color)';
+      }
+      if (restCard) {
+        restCard.style.background = !isAll ? 'rgba(234, 179, 8, 0.15)' : 'rgba(15, 23, 42, 0.4)';
+        restCard.style.borderColor = !isAll ? '#facc15' : 'var(--border-color)';
+      }
+      if (panels) {
+        panels.style.display = isAll ? 'none' : 'grid';
+      }
+
+      if (liveStatusEl) {
+        if (isAll) {
+          liveStatusEl.innerHTML = `<span class="badge" style="background: rgba(56, 189, 248, 0.2); color: #38bdf8; font-weight: 700;">🌐 Unrestricted Global Access (All Locations)</span>`;
+        } else {
+          const uCount = Array.isArray(editingScope.unitIds) ? editingScope.unitIds.length : 0;
+          const fCount = Array.isArray(editingScope.floorIds) ? editingScope.floorIds.length : 0;
+          const lCount = Array.isArray(editingScope.lineIds) ? editingScope.lineIds.length : 0;
+          liveStatusEl.innerHTML = `<span class="badge" style="background: rgba(234, 179, 8, 0.2); color: #facc15; font-weight: 700;">📍 ${uCount} Unit(s) &bull; ${fCount} Floor(s) &bull; ${lCount} Line(s)</span>`;
+        }
+      }
+    };
+
+    const filterScopeListsInPlace = () => {
+      if (!Array.isArray(editingScope.unitIds)) editingScope.unitIds = [];
+      if (!Array.isArray(editingScope.floorIds)) editingScope.floorIds = [];
+      if (!Array.isArray(editingScope.lineIds)) editingScope.lineIds = [];
+
+      const selectedUnitIds = editingScope.unitIds;
+      let visibleFloorsCount = 0;
+      modalLayer.querySelectorAll('.scope-floor-item').forEach(item => {
+        const uId = item.getAttribute('data-unit');
+        const isVisible = selectedUnitIds.length === 0 || selectedUnitIds.includes(uId);
+        item.style.display = isVisible ? 'flex' : 'none';
+        if (isVisible) {
+          visibleFloorsCount++;
+        } else {
+          const chk = item.querySelector('.chk-scope-floor');
+          if (chk && chk.checked) {
+            chk.checked = false;
+            const fId = chk.getAttribute('data-id');
+            editingScope.floorIds = editingScope.floorIds.filter(x => x !== fId);
+          }
+        }
+      });
+      const floorsCountEl = modalLayer.querySelector('#scope-floors-count');
+      if (floorsCountEl) floorsCountEl.textContent = visibleFloorsCount;
+
+      const selectedFloorIds = editingScope.floorIds;
+      let visibleLinesCount = 0;
+      modalLayer.querySelectorAll('.scope-line-item').forEach(item => {
+        const fId = item.getAttribute('data-floor');
+        const uId = item.getAttribute('data-unit');
+        const unitValid = selectedUnitIds.length === 0 || selectedUnitIds.includes(uId);
+        const isVisible = selectedFloorIds.length > 0 ? selectedFloorIds.includes(fId) : unitValid;
+        item.style.display = isVisible ? 'flex' : 'none';
+        if (isVisible) {
+          visibleLinesCount++;
+        } else {
+          const chk = item.querySelector('.chk-scope-line');
+          if (chk && chk.checked) {
+            chk.checked = false;
+            const lId = chk.getAttribute('data-id');
+            editingScope.lineIds = editingScope.lineIds.filter(x => x !== lId);
+          }
+        }
+      });
+      const linesCountEl = modalLayer.querySelector('#scope-lines-count');
+      if (linesCountEl) linesCountEl.textContent = visibleLinesCount;
+
+      updateScopeLiveStatus();
+    };
+
     // 22a. Scope Mode Switch (All Locations vs Granular)
     const modeAll = modalLayer.querySelector('#scope-mode-all');
     const modeRestricted = modalLayer.querySelector('#scope-mode-restricted');
@@ -3288,14 +3464,14 @@ export function initUserManagementEvents() {
     if (modeAll) {
       modeAll.addEventListener('change', () => {
         editingScope.allGroups = true;
-        updateUserModalLayer();
+        updateScopeLiveStatus();
       });
     }
 
     if (modeRestricted) {
       modeRestricted.addEventListener('change', () => {
         editingScope.allGroups = false;
-        updateUserModalLayer();
+        updateScopeLiveStatus();
       });
     }
 
@@ -3308,17 +3484,8 @@ export function initUserManagementEvents() {
           if (!editingScope.unitIds.includes(id)) editingScope.unitIds.push(id);
         } else {
           editingScope.unitIds = editingScope.unitIds.filter(x => x !== id);
-          // Also remove floors/lines belonging to this deselected unit
-          const unitFloors = masterDataService.getAllFloors().filter(f => f.unitId === id).map(f => f.id);
-          if (Array.isArray(editingScope.floorIds)) {
-            editingScope.floorIds = editingScope.floorIds.filter(fId => !unitFloors.includes(fId));
-          }
-          const unitLines = masterDataService.getAllLines().filter(l => unitFloors.includes(l.floorId)).map(l => l.id);
-          if (Array.isArray(editingScope.lineIds)) {
-            editingScope.lineIds = editingScope.lineIds.filter(lId => !unitLines.includes(lId));
-          }
         }
-        updateUserModalLayer();
+        filterScopeListsInPlace();
       });
     });
 
@@ -3326,8 +3493,10 @@ export function initUserManagementEvents() {
     const btnAllUnits = modalLayer.querySelector('#btn-scope-all-units');
     if (btnAllUnits) {
       btnAllUnits.addEventListener('click', () => {
-        editingScope.unitIds = masterDataService.getAllUnits().map(u => u.id);
-        updateUserModalLayer();
+        const allUnits = masterDataService.getAllUnits();
+        editingScope.unitIds = allUnits.map(u => u.id);
+        modalLayer.querySelectorAll('.chk-scope-unit').forEach(c => { c.checked = true; });
+        filterScopeListsInPlace();
       });
     }
 
@@ -3337,7 +3506,8 @@ export function initUserManagementEvents() {
         editingScope.unitIds = [];
         editingScope.floorIds = [];
         editingScope.lineIds = [];
-        updateUserModalLayer();
+        modalLayer.querySelectorAll('.chk-scope-unit, .chk-scope-floor, .chk-scope-line').forEach(c => { c.checked = false; });
+        filterScopeListsInPlace();
       });
     }
 
@@ -3350,13 +3520,8 @@ export function initUserManagementEvents() {
           if (!editingScope.floorIds.includes(id)) editingScope.floorIds.push(id);
         } else {
           editingScope.floorIds = editingScope.floorIds.filter(x => x !== id);
-          // Also remove lines belonging to this floor
-          const floorLines = masterDataService.getAllLines().filter(l => l.floorId === id).map(l => l.id);
-          if (Array.isArray(editingScope.lineIds)) {
-            editingScope.lineIds = editingScope.lineIds.filter(lId => !floorLines.includes(lId));
-          }
         }
-        updateUserModalLayer();
+        filterScopeListsInPlace();
       });
     });
 
@@ -3364,12 +3529,18 @@ export function initUserManagementEvents() {
     const btnAllFloors = modalLayer.querySelector('#btn-scope-all-floors');
     if (btnAllFloors) {
       btnAllFloors.addEventListener('click', () => {
-        const selectedUnitIds = editingScope.unitIds || [];
-        const floors = selectedUnitIds.length > 0
-          ? masterDataService.getAllFloors().filter(f => selectedUnitIds.includes(f.unitId))
-          : masterDataService.getAllFloors();
-        editingScope.floorIds = floors.map(f => f.id);
-        updateUserModalLayer();
+        if (!Array.isArray(editingScope.floorIds)) editingScope.floorIds = [];
+        modalLayer.querySelectorAll('.scope-floor-item').forEach(item => {
+          if (item.style.display !== 'none') {
+            const chk = item.querySelector('.chk-scope-floor');
+            if (chk) {
+              chk.checked = true;
+              const fId = chk.getAttribute('data-id');
+              if (!editingScope.floorIds.includes(fId)) editingScope.floorIds.push(fId);
+            }
+          }
+        });
+        filterScopeListsInPlace();
       });
     }
 
@@ -3378,7 +3549,8 @@ export function initUserManagementEvents() {
       btnClearFloors.addEventListener('click', () => {
         editingScope.floorIds = [];
         editingScope.lineIds = [];
-        updateUserModalLayer();
+        modalLayer.querySelectorAll('.chk-scope-floor, .chk-scope-line').forEach(c => { c.checked = false; });
+        filterScopeListsInPlace();
       });
     }
 
@@ -3392,7 +3564,7 @@ export function initUserManagementEvents() {
         } else {
           editingScope.lineIds = editingScope.lineIds.filter(x => x !== id);
         }
-        updateUserModalLayer();
+        updateScopeLiveStatus();
       });
     });
 
@@ -3400,12 +3572,18 @@ export function initUserManagementEvents() {
     const btnAllLines = modalLayer.querySelector('#btn-scope-all-lines');
     if (btnAllLines) {
       btnAllLines.addEventListener('click', () => {
-        const selectedFloorIds = editingScope.floorIds || [];
-        const lines = selectedFloorIds.length > 0
-          ? masterDataService.getAllLines().filter(l => selectedFloorIds.includes(l.floorId))
-          : masterDataService.getAllLines();
-        editingScope.lineIds = lines.map(l => l.id);
-        updateUserModalLayer();
+        if (!Array.isArray(editingScope.lineIds)) editingScope.lineIds = [];
+        modalLayer.querySelectorAll('.scope-line-item').forEach(item => {
+          if (item.style.display !== 'none') {
+            const chk = item.querySelector('.chk-scope-line');
+            if (chk) {
+              chk.checked = true;
+              const lId = chk.getAttribute('data-id');
+              if (!editingScope.lineIds.includes(lId)) editingScope.lineIds.push(lId);
+            }
+          }
+        });
+        updateScopeLiveStatus();
       });
     }
 
@@ -3413,7 +3591,8 @@ export function initUserManagementEvents() {
     if (btnClearLines) {
       btnClearLines.addEventListener('click', () => {
         editingScope.lineIds = [];
-        updateUserModalLayer();
+        modalLayer.querySelectorAll('.chk-scope-line').forEach(c => { c.checked = false; });
+        updateScopeLiveStatus();
       });
     }
 
