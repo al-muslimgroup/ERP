@@ -2476,10 +2476,28 @@ export function initRelocateViewEvents() {
 
   const refreshView = () => {
     const container = document.getElementById('main-view-container');
-    if (container) {
-      container.innerHTML = renderRelocateView();
-      initRelocateViewEvents();
-    }
+    if (!container) return;
+
+    const containerY = container.scrollTop;
+    const containerX = container.scrollLeft;
+    const pv = container.querySelector('.page-view');
+    const pvY = pv ? pv.scrollTop : 0;
+    const pvX = pv ? pv.scrollLeft : 0;
+
+    container.innerHTML = renderRelocateView();
+    initRelocateViewEvents();
+
+    const restore = () => {
+      container.scrollTop = containerY;
+      container.scrollLeft = containerX;
+      const newPv = container.querySelector('.page-view');
+      if (newPv) {
+        newPv.scrollTop = pvY;
+        newPv.scrollLeft = pvX;
+      }
+    };
+    restore();
+    requestAnimationFrame(restore);
   };
 
   // 1. Tab Switching

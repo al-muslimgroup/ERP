@@ -1246,10 +1246,28 @@ export function initQrCodeEvents() {
 
   const refreshView = () => {
     const container = document.getElementById('main-view-container');
-    if (container) {
-      container.innerHTML = renderQrCodeView();
-      initQrCodeEvents();
-    }
+    if (!container) return;
+
+    const containerY = container.scrollTop;
+    const containerX = container.scrollLeft;
+    const pv = container.querySelector('.page-view');
+    const pvY = pv ? pv.scrollTop : 0;
+    const pvX = pv ? pv.scrollLeft : 0;
+
+    container.innerHTML = renderQrCodeView();
+    initQrCodeEvents();
+
+    const restore = () => {
+      container.scrollTop = containerY;
+      container.scrollLeft = containerX;
+      const newPv = container.querySelector('.page-view');
+      if (newPv) {
+        newPv.scrollTop = pvY;
+        newPv.scrollLeft = pvX;
+      }
+    };
+    restore();
+    requestAnimationFrame(restore);
   };
 
   // Helper to re-render only the cards grid and pagination bars (avoids destroying dropdowns or search input)

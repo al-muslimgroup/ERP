@@ -1517,7 +1517,7 @@ function renderActiveModalHtml() {
                       <button type="button" id="btn-scope-clear-units" class="btn btn-ghost btn-xs" style="font-size: 10.5px; padding: 2px 5px; color: var(--text-muted);">Clear</button>
                     </div>
                   </div>
-                  <div style="padding: 10px; overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 6px;">
+                  <div id="scope-units-scroll-list" style="padding: 10px; overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 6px;">
                     ${allUnits.length === 0 ? `
                       <div style="color: var(--text-muted); font-size: 12px; text-align: center; padding: 20px;">No Units Found</div>
                     ` : allUnits.map(unt => {
@@ -1550,7 +1550,7 @@ function renderActiveModalHtml() {
                       <button type="button" id="btn-scope-clear-floors" class="btn btn-ghost btn-xs" style="font-size: 10.5px; padding: 2px 5px; color: var(--text-muted);">Clear</button>
                     </div>
                   </div>
-                  <div style="padding: 10px; overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 6px;">
+                  <div id="scope-floors-scroll-list" style="padding: 10px; overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 6px;">
                     ${availableFloors.length === 0 ? `
                       <div style="color: var(--text-muted); font-size: 12px; text-align: center; padding: 20px;">
                         ${selectedUnitIds.length === 0 ? 'Select a Unit on the left first' : 'No floors found under selected Unit(s)'}
@@ -1587,7 +1587,7 @@ function renderActiveModalHtml() {
                       <button type="button" id="btn-scope-clear-lines" class="btn btn-ghost btn-xs" style="font-size: 10.5px; padding: 2px 5px; color: var(--text-muted);">Clear</button>
                     </div>
                   </div>
-                  <div style="padding: 10px; overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 6px;">
+                  <div id="scope-lines-scroll-list" style="padding: 10px; overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 6px;">
                     ${availableLines.length === 0 ? `
                       <div style="color: var(--text-muted); font-size: 12px; text-align: center; padding: 20px;">
                         ${selectedFloorIds.length === 0 ? 'Select a Floor to assign specific lines' : 'No lines found under selected Floor(s)'}
@@ -2346,10 +2346,125 @@ function renderActiveModalHtml() {
 export function initUserManagementEvents() {
   const refreshView = () => {
     const view = document.getElementById('main-view-container');
-    if (view) {
-      view.innerHTML = renderUserManagement();
-      initUserManagementEvents();
-    }
+    if (!view) return;
+
+    // 1. Capture exact scroll positions of main container, page, and table
+    const containerY = view.scrollTop;
+    const containerX = view.scrollLeft;
+    const pageView = view.querySelector('.page-view');
+    const pageViewY = pageView ? pageView.scrollTop : 0;
+    const pageViewX = pageView ? pageView.scrollLeft : 0;
+    const tableContainer = view.querySelector('.table-responsive, .user-table-container');
+    const tableY = tableContainer ? tableContainer.scrollTop : 0;
+    const tableX = tableContainer ? tableContainer.scrollLeft : 0;
+
+    // Capture modal scroll positions if a modal is open
+    const modalWrap = view.querySelector('.modal-card, .modal-dialog, .modal-body');
+    const modalY = modalWrap ? modalWrap.scrollTop : 0;
+    const modalX = modalWrap ? modalWrap.scrollLeft : 0;
+
+    const matrixScroll = view.querySelector('.permissions-matrix-scroll-wrap');
+    const matrixY = matrixScroll ? matrixScroll.scrollTop : 0;
+
+    const unitsScroll = view.querySelector('#scope-units-scroll-list');
+    const unitsY = unitsScroll ? unitsScroll.scrollTop : 0;
+
+    const floorsScroll = view.querySelector('#scope-floors-scroll-list');
+    const floorsY = floorsScroll ? floorsScroll.scrollTop : 0;
+
+    const linesScroll = view.querySelector('#scope-lines-scroll-list');
+    const linesY = linesScroll ? linesScroll.scrollTop : 0;
+
+    // Capture all elements with scrollable overflow inside modal
+    const extraScrolls = [];
+    view.querySelectorAll('.modal-overlay *').forEach((el, idx) => {
+      if (el.scrollTop > 0 || el.scrollLeft > 0) {
+        extraScrolls.push({
+          id: el.id || null,
+          index: idx,
+          scrollTop: el.scrollTop,
+          scrollLeft: el.scrollLeft
+        });
+      }
+    });
+
+    const activeEl = document.activeElement;
+    const focusedId = activeEl && activeEl.id ? activeEl.id : null;
+    const selectionStart = activeEl && typeof activeEl.selectionStart === 'number' ? activeEl.selectionStart : null;
+    const selectionEnd = activeEl && typeof activeEl.selectionEnd === 'number' ? activeEl.selectionEnd : null;
+
+    // 2. Perform DOM Update
+    view.innerHTML = renderUserManagement();
+    initUserManagementEvents();
+
+    // 3. Immediately and synchronously restore scroll positions
+    const restore = () => {
+      view.scrollTop = containerY;
+      view.scrollLeft = containerX;
+
+      const newPv = view.querySelector('.page-view');
+      if (newPv) {
+        newPv.scrollTop = pageViewY;
+        newPv.scrollLeft = pageViewX;
+      }
+
+      const newTc = view.querySelector('.table-responsive, .user-table-container');
+      if (newTc) {
+        newTc.scrollTop = tableY;
+        newTc.scrollLeft = tableX;
+      }
+
+      const newModalWrap = view.querySelector('.modal-card, .modal-dialog, .modal-body');
+      if (newModalWrap && modalY > 0) {
+        newModalWrap.scrollTop = modalY;
+        newModalWrap.scrollLeft = modalX;
+      }
+
+      const newMatrix = view.querySelector('.permissions-matrix-scroll-wrap');
+      if (newMatrix && matrixY > 0) {
+        newMatrix.scrollTop = matrixY;
+      }
+
+      const newUnits = view.querySelector('#scope-units-scroll-list');
+      if (newUnits && unitsY > 0) newUnits.scrollTop = unitsY;
+
+      const newFloors = view.querySelector('#scope-floors-scroll-list');
+      if (newFloors && floorsY > 0) newFloors.scrollTop = floorsY;
+
+      const newLines = view.querySelector('#scope-lines-scroll-list');
+      if (newLines && linesY > 0) newLines.scrollTop = linesY;
+
+      if (extraScrolls.length > 0) {
+        const modalEls = view.querySelectorAll('.modal-overlay *');
+        extraScrolls.forEach(s => {
+          if (s.id) {
+            const el = document.getElementById(s.id);
+            if (el) {
+              el.scrollTop = s.scrollTop;
+              el.scrollLeft = s.scrollLeft;
+            }
+          } else if (modalEls[s.index]) {
+            modalEls[s.index].scrollTop = s.scrollTop;
+            modalEls[s.index].scrollLeft = s.scrollLeft;
+          }
+        });
+      }
+
+      if (focusedId) {
+        const el = document.getElementById(focusedId);
+        if (el && typeof el.focus === 'function' && document.activeElement !== el) {
+          try {
+            el.focus({ preventScroll: true });
+            if (typeof selectionStart === 'number' && typeof selectionEnd === 'number' && typeof el.setSelectionRange === 'function') {
+              el.setSelectionRange(selectionStart, selectionEnd);
+            }
+          } catch (_) {}
+        }
+      }
+    };
+
+    restore();
+    requestAnimationFrame(restore);
   };
 
   const closeModal = () => {
