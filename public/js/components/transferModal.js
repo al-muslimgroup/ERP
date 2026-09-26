@@ -23,6 +23,13 @@ import { state } from '../state.js';
 
 let attachedDocuments = [];
 let serialSearchQuery = '';
+let selectedDest = {
+  groupId: '',
+  unitId: '',
+  floorId: '',
+  lineId: '',
+  searchQuery: ''
+};
 
 export function renderTransferModal() {
   let activeMachineId = state.get('activeMachineId');
@@ -30,12 +37,13 @@ export function renderTransferModal() {
 
   const machine = activeMachineId ? machineService.getEnrichedMachine(activeMachineId) : null;
   const groups = masterDataService.getGroups();
-  const defaultGroupId = machine?.groupId || groups[0]?.id || 'grp-1';
-  const units = masterDataService.getUnits(defaultGroupId, false, true);
-  const defaultUnitId = machine?.unitId || units[0]?.id;
-  const floors = masterDataService.getFloors(defaultUnitId, null, false, true);
-  const defaultFloorId = machine?.floorId || floors[0]?.id;
-  const lines = masterDataService.getLines(defaultFloorId, null, null, false, true);
+  const destGroupId = selectedDest.groupId || '';
+  const units = destGroupId ? masterDataService.getUnits(destGroupId, false, true) : [];
+  const destUnitId = selectedDest.unitId || '';
+  const floors = destUnitId ? masterDataService.getFloors(destUnitId, null, false, true) : [];
+  const destFloorId = selectedDest.floorId || '';
+  const lines = destFloorId ? masterDataService.getLines(destFloorId, null, null, false, true) : [];
+  const destLineId = selectedDest.lineId || '';
 
   // Machine Lifetime History count for verification card
   const historyRecords = machine?.serialNumber ? historyService.getMachineHistory(machine.serialNumber) : [];
@@ -177,36 +185,67 @@ export function renderTransferModal() {
               <div style="font-size: 20px; color: #38bdf8; font-weight: 800;">➔</div>
               <div style="flex: 1; text-align: right;">
                 <div style="font-size: 10px; color: #34d399; font-weight: 700; text-transform: uppercase;">Transfer To (Destination Path)</div>
-                <div id="transfer-target-path-preview" style="font-size: 12.5px; font-weight: 800; color: #34d399; line-height: 1.4;">Select Destination Below</div>
+                <div id="transfer-target-path-preview" style="font-size: 12.5px; font-weight: 800; color: #94a3b8; line-height: 1.4;"><span style="font-style: italic; font-weight: 500;">(Select Destination Below)</span></div>
               </div>
+            </div>
+
+            <!-- Location Search Bar -->
+            <div style="background: rgba(15, 23, 42, 0.65); border: 1px solid rgba(56, 189, 248, 0.35); border-radius: var(--radius-md); padding: 12px 14px; margin-bottom: 14px; position: relative;">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                <label for="inp-transfer-location-search" style="font-size: 12px; font-weight: 700; color: #38bdf8; display: flex; align-items: center; gap: 6px; margin: 0;">
+                  <span>🔍 Quick Location Search</span>
+                  <span style="font-size: 11px; font-weight: 400; color: #94a3b8;">(Search any Floor or Line across all Units)</span>
+                </label>
+                <span style="font-size: 10.5px; color: #34d399; font-weight: 600;">✨ Auto fills 4 dropdowns below</span>
+              </div>
+              <div style="position: relative;">
+                <input 
+                  type="text" 
+                  id="inp-transfer-location-search" 
+                  class="form-control" 
+                  placeholder="Type to search Floor or Line name (e.g. Jamuna, Size Set, BG-A, Eyelet, Cutting)..." 
+                  value="${selectedDest.searchQuery || ''}"
+                  autocomplete="off"
+                  style="font-size: 13px; font-weight: 600; color: #fff; background: rgba(0,0,0,0.4); border: 1px solid rgba(56, 189, 248, 0.4); padding-left: 36px; padding-right: 32px;"
+                />
+                <span style="position: absolute; left: 12px; top: 50%; transform: translateY(-50%); font-size: 14px; opacity: 0.7;">📍</span>
+                <button type="button" id="btn-clear-location-search" title="Clear search" style="${selectedDest.searchQuery ? 'display: block;' : 'display: none;'} position: absolute; right: 10px; top: 50%; transform: translateY(-50%); background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.3); color: #f87171; border-radius: 4px; font-size: 11px; cursor: pointer; padding: 2px 6px;">✕</button>
+              </div>
+
+              <!-- Floating Suggestions Dropdown -->
+              <div id="transfer-location-suggestions" style="display: none; position: absolute; left: 14px; right: 14px; top: 100%; z-index: 1000; background: #0b1329; border: 1.5px solid #38bdf8; border-radius: var(--radius-md); max-height: 240px; overflow-y: auto; box-shadow: 0 12px 36px rgba(0,0,0,0.85); margin-top: 4px;"></div>
             </div>
 
             <div class="form-grid-2">
               <div class="form-group">
                 <label class="form-label" style="font-size: 12px; font-weight: 700; color: #fff;">1. Destination Group <span class="req">*</span></label>
                 <select id="transfer-dest-group" class="filter-select" required>
-                  ${groups.map(g => `<option value="${g.id}" ${defaultGroupId === g.id ? 'selected' : ''}>${g.name}</option>`).join('')}
+                  <option value="" disabled ${!destGroupId ? 'selected' : ''}>-- Select Destination Group --</option>
+                  ${groups.map(g => `<option value="${g.id}" ${destGroupId === g.id ? 'selected' : ''}>${g.name}</option>`).join('')}
                 </select>
               </div>
 
               <div class="form-group">
                 <label class="form-label" style="font-size: 12px; font-weight: 700; color: #fff;">2. Destination Factory / Unit <span class="req">*</span></label>
-                <select id="transfer-dest-unit" class="filter-select" required>
-                  ${units.map(u => `<option value="${u.id}" ${defaultUnitId === u.id ? 'selected' : ''}>${u.name}</option>`).join('')}
+                <select id="transfer-dest-unit" class="filter-select" required ${!destGroupId ? 'disabled' : ''}>
+                  <option value="" disabled ${!destUnitId ? 'selected' : ''}>${destGroupId ? '-- Select Factory / Unit --' : '-- Select Group First --'}</option>
+                  ${units.map(u => `<option value="${u.id}" ${destUnitId === u.id ? 'selected' : ''}>${u.name}</option>`).join('')}
                 </select>
               </div>
 
               <div class="form-group">
                 <label class="form-label" style="font-size: 12px; font-weight: 700; color: #fff;">3. Destination Floor <span class="req">*</span></label>
-                <select id="transfer-dest-floor" class="filter-select" required>
-                  ${floors.map(f => `<option value="${f.id}" ${defaultFloorId === f.id ? 'selected' : ''}>${f.name}</option>`).join('')}
+                <select id="transfer-dest-floor" class="filter-select" required ${!destUnitId ? 'disabled' : ''}>
+                  <option value="" disabled ${!destFloorId ? 'selected' : ''}>${destUnitId ? '-- Select Floor --' : '-- Select Unit First --'}</option>
+                  ${floors.map(f => `<option value="${f.id}" ${destFloorId === f.id ? 'selected' : ''}>${f.name}</option>`).join('')}
                 </select>
               </div>
 
               <div class="form-group">
                 <label class="form-label" style="font-size: 12px; font-weight: 700; color: #fff;">4. Destination Production Line <span class="req">*</span></label>
-                <select id="transfer-dest-line" class="filter-select" required>
-                  ${lines.map(l => `<option value="${l.id}">${l.name}</option>`).join('')}
+                <select id="transfer-dest-line" class="filter-select" required ${!destFloorId ? 'disabled' : ''}>
+                  <option value="" disabled ${!destLineId ? 'selected' : ''}>${destFloorId ? '-- Select Production Line --' : '-- Select Floor First --'}</option>
+                  ${lines.map(l => `<option value="${l.id}" ${destLineId === l.id ? 'selected' : ''}>${l.name}</option>`).join('')}
                 </select>
               </div>
 
@@ -319,6 +358,7 @@ export function initTransferModalEvents() {
 
   const closeModal = () => {
     attachedDocuments = [];
+    selectedDest = { groupId: '', unitId: '', floorId: '', lineId: '', searchQuery: '' };
     state.set('activeMachineId', null);
     state.set('activeModal', null);
   };
@@ -488,62 +528,370 @@ export function initTransferModalEvents() {
     });
   }
 
-  // 4-Tier Cascading Location Change Handlers (Group -> Unit -> Floor -> Line)
+  // 4-Tier Cascading Location Handlers & Quick Search
   const groupSelect = document.getElementById('transfer-dest-group');
   const unitSelect = document.getElementById('transfer-dest-unit');
   const floorSelect = document.getElementById('transfer-dest-floor');
   const lineSelect = document.getElementById('transfer-dest-line');
   const targetPathPreview = document.getElementById('transfer-target-path-preview');
+  const inpLocSearch = document.getElementById('inp-transfer-location-search');
+  const btnClearLocSearch = document.getElementById('btn-clear-location-search');
+  const locSuggestionsBox = document.getElementById('transfer-location-suggestions');
 
   const updateTargetPathPreview = () => {
     if (targetPathPreview) {
-      const gName = groupSelect && groupSelect.selectedIndex >= 0 ? groupSelect.options[groupSelect.selectedIndex]?.text : '';
-      const uName = unitSelect && unitSelect.selectedIndex >= 0 ? unitSelect.options[unitSelect.selectedIndex]?.text : '';
-      const fName = floorSelect && floorSelect.selectedIndex >= 0 ? floorSelect.options[floorSelect.selectedIndex]?.text : '';
-      const lName = lineSelect && lineSelect.selectedIndex >= 0 ? lineSelect.options[lineSelect.selectedIndex]?.text : '';
-      const path = [gName, uName, fName, lName].filter(Boolean).join(' > ');
-      targetPathPreview.innerText = path || 'Select Destination Location';
+      const gVal = groupSelect?.value;
+      const uVal = unitSelect?.value;
+      const fVal = floorSelect?.value;
+      const lVal = lineSelect?.value;
+
+      if (!gVal || !uVal || !fVal || !lVal) {
+        targetPathPreview.style.color = '#94a3b8';
+        targetPathPreview.innerHTML = '<span style="font-style: italic; font-weight: 500;">(Select Destination Below)</span>';
+      } else {
+        const gName = groupSelect.options[groupSelect.selectedIndex]?.text || '';
+        const uName = unitSelect.options[unitSelect.selectedIndex]?.text || '';
+        const fName = floorSelect.options[floorSelect.selectedIndex]?.text || '';
+        const lName = lineSelect.options[lineSelect.selectedIndex]?.text || '';
+        const path = [gName, uName, fName, lName].filter(Boolean).join(' > ');
+        targetPathPreview.style.color = '#34d399';
+        targetPathPreview.innerText = path || 'Select Destination Below';
+      }
     }
   };
 
-  if (groupSelect && unitSelect) {
+  const applyLocationSelection = ({ groupId, unitId, floorId, lineId, displayLabel }) => {
+    selectedDest.groupId = groupId || '';
+    selectedDest.unitId = unitId || '';
+    selectedDest.floorId = floorId || '';
+    selectedDest.lineId = lineId || '';
+    selectedDest.searchQuery = displayLabel || '';
+
+    if (inpLocSearch) {
+      inpLocSearch.value = displayLabel || '';
+    }
+    if (btnClearLocSearch) {
+      btnClearLocSearch.style.display = displayLabel ? 'block' : 'none';
+    }
+    if (locSuggestionsBox) {
+      locSuggestionsBox.style.display = 'none';
+    }
+
+    // 1. Group
+    if (groupSelect) {
+      groupSelect.value = groupId;
+    }
+
+    // 2. Unit
+    const units = masterDataService.getUnits(groupId, false, true);
+    if (unitSelect) {
+      unitSelect.disabled = false;
+      unitSelect.innerHTML = `
+        <option value="" disabled>-- Select Factory / Unit --</option>
+        ${units.map(u => `<option value="${u.id}" ${u.id === unitId ? 'selected' : ''}>${u.name}</option>`).join('')}
+      `;
+      unitSelect.value = unitId;
+    }
+
+    // 3. Floor
+    const floors = masterDataService.getFloors(unitId, null, false, true);
+    if (floorSelect) {
+      floorSelect.disabled = false;
+      floorSelect.innerHTML = `
+        <option value="" disabled>-- Select Floor --</option>
+        ${floors.map(f => `<option value="${f.id}" ${f.id === floorId ? 'selected' : ''}>${f.name}</option>`).join('')}
+      `;
+      floorSelect.value = floorId;
+    }
+
+    // 4. Line
+    const lines = masterDataService.getLines(floorId, null, null, false, true);
+    let targetLineId = lineId;
+    // If Floor was chosen and no specific line passed, auto-select first line so all 4 boxes are populated
+    if (!targetLineId && lines.length > 0) {
+      targetLineId = lines[0].id;
+      selectedDest.lineId = targetLineId;
+    }
+
+    if (lineSelect) {
+      lineSelect.disabled = false;
+      lineSelect.innerHTML = `
+        <option value="" disabled ${!targetLineId ? 'selected' : ''}>-- Select Production Line --</option>
+        ${lines.map(l => `<option value="${l.id}" ${l.id === targetLineId ? 'selected' : ''}>${l.name}</option>`).join('')}
+      `;
+      if (targetLineId) {
+        lineSelect.value = targetLineId;
+      }
+    }
+
+    updateTargetPathPreview();
+  };
+
+  const getAllSearchableLocations = () => {
+    const allGroups = masterDataService.getGroups(false);
+    const allUnits = masterDataService.getUnits(null, false, true);
+    const allFloors = masterDataService.getFloors(null, null, false, true);
+    const allLines = masterDataService.getLines(null, null, null, false, true);
+
+    const groupMap = new Map(allGroups.map(g => [g.id, g]));
+    const unitMap = new Map(allUnits.map(u => [u.id, u]));
+    const floorMap = new Map(allFloors.map(f => [f.id, f]));
+
+    const locList = [];
+
+    // Add Floors
+    allFloors.forEach(f => {
+      const u = unitMap.get(f.unitId);
+      const g = u ? groupMap.get(u.groupId) : null;
+      locList.push({
+        type: 'FLOOR',
+        typeBadge: '📍 FLOOR',
+        id: f.id,
+        name: f.name,
+        code: f.code || '',
+        floorId: f.id,
+        floorName: f.name,
+        unitId: u?.id || '',
+        unitName: u?.name || 'Unit',
+        groupId: g?.id || 'grp-1',
+        groupName: g?.name || 'Group',
+        lineId: '',
+        lineName: '',
+        searchTerms: `${f.name} ${f.code || ''} ${u?.name || ''} ${u?.code || ''}`.toLowerCase()
+      });
+    });
+
+    // Add Lines
+    allLines.forEach(l => {
+      const f = floorMap.get(l.floorId);
+      const u = f ? unitMap.get(f.unitId) : null;
+      const g = u ? groupMap.get(u.groupId) : null;
+      locList.push({
+        type: 'LINE',
+        typeBadge: '🧵 LINE',
+        id: l.id,
+        name: l.name,
+        code: l.code || '',
+        floorId: f?.id || '',
+        floorName: f?.name || 'Floor',
+        unitId: u?.id || '',
+        unitName: u?.name || 'Unit',
+        groupId: g?.id || 'grp-1',
+        groupName: g?.name || 'Group',
+        lineId: l.id,
+        lineName: l.name,
+        searchTerms: `${l.name} ${l.code || ''} ${f?.name || ''} ${u?.name || ''}`.toLowerCase()
+      });
+    });
+
+    return locList;
+  };
+
+  // Quick Location Search Input & Suggestions
+  if (inpLocSearch && locSuggestionsBox) {
+    inpLocSearch.addEventListener('input', (e) => {
+      const q = e.target.value.trim().toLowerCase();
+      selectedDest.searchQuery = e.target.value;
+      if (btnClearLocSearch) {
+        btnClearLocSearch.style.display = e.target.value ? 'block' : 'none';
+      }
+
+      if (!q) {
+        locSuggestionsBox.style.display = 'none';
+        return;
+      }
+
+      const allLocations = getAllSearchableLocations();
+      const matches = allLocations.filter(loc => loc.searchTerms.includes(q)).slice(0, 15);
+
+      if (matches.length === 0) {
+        locSuggestionsBox.innerHTML = `
+          <div style="padding: 12px 14px; font-size: 12px; color: var(--text-muted); text-align: center;">
+            No floors or lines found matching "${e.target.value}".
+          </div>
+        `;
+        locSuggestionsBox.style.display = 'block';
+        return;
+      }
+
+      locSuggestionsBox.innerHTML = matches.map((item, idx) => {
+        const isLine = item.type === 'LINE';
+        const badgeColor = isLine ? '#38bdf8' : '#34d399';
+        const badgeBg = isLine ? 'rgba(56, 189, 248, 0.15)' : 'rgba(52, 211, 153, 0.15)';
+        const pathSubtitle = isLine
+          ? `${item.unitName} &bull; ${item.floorName}`
+          : `${item.unitName} &bull; ${item.groupName}`;
+
+        return `
+          <div class="loc-suggest-item" data-idx="${idx}" style="padding: 9px 14px; border-bottom: 1px solid rgba(255,255,255,0.06); cursor: pointer; display: flex; justify-content: space-between; align-items: center; transition: background 0.15s;">
+            <div>
+              <div style="font-weight: 700; color: #fff; font-size: 13px;">${item.name}</div>
+              <div style="font-size: 11px; color: var(--text-secondary); margin-top: 2px;">
+                ${pathSubtitle}
+              </div>
+            </div>
+            <span class="badge" style="font-size: 10px; font-weight: 700; background: ${badgeBg}; color: ${badgeColor}; border: 1px solid ${badgeColor}40;">
+              ${item.typeBadge}
+            </span>
+          </div>
+        `;
+      }).join('');
+
+      locSuggestionsBox.style.display = 'block';
+
+      locSuggestionsBox.querySelectorAll('.loc-suggest-item').forEach(el => {
+        const itemIdx = Number(el.getAttribute('data-idx'));
+        const item = matches[itemIdx];
+
+        el.addEventListener('click', () => {
+          const displayLabel = item.type === 'LINE'
+            ? `${item.name} (${item.floorName} - ${item.unitName})`
+            : `${item.name} (${item.unitName})`;
+          applyLocationSelection({
+            groupId: item.groupId,
+            unitId: item.unitId,
+            floorId: item.floorId,
+            lineId: item.lineId,
+            displayLabel
+          });
+        });
+
+        el.addEventListener('mouseenter', () => {
+          el.style.background = 'rgba(2, 132, 199, 0.25)';
+        });
+        el.addEventListener('mouseleave', () => {
+          el.style.background = 'transparent';
+        });
+      });
+    });
+
+    if (btnClearLocSearch) {
+      btnClearLocSearch.addEventListener('click', () => {
+        inpLocSearch.value = '';
+        btnClearLocSearch.style.display = 'none';
+        locSuggestionsBox.style.display = 'none';
+        selectedDest = { groupId: '', unitId: '', floorId: '', lineId: '', searchQuery: '' };
+
+        if (groupSelect) groupSelect.value = '';
+        if (unitSelect) {
+          unitSelect.disabled = true;
+          unitSelect.innerHTML = '<option value="" disabled selected>-- Select Group First --</option>';
+        }
+        if (floorSelect) {
+          floorSelect.disabled = true;
+          floorSelect.innerHTML = '<option value="" disabled selected>-- Select Unit First --</option>';
+        }
+        if (lineSelect) {
+          lineSelect.disabled = true;
+          lineSelect.innerHTML = '<option value="" disabled selected>-- Select Floor First --</option>';
+        }
+        updateTargetPathPreview();
+      });
+    }
+
+    document.addEventListener('click', (e) => {
+      if (!e.target.closest('#inp-transfer-location-search') && !e.target.closest('#transfer-location-suggestions') && !e.target.closest('#btn-clear-location-search')) {
+        if (locSuggestionsBox) locSuggestionsBox.style.display = 'none';
+      }
+    });
+  }
+
+  // Manual Dropdown Cascading Changes
+  if (groupSelect) {
     groupSelect.addEventListener('change', () => {
+      selectedDest.groupId = groupSelect.value;
+      selectedDest.unitId = '';
+      selectedDest.floorId = '';
+      selectedDest.lineId = '';
+      selectedDest.searchQuery = '';
+      if (inpLocSearch) inpLocSearch.value = '';
+      if (btnClearLocSearch) btnClearLocSearch.style.display = 'none';
+
       const units = masterDataService.getUnits(groupSelect.value, false, true);
-      if (units.length > 0) {
-        unitSelect.innerHTML = units.map(u => `<option value="${u.id}">${u.name}</option>`).join('');
-      } else {
-        unitSelect.innerHTML = '<option value="">No units under this group</option>';
+      if (unitSelect) {
+        unitSelect.disabled = false;
+        if (units.length > 0) {
+          unitSelect.innerHTML = `
+            <option value="" disabled selected>-- Select Factory / Unit --</option>
+            ${units.map(u => `<option value="${u.id}">${u.name}</option>`).join('')}
+          `;
+        } else {
+          unitSelect.innerHTML = '<option value="" disabled selected>No units under this group</option>';
+        }
       }
-      unitSelect.dispatchEvent(new Event('change'));
+
+      if (floorSelect) {
+        floorSelect.disabled = true;
+        floorSelect.innerHTML = '<option value="" disabled selected>-- Select Unit First --</option>';
+      }
+      if (lineSelect) {
+        lineSelect.disabled = true;
+        lineSelect.innerHTML = '<option value="" disabled selected>-- Select Floor First --</option>';
+      }
+
+      updateTargetPathPreview();
     });
   }
 
-  if (unitSelect && floorSelect) {
+  if (unitSelect) {
     unitSelect.addEventListener('change', () => {
+      selectedDest.unitId = unitSelect.value;
+      selectedDest.floorId = '';
+      selectedDest.lineId = '';
+      selectedDest.searchQuery = '';
+      if (inpLocSearch) inpLocSearch.value = '';
+      if (btnClearLocSearch) btnClearLocSearch.style.display = 'none';
+
       const floors = masterDataService.getFloors(unitSelect.value, null, false, true);
-      if (floors.length > 0) {
-        floorSelect.innerHTML = floors.map(f => `<option value="${f.id}">${f.name}</option>`).join('');
-      } else {
-        floorSelect.innerHTML = '<option value="">No floors under this unit</option>';
+      if (floorSelect) {
+        floorSelect.disabled = false;
+        if (floors.length > 0) {
+          floorSelect.innerHTML = `
+            <option value="" disabled selected>-- Select Floor --</option>
+            ${floors.map(f => `<option value="${f.id}">${f.name}</option>`).join('')}
+          `;
+        } else {
+          floorSelect.innerHTML = '<option value="" disabled selected>No floors under this unit</option>';
+        }
       }
-      floorSelect.dispatchEvent(new Event('change'));
+
+      if (lineSelect) {
+        lineSelect.disabled = true;
+        lineSelect.innerHTML = '<option value="" disabled selected>-- Select Floor First --</option>';
+      }
+
+      updateTargetPathPreview();
     });
   }
 
-  if (floorSelect && lineSelect) {
+  if (floorSelect) {
     floorSelect.addEventListener('change', () => {
+      selectedDest.floorId = floorSelect.value;
+      selectedDest.lineId = '';
+      selectedDest.searchQuery = '';
+      if (inpLocSearch) inpLocSearch.value = '';
+      if (btnClearLocSearch) btnClearLocSearch.style.display = 'none';
+
       const lines = masterDataService.getLines(floorSelect.value, null, null, false, true);
-      if (lines.length > 0) {
-        lineSelect.innerHTML = lines.map(l => `<option value="${l.id}">${l.name}</option>`).join('');
-      } else {
-        lineSelect.innerHTML = '<option value="">No lines under this floor</option>';
+      if (lineSelect) {
+        lineSelect.disabled = false;
+        if (lines.length > 0) {
+          lineSelect.innerHTML = `
+            <option value="" disabled selected>-- Select Production Line --</option>
+            ${lines.map(l => `<option value="${l.id}">${l.name}</option>`).join('')}
+          `;
+        } else {
+          lineSelect.innerHTML = '<option value="" disabled selected>No lines under this floor</option>';
+        }
       }
+
       updateTargetPathPreview();
     });
   }
 
   if (lineSelect) {
     lineSelect.addEventListener('change', () => {
+      selectedDest.lineId = lineSelect.value;
       updateTargetPathPreview();
     });
   }
@@ -668,7 +1016,7 @@ export function initTransferModalEvents() {
         return;
       }
 
-      const destGroupId = groupSelect?.value || 'grp-1';
+      const destGroupId = groupSelect?.value;
       const destUnitId = unitSelect?.value;
       const destFloorId = floorSelect?.value;
       const destLineId = lineSelect?.value;
@@ -677,7 +1025,7 @@ export function initTransferModalEvents() {
 
       if (!destGroupId || !destUnitId || !destFloorId || !destLineId) {
         if (submitBtn) { submitBtn.disabled = false; submitBtn.innerHTML = originalBtnText; }
-        notificationService.warning('Please select the Target Destination Factory/Unit, Floor, and Production Line.');
+        notificationService.warning('Please select the Target Destination Group, Factory/Unit, Floor, and Production Line.');
         return;
       }
 
