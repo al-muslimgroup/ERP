@@ -31,11 +31,11 @@ export function renderTransferModal() {
   const machine = activeMachineId ? machineService.getEnrichedMachine(activeMachineId) : null;
   const groups = masterDataService.getGroups();
   const defaultGroupId = machine?.groupId || groups[0]?.id || 'grp-1';
-  const units = masterDataService.getUnits(defaultGroupId);
+  const units = masterDataService.getUnits(defaultGroupId, false, true);
   const defaultUnitId = machine?.unitId || units[0]?.id;
-  const floors = masterDataService.getFloors(defaultUnitId);
+  const floors = masterDataService.getFloors(defaultUnitId, null, false, true);
   const defaultFloorId = machine?.floorId || floors[0]?.id;
-  const lines = masterDataService.getLines(defaultFloorId);
+  const lines = masterDataService.getLines(defaultFloorId, null, null, false, true);
 
   // Machine Lifetime History count for verification card
   const historyRecords = machine?.serialNumber ? historyService.getMachineHistory(machine.serialNumber) : [];
@@ -211,8 +211,8 @@ export function renderTransferModal() {
               </div>
 
               <div class="form-group full-width">
-                <label class="form-label" style="font-size: 12px; font-weight: 700; color: #fff;">Transfer Reason / Order Reference <span class="req">*</span></label>
-                <input type="text" id="transfer-reason" class="form-control" placeholder="e.g. Line re-balancing for jacket production order" required />
+                <label class="form-label" style="font-size: 12px; font-weight: 700; color: #fff;">Transfer Reason / Order Reference</label>
+                <input type="text" id="transfer-reason" class="form-control" placeholder="e.g. Line re-balancing for jacket production order" />
               </div>
 
               <div class="form-group full-width">
@@ -508,7 +508,7 @@ export function initTransferModalEvents() {
 
   if (groupSelect && unitSelect) {
     groupSelect.addEventListener('change', () => {
-      const units = masterDataService.getUnits(groupSelect.value);
+      const units = masterDataService.getUnits(groupSelect.value, false, true);
       if (units.length > 0) {
         unitSelect.innerHTML = units.map(u => `<option value="${u.id}">${u.name}</option>`).join('');
       } else {
@@ -520,7 +520,7 @@ export function initTransferModalEvents() {
 
   if (unitSelect && floorSelect) {
     unitSelect.addEventListener('change', () => {
-      const floors = masterDataService.getFloors(unitSelect.value);
+      const floors = masterDataService.getFloors(unitSelect.value, null, false, true);
       if (floors.length > 0) {
         floorSelect.innerHTML = floors.map(f => `<option value="${f.id}">${f.name}</option>`).join('');
       } else {
@@ -532,7 +532,7 @@ export function initTransferModalEvents() {
 
   if (floorSelect && lineSelect) {
     floorSelect.addEventListener('change', () => {
-      const lines = masterDataService.getLines(floorSelect.value);
+      const lines = masterDataService.getLines(floorSelect.value, null, null, false, true);
       if (lines.length > 0) {
         lineSelect.innerHTML = lines.map(l => `<option value="${l.id}">${l.name}</option>`).join('');
       } else {
@@ -662,11 +662,17 @@ export function initTransferModalEvents() {
         return;
       }
 
+      if (!authService.canRequestTransfer()) {
+        if (submitBtn) { submitBtn.disabled = false; submitBtn.innerHTML = originalBtnText; }
+        notificationService.error('Access Denied: You do not have permission to create a Machine Transfer Request.');
+        return;
+      }
+
       const destGroupId = groupSelect?.value || 'grp-1';
       const destUnitId = unitSelect?.value;
       const destFloorId = floorSelect?.value;
       const destLineId = lineSelect?.value;
-      const reason = document.getElementById('transfer-reason')?.value?.trim() || 'Production Line Rebalancing';
+      const reason = document.getElementById('transfer-reason')?.value?.trim() || '';
       const remarks = document.getElementById('transfer-remarks')?.value?.trim() || '';
 
       if (!destGroupId || !destUnitId || !destFloorId || !destLineId) {

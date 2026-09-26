@@ -236,8 +236,8 @@ class WorkflowService {
     if (isCrossUnit) {
       return {
         id: 'wf-smart-cross-unit',
-        name: `Inter-Unit Transfer (${destUnitName} Admin Approval)`,
-        description: `Relocation from Unit to Unit requiring Destination Unit Admin or Central Super Admin authorization.`,
+        name: `Inter-Unit Transfer (${destFloorName} & Admin Approval)`,
+        description: `Relocation from Unit to Unit requiring Destination Floor In-Charge or Central Admin authorization.`,
         isDefault: true,
         isSmartRouting: true,
         requireDocument: false,
@@ -245,9 +245,9 @@ class WorkflowService {
         levels: [
           {
             level: 1,
-            title: `Destination Unit Admin Approval (${destUnitName})`,
-            approverType: APPROVER_TYPES.ADMIN,
-            description: `Requires authorization from Target Unit Admin (${destUnitName}) or Central Super Admin.`
+            title: `Destination Floor Manager / Admin Approval (${destFloorName})`,
+            approverType: APPROVER_TYPES.DEST_LOCATION,
+            description: `Requires authorization from ${destFloorName} Floor In-Charge or Central Admin.`
           }
         ]
       };

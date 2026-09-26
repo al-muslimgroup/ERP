@@ -53,6 +53,8 @@ function captureAppState() {
   const sidebar = document.querySelector('.sidebar-menu');
   const pageView = document.querySelector('.page-view');
   const grid = document.querySelector('.excel-grid-container, .table-responsive, .history-content-area, .master-data-content, #reports-tab-content');
+  // Inventory table's dedicated horizontal+vertical scroll viewport
+  const invViewport = document.getElementById('inventory-table-scroll-viewport');
   const activeEl = document.activeElement;
 
   return {
@@ -65,6 +67,8 @@ function captureAppState() {
     pageViewX: pageView ? pageView.scrollLeft : 0,
     gridY: grid ? grid.scrollTop : 0,
     gridX: grid ? grid.scrollLeft : 0,
+    invViewportY: invViewport ? invViewport.scrollTop : 0,
+    invViewportX: invViewport ? invViewport.scrollLeft : 0,
     focusedId: activeEl && activeEl.id ? activeEl.id : null,
     selectionStart: activeEl && typeof activeEl.selectionStart === 'number' ? activeEl.selectionStart : null,
     selectionEnd: activeEl && typeof activeEl.selectionEnd === 'number' ? activeEl.selectionEnd : null
@@ -105,6 +109,13 @@ function restoreAppState(saved) {
     if (grid) {
       if (saved.gridY > 0) grid.scrollTop = saved.gridY;
       if (saved.gridX > 0) grid.scrollLeft = saved.gridX;
+    }
+
+    // Restore inventory table dedicated scroll viewport (horizontal + vertical)
+    const invViewport = document.getElementById('inventory-table-scroll-viewport');
+    if (invViewport) {
+      if (saved.invViewportY > 0) invViewport.scrollTop = saved.invViewportY;
+      if (saved.invViewportX > 0) invViewport.scrollLeft = saved.invViewportX;
     }
 
     if (saved.focusedId) {
